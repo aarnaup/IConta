@@ -1,5 +1,6 @@
 using Contabilidad.Domain;
 using Contabilidad.Domain.Fiscal;
+using Contabilidad.Infrastructure.Fiscal;
 using Dapper;
 
 namespace Contabilidad.Infrastructure.Repositorios;
@@ -7,6 +8,8 @@ namespace Contabilidad.Infrastructure.Repositorios;
 public interface ILibrosRegistroRepositorio
 {
     Task<LibroRegistroDto> ObtenerAsync(long empresaId, string libro, int anio, string periodo, CancellationToken ct);
+    /// <summary>Los dos libros en el formato XLSX de la AEAT; devuelve el contenido y el nombre de fichero.</summary>
+    Task<(byte[] Contenido, string Nombre)> FormatoAeatAsync(long empresaId, int anio, string periodo, CancellationToken ct);
 }
 
 /// <summary>
@@ -29,7 +32,7 @@ public sealed class LibrosRegistroRepositorio(IConexionFactory conexiones) : ILi
 
         var lineas = (await cn.QueryAsync<LineaLibroDto>(new CommandDefinition("""
             SELECT f.id AS factura_id, f.numero_registro, f.fecha_expedicion, f.fecha_operacion, f.fecha_contable, f.serie, f.numero,
-                   f.tipo_factura, n.numero AS nif, t.nombre, fi.tipo_operacion, fi.base, fi.porcentaje, fi.cuota, fi.porcentaje_recargo,
+                   f.tipo_factura, n.numero AS nif, t.nombre, pa.iso2 AS pais_iso2, pa.es_ue AS pais_ue, n.tipo_documento, fi.tipo_operacion, fi.base, fi.porcentaje, fi.cuota, fi.porcentaje_recargo,
                    fi.cuota_recargo, fi.cuota_deducible, fi.es_bien_inversion AS bien_inversion,
                    CASE WHEN row_number() OVER w = 1 THEN f.retencion_total END AS retencion,
                    CASE WHEN row_number() OVER w = 1 THEN f.total END AS total_factura,
@@ -40,6 +43,7 @@ public sealed class LibrosRegistroRepositorio(IConexionFactory conexiones) : ILi
             JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
             JOIN conta.tercero t ON t.id = f.tercero_id
             JOIN core.nif n ON n.id = t.nif_id
+            JOIN cat.pais pa ON pa.id = n.pais_id
             LEFT JOIN fiscal.factura r ON r.id = f.factura_rectificada_id
             LEFT JOIN conta.asiento s ON s.id = f.asiento_id
             WHERE f.empresa_id = @empresaId AND f.libro = @libro AND f.estado = 'CONTABILIZADA'
@@ -64,5 +68,21 @@ public sealed class LibrosRegistroRepositorio(IConexionFactory conexiones) : ILi
         return new LibroRegistroDto(libro, impuesto, p.Anio, p.Codigo, p.Inicio, p.Fin, facturas.Count, lineas, LibrosRegistro.Totales(lineas),
             lineas.Sum(l => l.Base), lineas.Sum(l => l.Cuota), lineas.Sum(l => l.CuotaRecargo), lineas.Sum(l => l.CuotaDeducible),
             facturas.Sum(l => l.Retencion ?? 0), facturas.Sum(l => l.TotalFactura ?? 0), avisos);
+    }
+
+    public async Task<(byte[] Contenido, string Nombre)> FormatoAeatAsync(long empresaId, int anio, string periodo, CancellationToken ct)
+    {
+        var exp = await ObtenerAsync(empresaId, "EMITIDAS", anio, periodo, ct);
+        if (exp.Impuesto != "IVA")
+            throw new ReglaContableException("El formato de la AEAT es para los libros de IVA; para el IGIC descarga el CSV.");
+        var rec = await ObtenerAsync(empresaId, "RECIBIDAS", anio, periodo, ct);
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var e = await cn.QuerySingleAsync<(string Nombre, string Nif)>(new CommandDefinition(
+            "SELECT e.nombre, n.numero FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id WHERE e.id = @empresaId",
+            new { empresaId }, cancellationToken: ct));
+        var contenido = LibrosAeatXlsx.Generar(e.Nif, e.Nombre, exp.Anio,
+            FormatoAeat.Filas("EMITIDAS", exp.Anio, exp.Periodo, exp.Lineas), FormatoAeat.Filas("RECIBIDAS", rec.Anio, rec.Periodo, rec.Lineas));
+        return (contenido, $"librosiva_{e.Nif}_{exp.Anio}_{exp.Periodo}.xlsx");
     }
 }

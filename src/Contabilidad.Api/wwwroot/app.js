@@ -873,18 +873,20 @@ $('#lrVer').onclick = async () => {
   } catch (e) { msg($('#lrMsg'), e.message, 'ayuda err-texto'); }
 };
 // La descarga necesita el token: se pide con fetch y se guarda como fichero
-$('#lrCsv').onclick = async () => {
+async function descargaLibro(q, porDefecto) {
   try {
-    const q = consultaLibro().replace('?', '/csv?');
     const r = await fetch(urlE(q), { headers: { Authorization: 'Bearer ' + S.token } });
     if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
-    const nombre = (/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'libro.csv';
+    const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || porDefecto).replace(/"/g, '');
     const url = URL.createObjectURL(await r.blob());
-    const a = Object.assign(document.createElement('a'), { href: url, download: nombre.replace(/"/g, '') });
+    const a = Object.assign(document.createElement('a'), { href: url, download: nombre });
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     msg($('#lrMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#lrMsg'), e.message, 'ayuda err-texto'); }
-};
+}
+$('#lrCsv').onclick = () => descargaLibro(consultaLibro().replace('?', '/csv?'), 'libro.csv');
+// Los dos libros (expedidas y recibidas) en un solo fichero, con la disposición del modelo de la AEAT
+$('#lrAeat').onclick = () => descargaLibro(`/fiscal/libros-aeat?anio=${+$('#lrAnio').value}&periodo=${$('#lrPeriodo').value}`, 'librosiva.xlsx');
 
 function pintaPeriodos() {
   const m = MF.modelos.find(x => x.codigo === $('#mfModelo').value);
