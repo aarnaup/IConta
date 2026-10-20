@@ -71,6 +71,15 @@ try
             _ => new FixedWindowRateLimiterOptions { PermitLimit = 10, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     });
 
+    // ---- CORS: la aplicación web se sirve desde otro origen (proyecto Contabilidad.Web) ----
+    // La autenticación va en la cabecera Authorization (sin cookies), así que no se permiten credenciales.
+    var origenes = builder.Configuration.GetSection("Cors:Origenes").Get<string[]>() ?? [];
+    builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
+        .WithOrigins(origenes.Select(x => x.Trim().TrimEnd('/')).Where(x => x.Length > 0).ToArray())
+        .AllowAnyHeader().AllowAnyMethod()
+        .WithExposedHeaders("Content-Disposition")      // nombre de los ficheros que se descargan
+        .SetPreflightMaxAge(TimeSpan.FromHours(1))));
+
     var app = builder.Build();
 
     // ---- Orden de la CLI: crea el primer superadmin y termina ----
@@ -124,10 +133,10 @@ try
     });
 
     if (documentar) app.MapDocumentacionApi();
+    // La API no sirve la web: la raíz lleva a la documentación (si está habilitada)
+    app.MapGet("/", () => documentar ? Results.Redirect("/swagger") : Results.NotFound()).ExcludeFromDescription();
 
-    app.UseDefaultFiles();
-    app.UseStaticFiles();
-
+    app.UseCors();
     app.UseRateLimiter();
     app.UseAuthentication();
     app.UseAuthorization();

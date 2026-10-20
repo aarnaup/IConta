@@ -1,0 +1,12 @@
+# Contexto de los Dockerfile de src/*: solo hace falta el código fuente
+**/bin/
+**/obj/
+**/logs/
+.git/
+.vs/
+.vscode/
+**/*.user
+tests/
+tools/
+database/
+*.png
