@@ -46,6 +46,22 @@ Son dos aplicaciones que se publican y se exponen cada una en su dirección (`do
 - La sesión viaja en la cabecera `Authorization: Bearer` (no hay cookies), así que el CORS no admite credenciales.
 - Si al compilar la API tras actualizar sale `DirectoryNotFoundException: …/Contabilidad.Api/wwwroot/`, borra las carpetas `bin` y `obj` de `src/Contabilidad.Api` (quedan restos de cuando servía la web).
 
+## Docker
+Cada proyecto tiene su `Dockerfile` (`src/Contabilidad.Api/Dockerfile` y `src/Contabilidad.Web/Dockerfile`). Se construyen desde la raíz del repositorio, porque la API usa Domain e Infrastructure. Las imágenes escuchan en el puerto 8080, se ejecutan con un usuario sin privilegios y arrancan en Production (Swagger apagado salvo con `OpenApi__Habilitar=true`).
+```bash
+docker build -f src/Contabilidad.Api/Dockerfile -t iconta-api .
+docker build -f src/Contabilidad.Web/Dockerfile -t iconta-web .
+
+# primer superadmin (la base debe tener cargados los scripts de database/)
+docker run --rm -it -e ConnectionStrings__Contabilidad="Host=db;Database=contabilidad;Username=...;Password=..." \
+  -e Jwt__Key="<cadena-aleatoria-larga>" iconta-api crear-superadmin tu@correo.es "Tu nombre"
+
+docker run -d -p 6579:8080 -e ConnectionStrings__Contabilidad="Host=db;..." -e Jwt__Key="<cadena-aleatoria-larga>" \
+  -e Cors__Origenes__0=http://localhost:6581 -v iconta-logs:/app/logs iconta-api
+docker run -d -p 6581:8080 -e Api__Url=http://localhost:6579 iconta-web
+```
+`Api__Url` es la dirección de la API **tal como la ve el navegador** (no el nombre del contenedor), y `Cors__Origenes__0` la de la web. Los registros de la API quedan en el volumen `/app/logs`.
+
 ## Swagger y Postman
 En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
 - **Swagger UI**: `http://localhost:6579/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
