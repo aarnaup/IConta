@@ -23,6 +23,8 @@ public static class ModelosFiscales
         new("AEAT", "190", "Resumen anual de retenciones de trabajo y actividades económicas", "RETENCIONES", ["0A"]),
         new("AEAT", "180", "Resumen anual de retenciones de arrendamientos", "RETENCIONES", ["0A"]),
         new("ATC",  "415", "IGIC - Operaciones con terceras personas", "TERCEROS", ["0A"]),
+        new("AEAT", "200", "Impuesto sobre Sociedades (periodo impositivo que empieza en el año)", "IS", ["0A"]),
+        new("AEAT", "202", "Impuesto sobre Sociedades - Pago fraccionado", "IS", ["1P", "2P", "3P"]),
     ];
 
     public static ModeloSoportado Obtener(string? codigo)
@@ -48,8 +50,8 @@ public sealed class DeclaracionCalculada
     public string Modelo { get; init; } = "";
     public int Anio { get; init; }
     public string Periodo { get; init; } = "";
-    public DateOnly FechaInicio { get; init; }
-    public DateOnly FechaFin { get; init; }
+    public DateOnly FechaInicio { get; set; }
+    public DateOnly FechaFin { get; set; }
     public List<Casilla> Casillas { get; init; } = [];
     public decimal Resultado { get; set; }
     public decimal AIngresar { get; set; }
@@ -60,6 +62,9 @@ public sealed class DeclaracionCalculada
     public object? Detalle { get; set; }
     public DateOnly PlazoDesde { get; set; }
     public DateOnly PlazoHasta { get; set; }
+
+    /// <summary>Periodo impositivo del Impuesto sobre Sociedades (200/202).</summary>
+    public long? EjercicioId { get; set; }
 
     public decimal this[string clave] => Casillas.FirstOrDefault(c => c.Clave == clave)?.Importe ?? 0m;
 }

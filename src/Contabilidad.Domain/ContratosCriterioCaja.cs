@@ -8,6 +8,12 @@ public sealed class ConfiguracionFiscalDto
     /// <summary>Empresario persona física: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA; null para sociedades.</summary>
     public string? RegimenIrpf { get; set; }
     public bool Sii { get; set; }
+    public bool TributaIs { get; set; }
+    /// <summary>GENERAL, NUEVA_CREACION, REDUCIDA_DIMENSION, MICRO o PERSONALIZADO.</summary>
+    public string IsTipo { get; set; } = "GENERAL";
+    public decimal? IsPorcentaje { get; set; }
+    /// <summary>ART_40_2 o ART_40_3.</summary>
+    public string IsModalidad202 { get; set; } = "ART_40_2";
 }
 
 public sealed class GuardarConfiguracionFiscalCmd
@@ -16,6 +22,10 @@ public sealed class GuardarConfiguracionFiscalCmd
     /// <summary>Si no se indica, no cambia. Cadena vacía: sin IRPF (sociedad).</summary>
     public string? RegimenIrpf { get; set; }
     public bool? Sii { get; set; }
+    public bool? TributaIs { get; set; }
+    public string? IsTipo { get; set; }
+    public decimal? IsPorcentaje { get; set; }
+    public string? IsModalidad202 { get; set; }
 }
 
 public sealed class TraspasoCajaCmd

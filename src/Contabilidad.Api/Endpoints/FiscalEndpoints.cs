@@ -80,6 +80,14 @@ public static class FiscalEndpoints
             => Results.Ok(await r.GuardarAsync(empresaId, anio, actividades, ct)))
             .Requiere(Nivel.Escritura, Modulo.Fiscal);
 
+        // ---- Impuesto sobre Sociedades: datos del periodo impositivo que no salen de la contabilidad ----
+        f.MapGet("/sociedades/{ejercicioId:long}", async (long empresaId, long ejercicioId, ISociedadesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.DatosAsync(empresaId, ejercicioId, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+        f.MapPut("/sociedades/{ejercicioId:long}", async (long empresaId, long ejercicioId, DatosSociedadesDto datos, ISociedadesRepositorio r,
+            CancellationToken ct) => Results.Ok(await r.GuardarAsync(empresaId, ejercicioId, datos, ct)))
+            .Requiere(Nivel.Escritura, Modulo.Fiscal);
+
         // ---- SII: estado de las facturas, mensaje XML, envío (si hay certificado) y registro de respuestas de otra herramienta ----
         f.MapGet("/sii/facturas", async (long empresaId, string libro, int anio, int? mes, ISiiRepositorio r, CancellationToken ct)
             => Results.Ok(new { envioConfigurado = r.EnvioConfigurado, facturas = await r.FacturasAsync(empresaId, libro, anio, mes, ct) }))

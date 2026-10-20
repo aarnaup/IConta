@@ -134,7 +134,8 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         return await cn.QuerySingleOrDefaultAsync<ConfiguracionFiscalDto>(new CommandDefinition(
-                   "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii FROM core.empresa WHERE id = @empresaId", new { empresaId }, cancellationToken: ct))
+                   "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii, tributa_is, is_tipo, is_porcentaje, is_modalidad_202 FROM core.empresa WHERE id = @empresaId",
+                   new { empresaId }, cancellationToken: ct))
                ?? throw new ReglaContableException("La empresa no existe.");
     }
 
@@ -150,7 +151,7 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
         var actual = await cn.QuerySingleAsync<ConfiguracionFiscalDto>(new CommandDefinition(
-            "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii FROM core.empresa WHERE id = @empresaId FOR UPDATE",
+            "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii, tributa_is, is_tipo, is_porcentaje, is_modalidad_202 FROM core.empresa WHERE id = @empresaId FOR UPDATE",
             new { empresaId }, tx, cancellationToken: ct));
         if (actual.ImpuestoIndirecto == "IGIC" && regimen is "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA")
             throw new ReglaContableException("En el IGIC solo se admiten el régimen general y el criterio de caja.",
@@ -162,9 +163,22 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         if (regimen == "RECARGO_EQUIVALENCIA" && irpfFinal is null)
             throw new ReglaContableException("El recargo de equivalencia es para comerciantes minoristas personas físicas (o entidades en atribución de rentas).",
                 "Indica su régimen de IRPF.");
-        await cn.ExecuteAsync(new CommandDefinition(
-            "UPDATE core.empresa SET regimen_iva = @regimen, regimen_irpf = @irpfFinal, sii = COALESCE(@sii, sii) WHERE id = @empresaId",
-            new { regimen, irpfFinal, sii = cmd.Sii, empresaId }, tx, cancellationToken: ct));
+        var isTipo = cmd.IsTipo?.Trim().ToUpperInvariant();
+        if (isTipo is not null && !Domain.Fiscal.TipoGravamenIs.Clases.Contains(isTipo))
+            throw new ReglaContableException("Tipo de gravamen no válido: GENERAL, NUEVA_CREACION, REDUCIDA_DIMENSION, MICRO o PERSONALIZADO.");
+        if ((isTipo ?? actual.IsTipo) == "PERSONALIZADO" && (cmd.IsPorcentaje ?? actual.IsPorcentaje) is not (>= 0 and <= 100))
+            throw new ReglaContableException("Con el tipo personalizado indica el porcentaje (0 a 100).");
+        var modalidad = cmd.IsModalidad202?.Trim().ToUpperInvariant();
+        if (modalidad is not (null or "ART_40_2" or "ART_40_3"))
+            throw new ReglaContableException("Modalidad del pago fraccionado no válida: ART_40_2 o ART_40_3.");
+        await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE core.empresa SET regimen_iva = @regimen, regimen_irpf = @irpfFinal, sii = COALESCE(@sii, sii),
+                   tributa_is = COALESCE(@tributaIs, tributa_is), is_tipo = COALESCE(@isTipo, is_tipo),
+                   is_porcentaje = CASE WHEN COALESCE(@isTipo, is_tipo) = 'PERSONALIZADO' THEN COALESCE(@isPorcentaje, is_porcentaje) END,
+                   is_modalidad_202 = COALESCE(@modalidad, is_modalidad_202)
+            WHERE id = @empresaId
+            """, new { regimen, irpfFinal, sii = cmd.Sii, tributaIs = cmd.TributaIs, isTipo, isPorcentaje = cmd.IsPorcentaje, modalidad, empresaId },
+            tx, cancellationToken: ct));
         if (regimen == "CRITERIO_CAJA")
             await cn.ExecuteAsync(new CommandDefinition("SELECT fiscal.asegurar_cuentas_caja(@empresaId)", new { empresaId }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);

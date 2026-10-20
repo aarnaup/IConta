@@ -613,6 +613,12 @@
           <label>IRPF <select id="ccIrpf"><option value="">Sociedad (sin IRPF)</option><option value="DIRECTA_NORMAL">Estimación directa normal</option>
             <option value="DIRECTA_SIMPLIFICADA">Estimación directa simplificada</option><option value="OBJETIVA">Estimación objetiva (módulos)</option></select></label>
           <label>SII <select id="ccSii"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <label>Sociedades <select id="ccIs"><option value="false">No tributa</option><option value="true">Tributa</option></select></label>
+          <label>Tipo de gravamen <select id="ccIsTipo"><option value="GENERAL">General (25 %)</option><option value="REDUCIDA_DIMENSION">Reducida dimensión</option>
+            <option value="MICRO">Microempresa (tramos)</option><option value="NUEVA_CREACION">Nueva creación (15 %)</option><option value="PERSONALIZADO">Otro %</option></select></label>
+          <label>% <input id="ccIsPct" inputmode="decimal" style="width:5em" title="Solo con «Otro %»"></label>
+          <label>Pagos fraccionados <select id="ccIs202"><option value="ART_40_2">Art. 40.2 (18 % cuota anterior)</option>
+            <option value="ART_40_3">Art. 40.3 (base del periodo)</option></select></label>
           <button class="btn" id="ccGuardar" data-req="FISCAL_DIRECTO" type="button">Guardar régimen</button>
         </div>
         <div class="fila-acciones">
@@ -626,6 +632,29 @@
         <tbody id="ccLista"></tbody></table>
         <div id="ccAsientos" class="fila-acciones"></div>
         <p id="ccMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="isPanel" hidden>
+        <h2 id="isTitulo">Impuesto sobre Sociedades</h2>
+        <p class="ayuda">El resultado contable sale de los asientos del ejercicio (sin las cuentas 630, 633 y 638 del propio impuesto), las retenciones de la 473
+          y los pagos fraccionados de los 202 presentados. Aquí se indican los ajustes extracontables (positivo aumenta la base, negativo la disminuye) y lo que no
+          sale de la contabilidad. Las bases negativas generadas en los 200 presentados se arrastran solas; las anteriores a la aplicación se indican una vez.
+          Tipos de reducida dimensión y microempresa según la Ley 7/2024: verifícalos.</p>
+        <div class="cab2">
+          <label>Reserva de capitalización <input id="is_reservaCapitalizacion" class="num" inputmode="decimal"></label>
+          <label>Bonificaciones <input id="is_bonificaciones" class="num" inputmode="decimal"></label>
+          <label>Deducciones <input id="is_deducciones" class="num" inputmode="decimal"></label>
+          <label>Importe neto de la cifra de negocios <input id="is_incn" class="num" inputmode="decimal"></label>
+          <label>Bases negativas anteriores a la aplicación <input id="is_binsAnteriores" class="num" inputmode="decimal"></label>
+        </div>
+        <h3>Ajustes extracontables</h3>
+        <table><thead><tr><th>Concepto</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
+        <ul id="isSugerencias" class="avisos"></ul>
+        <div class="fila-acciones">
+          <button class="btn" id="isAnadir" type="button">Añadir ajuste</button>
+          <button class="btn primario" id="isGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar datos</button>
+        </div>
+        <p id="isMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel" id="moPanel">

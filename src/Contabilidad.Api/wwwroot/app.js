@@ -924,7 +924,8 @@ $('#bCrear').onclick = async () => {
 // ------------------------------------------------------------ modelos fiscales
 const MF = { modelos: [], actual: null, presentando: null, liq: null };
 const estadoDecl = { CALCULADA: 'calculada', PRESENTADA: 'presentada', SIN_GUARDAR: 'sin guardar', BORRADOR: 'borrador' };
-const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre' }[p] || 'Mes ' + p);
+const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre',
+  '1P': '1.er pago (abril)', '2P': '2.º pago (octubre)', '3P': '3.er pago (diciembre)' }[p] || 'Mes ' + p);
 
 async function cargaFiscal() {
   if (!$('#mfAnio').value) $('#mfAnio').value = new Date().getFullYear();
@@ -942,6 +943,42 @@ async function cargaFiscal() {
     $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ Impuesto sobre Sociedades
+let IS = null;
+async function verSociedades() {
+  IS = await api(urlE('/fiscal/sociedades/' + S.ejercicio.id));
+  $('#isTitulo').textContent = `Impuesto sobre Sociedades · periodo impositivo ${S.ejercicio.codigo} (${fechaES(S.ejercicio.fechaInicio)} – ${fechaES(S.ejercicio.fechaFin)})`;
+  for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores'])
+    $('#is_' + k).value = IS[k] ? String(IS[k]).replace('.', ',') : '';
+  pintaAjustesIs();
+}
+function pintaAjustesIs() {
+  $('#isAjustes').innerHTML = IS.ajustes.map((a, i) => `<tr><td><input data-i="${i}" data-k="concepto" value="${esc(a.concepto)}" aria-label="Concepto"></td>
+    <td><input class="num" data-i="${i}" data-k="importe" inputmode="decimal" value="${String(a.importe).replace('.', ',')}" aria-label="Importe"></td>
+    <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="3" class="vacio">Sin ajustes extracontables.</td></tr>';
+  $('#isSugerencias').innerHTML = IS.sugerencias.map((a, i) => `<li>${esc(a.concepto)}: ${fmt(a.importe)}
+    <button class="btn" type="button" data-sug="${i}">Añadir</button></li>`).join('');
+}
+$('#isAjustes').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.i === undefined) return;
+  IS.ajustes[+t.dataset.i][t.dataset.k] = t.dataset.k === 'importe' ? num(t.value) : t.value;
+});
+$('#isAjustes').addEventListener('click', e => { if (e.target.dataset.del !== undefined) { IS.ajustes.splice(+e.target.dataset.del, 1); pintaAjustesIs(); } });
+$('#isSugerencias').addEventListener('click', e => {
+  const i = e.target.dataset.sug; if (i === undefined) return;
+  IS.ajustes.push({ ...IS.sugerencias[+i] }); pintaAjustesIs();
+});
+$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0 }); pintaAjustesIs(); };
+$('#isGuardar').onclick = async () => {
+  try {
+    const cuerpo = { ...IS };
+    for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores']) cuerpo[k] = num($('#is_' + k).value);
+    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs();
+    msg($('#isMsg'), 'Datos del Impuesto sobre Sociedades guardados. Calcula el 200 en la lista de modelos.', 'ayuda ok-texto');
+  } catch (e) { msg($('#isMsg'), e.message, 'ayuda err-texto'); }
+};
 
 // ------------------------------------------------------------ módulos
 let MO = [];
@@ -1028,6 +1065,10 @@ async function cargaCriterioCaja() {
   $('#ccRegimen').value = c.regimenIva;
   $('#ccIrpf').value = c.regimenIrpf || '';
   $('#ccSii').value = String(!!c.sii);
+  $('#ccIs').value = String(!!c.tributaIs); $('#ccIsTipo').value = c.isTipo || 'GENERAL';
+  $('#ccIsPct').value = c.isPorcentaje == null ? '' : String(c.isPorcentaje).replace('.', ','); $('#ccIs202').value = c.isModalidad202 || 'ART_40_2';
+  $('#isPanel').hidden = !c.tributaIs;
+  if (c.tributaIs) await verSociedades();
   [...$('#ccRegimen').options].forEach(o => o.hidden = c.impuestoIndirecto === 'IGIC' && ['SIMPLIFICADO', 'RECARGO_EQUIVALENCIA'].includes(o.value));
   if (!$('#moAnio').value) $('#moAnio').value = $('#mfAnio').value;
   $('#moPanel').hidden = !(c.regimenIva === 'SIMPLIFICADO' || c.regimenIrpf === 'OBJETIVA');
@@ -1053,7 +1094,8 @@ $('#ccVer').onclick = () => verCriterioCaja().catch(e => msg($('#ccMsg'), e.mess
 $('#ccGuardar').onclick = async () => {
   try {
     const c = await api(urlE('/fiscal/configuracion'), { method: 'PUT', body: JSON.stringify({ regimenIva: $('#ccRegimen').value,
-      regimenIrpf: $('#ccIrpf').value, sii: $('#ccSii').value === 'true' }) });
+      regimenIrpf: $('#ccIrpf').value, sii: $('#ccSii').value === 'true', tributaIs: $('#ccIs').value === 'true', isTipo: $('#ccIsTipo').value,
+      isPorcentaje: $('#ccIsPct').value ? num($('#ccIsPct').value) : null, isModalidad202: $('#ccIs202').value }) });
     msg($('#ccMsg'), {
       CRITERIO_CAJA: 'Empresa en criterio de caja: las facturas que se contabilicen desde ahora lo aplican.',
       SIMPLIFICADO: 'Empresa en el régimen simplificado: indica los módulos del año para calcular el 303 y el 131.',

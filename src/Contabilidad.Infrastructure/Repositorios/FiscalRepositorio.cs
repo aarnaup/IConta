@@ -27,7 +27,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public string ImpuestoIndirecto { get; set; } = "";
         public string RegimenIva { get; set; } = "";
         public string? RegimenIrpf { get; set; }
+        public bool TributaIs { get; set; }
+        public string IsTipo { get; set; } = "GENERAL";
+        public decimal? IsPorcentaje { get; set; }
+        public string IsModalidad202 { get; set; } = "ART_40_2";
     }
+    private sealed class EjercicioIsFila { public long Id { get; set; } public DateOnly FechaInicio { get; set; } public DateOnly FechaFin { get; set; } }
     private sealed class Resumen303Fila
     {
         public string Periodo { get; set; } = "";
@@ -111,13 +116,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
             "INTRACOM" => e.ImpuestoIndirecto == "IVA",
             "RETENCIONES" => true,
+            "IS" => e.TributaIs,
             _ => false
         }).ToList();
     }
 
     private static async Task<EmpresaFila> EmpresaAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, CancellationToken ct)
         => await cn.QuerySingleOrDefaultAsync<EmpresaFila>(new CommandDefinition(
-               "SELECT impuesto_indirecto, regimen_iva, regimen_irpf FROM core.empresa WHERE id = @empresaId", new { empresaId }, tx, cancellationToken: ct))
+               "SELECT impuesto_indirecto, regimen_iva, regimen_irpf, tributa_is, is_tipo, is_porcentaje, is_modalidad_202 FROM core.empresa WHERE id = @empresaId",
+               new { empresaId }, tx, cancellationToken: ct))
            ?? throw new ReglaContableException("La empresa no existe.");
 
     // =====================================================================
@@ -163,6 +170,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 break;
             case "INTRACOM":
                 await Calcular349Async(cn, tx, empresaId, empresa, p, d, ct);
+                break;
+            case "IS" when modelo.Codigo == "200":
+                await Calcular200Async(cn, tx, empresaId, empresa, p, d, ct);
+                break;
+            case "IS":
+                await Calcular202Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
         }
 
@@ -366,6 +379,117 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     ? $"Cuadra con la suma de las {presentadas.Count} autoliquidaciones {baseModelo.Codigo} presentadas ({suma:N2})."
                     : $"NO cuadra: resultado anual {anualAntes:N2} frente a {suma:N2} en las {presentadas.Count} autoliquidaciones {baseModelo.Codigo} presentadas. Hay facturas contabilizadas después de presentar o periodos sin presentar.");
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- 200 / 202 (Impuesto sobre Sociedades)
+    // Resultado antes del impuesto: ingresos menos gastos sin las cuentas del propio impuesto (630, 633, 638)
+    private const string SqlResultadoIs = """
+        SELECT COALESCE(SUM(CASE WHEN c.codigo LIKE '7%' THEN a.haber - a.debe
+                                 WHEN c.codigo LIKE '6%' AND c.codigo NOT LIKE '630%' AND c.codigo NOT LIKE '633%' AND c.codigo NOT LIKE '638%'
+                                 THEN a.haber - a.debe END), 0)
+        FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
+        WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
+          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta
+        """;
+    // Retenciones e ingresos a cuenta soportados (473)
+    private const string SqlRetencionesIs = """
+        SELECT COALESCE(SUM(a.debe), 0)
+        FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
+        WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
+          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta AND c.codigo LIKE '473%'
+        """;
+
+    private static void ExigeIs(EmpresaFila e)
+    {
+        if (!e.TributaIs)
+            throw new ReglaContableException("La empresa no tributa por el Impuesto sobre Sociedades.", "Márcalo en la configuración fiscal de la empresa.");
+    }
+
+    /// <summary>Bases negativas pendientes al empezar el periodo: las de antes de la aplicación más las generadas en los 200 presentados, menos lo compensado.</summary>
+    private static async Task<decimal> BinsDisponiblesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, DateOnly inicio, CancellationToken ct)
+        => Math.Max(0, await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE((SELECT SUM(i.bins_anteriores) FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
+                             WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio), 0)
+                 + COALESCE((SELECT SUM(GREATEST(-COALESCE(bi.importe, 0), 0) - COALESCE(cp.importe, 0))
+                             FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
+                             LEFT JOIN fiscal.declaracion_casilla bi ON bi.declaracion_id = d.id AND bi.casilla = 'BI'
+                             LEFT JOIN fiscal.declaracion_casilla cp ON cp.declaracion_id = d.id AND cp.casilla = 'COMP'
+                             WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
+                               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                                    WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo
+                                      AND x.estado = 'PRESENTADA')), 0)
+            """, new { empresaId, inicio }, tx, cancellationToken: ct)));
+
+    private static async Task Calcular200Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
+        DeclaracionCalculada d, CancellationToken ct)
+    {
+        ExigeIs(empresa);
+        // Periodo impositivo: el ejercicio que empieza en el año (también si es partido: 1/7/2025–30/6/2026 es el 200 de 2025)
+        var ej = await cn.QueryFirstOrDefaultAsync<EjercicioIsFila>(new CommandDefinition("""
+            SELECT id, fecha_inicio, fecha_fin FROM core.ejercicio
+            WHERE empresa_id = @empresaId AND EXTRACT(YEAR FROM fecha_inicio) = @anio ORDER BY fecha_inicio LIMIT 1
+            """, new { empresaId, anio = p.Anio }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException($"No hay ningún ejercicio que empiece en {p.Anio}.");
+        d.FechaInicio = ej.FechaInicio; d.FechaFin = ej.FechaFin; d.EjercicioId = ej.Id;
+        (d.PlazoDesde, d.PlazoHasta) = PlazoPresentacion.Calcular("200", p with { Inicio = ej.FechaInicio, Fin = ej.FechaFin });
+        var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = ej.FechaFin };
+        var resultado = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
+        var retenciones = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlRetencionesIs, q, tx, cancellationToken: ct));
+        var pagos = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
+            WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA'
+            """, q, tx, cancellationToken: ct));
+        var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
+        var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+        CalculadorSociedades.Calcular200(new Entrada200(resultado, datos.Lista, datos.ReservaCapitalizacion, bins, datos.Incn, datos.Bonificaciones,
+            datos.Deducciones, retenciones, pagos, new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin), d);
+        if (ej.FechaFin.DayNumber - ej.FechaInicio.DayNumber < 364)
+            d.Avisos.Add("Periodo impositivo inferior al año: revisa los límites proporcionales (reserva de capitalización, compensación de bases negativas).");
+    }
+
+    private static async Task Calcular202Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
+        DeclaracionCalculada d, CancellationToken ct)
+    {
+        ExigeIs(empresa);
+        // Periodo impositivo en curso el primer día del plazo (1 de abril, octubre o diciembre)
+        var plazo = new DateOnly(p.Anio, p.Codigo switch { "1P" => 4, "2P" => 10, _ => 12 }, 1);
+        var ej = await cn.QueryFirstOrDefaultAsync<EjercicioIsFila>(new CommandDefinition("""
+            SELECT id, fecha_inicio, fecha_fin FROM core.ejercicio
+            WHERE empresa_id = @empresaId AND @plazo BETWEEN fecha_inicio AND fecha_fin ORDER BY fecha_inicio LIMIT 1
+            """, new { empresaId, plazo }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException($"No hay ningún ejercicio en curso el {plazo:dd/MM/yyyy}.");
+        var finBase = plazo.AddDays(-1);
+        if (finBase < ej.FechaInicio)
+            throw new ReglaContableException("El periodo impositivo empieza el mismo mes del plazo: no hay pago fraccionado en este periodo.");
+        d.FechaInicio = ej.FechaInicio; d.FechaFin = finBase; d.EjercicioId = ej.Id;
+        var tipo = new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje);
+        if (empresa.IsModalidad202 == "ART_40_3")
+        {
+            var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = finBase };
+            var baseAcum = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
+            var ret = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlRetencionesIs, q, tx, cancellationToken: ct));
+            var anteriores = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+                SELECT COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
+                WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @hasta
+                """, q, tx, cancellationToken: ct));
+            var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
+            var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+            CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", tipo, ej.FechaInicio.Year, 0, baseAcum, bins, datos.Bonificaciones,
+                ret, anteriores), d);
+        }
+        else
+        {
+            // Último periodo impositivo cuyo plazo de declaración haya vencido el primer día del plazo del pago fraccionado
+            var ultimo = await cn.QueryFirstOrDefaultAsync<decimal?>(new CommandDefinition("""
+                SELECT COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'CL'), 0)
+                     - COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'RET'), 0)
+                FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
+                WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND (d.fecha_fin + interval '6 months 25 days')::date < @plazo
+                ORDER BY d.fecha_fin DESC, d.numero_presentacion DESC LIMIT 1
+                """, new { empresaId, plazo }, tx, cancellationToken: ct));
+            if (ultimo is null) d.Avisos.Add("No hay ningún modelo 200 presentado cuyo plazo haya vencido: el pago fraccionado del art. 40.2 es cero.");
+            CalculadorSociedades.Calcular202(new Entrada202("ART_40_2", tipo, ej.FechaInicio.Year, ultimo ?? 0, 0, 0, 0, 0, 0), d);
         }
     }
 
@@ -700,6 +824,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     aIngresar = d.AIngresar, aDevolver = d.ADevolver, aCompensar = d.ACompensar, datos, opciones, usuarioId }, tx, cancellationToken: ct));
         }
 
+        if (d.EjercicioId is { } ejIs)
+            await cn.ExecuteAsync(new CommandDefinition("UPDATE fiscal.declaracion SET ejercicio_id = @ejIs, fecha_inicio = @ini, fecha_fin = @fin WHERE id = @id",
+                new { ejIs, ini = d.FechaInicio, fin = d.FechaFin, id }, tx, cancellationToken: ct));
         await cn.ExecuteAsync(new CommandDefinition("""
             INSERT INTO fiscal.declaracion_casilla (declaracion_id, casilla, importe, texto, orden) VALUES (@id, @clave, @importe, @texto, @orden)
             """, d.Casillas.Select((c, i) => new { id, clave = c.Clave, importe = c.Importe, texto = c.Descripcion, orden = (short)i }),
@@ -751,6 +878,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 detalle = det.Clone();
         }
         var p = PeriodoFiscal.Resolver(f.Anio, f.Periodo);
+        if (f.Codigo == "200") p = p with { Inicio = f.FechaInicio, Fin = f.FechaFin };   // periodo impositivo (puede ser partido)
         var (pd, ph) = PlazoPresentacion.Calcular(f.Codigo, p);
         return new DeclaracionVista(f.Id, f.Codigo, f.Nombre, f.Estado, f.Anio, f.Periodo, f.FechaInicio, f.FechaFin, casillas,
             f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph, f.NumeroPresentacion, f.TipoDeclaracion);

@@ -46,3 +46,33 @@ CREATE TABLE IF NOT EXISTS fiscal.modulos (
   porcentaje_cuota_minima numeric(5,2) NOT NULL DEFAULT 0 CHECK (porcentaje_cuota_minima BETWEEN 0 AND 100)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_modulos ON fiscal.modulos (empresa_id, anio, descripcion);
+
+-- ---------------------------------------------------------------- Impuesto sobre Sociedades (200 y 202)
+-- Tipo de gravamen: GENERAL (25 %), NUEVA_CREACION (15 %), REDUCIDA_DIMENSION, MICRO (tramos) o PERSONALIZADO (is_porcentaje)
+ALTER TABLE core.empresa ADD COLUMN IF NOT EXISTS is_tipo varchar(20) NOT NULL DEFAULT 'GENERAL';
+ALTER TABLE core.empresa DROP CONSTRAINT IF EXISTS empresa_is_tipo_check;
+ALTER TABLE core.empresa ADD CONSTRAINT empresa_is_tipo_check
+  CHECK (is_tipo IN ('GENERAL','NUEVA_CREACION','REDUCIDA_DIMENSION','MICRO','PERSONALIZADO'));
+ALTER TABLE core.empresa ADD COLUMN IF NOT EXISTS is_porcentaje numeric(5,2);
+-- Modalidad del pago fraccionado: art. 40.2 (18 % de la cuota del último periodo) o 40.3 (sobre la base del periodo transcurrido)
+ALTER TABLE core.empresa ADD COLUMN IF NOT EXISTS is_modalidad_202 varchar(10) NOT NULL DEFAULT 'ART_40_2';
+ALTER TABLE core.empresa DROP CONSTRAINT IF EXISTS empresa_is_modalidad_202_check;
+ALTER TABLE core.empresa ADD CONSTRAINT empresa_is_modalidad_202_check CHECK (is_modalidad_202 IN ('ART_40_2','ART_40_3'));
+
+-- Datos del periodo impositivo que no salen de la contabilidad: ajustes extracontables, reserva de capitalización, bonificaciones,
+-- deducciones e importe neto de la cifra de negocios (límite de compensación de bases negativas)
+CREATE TABLE IF NOT EXISTS fiscal.impuesto_sociedades (
+  empresa_id     bigint NOT NULL REFERENCES core.empresa(id),
+  ejercicio_id   bigint NOT NULL REFERENCES core.ejercicio(id),
+  ajustes        jsonb NOT NULL DEFAULT '[]',
+  reserva_capitalizacion numeric(18,2) NOT NULL DEFAULT 0,
+  bonificaciones numeric(18,2) NOT NULL DEFAULT 0,
+  deducciones    numeric(18,2) NOT NULL DEFAULT 0,
+  incn           numeric(18,2) NOT NULL DEFAULT 0,
+  bins_anteriores numeric(18,2) NOT NULL DEFAULT 0,      -- bases negativas de antes de usar la aplicación
+  PRIMARY KEY (empresa_id, ejercicio_id)
+);
+
+-- Periodos de los pagos fraccionados del 202: 1P (abril), 2P (octubre) y 3P (diciembre)
+ALTER TABLE fiscal.declaracion DROP CONSTRAINT IF EXISTS ck_decl_periodo;
+ALTER TABLE fiscal.declaracion ADD CONSTRAINT ck_decl_periodo CHECK (periodo ~ '^([1-4]T|0[1-9]|1[0-2]|0A|[1-3]P)$');
