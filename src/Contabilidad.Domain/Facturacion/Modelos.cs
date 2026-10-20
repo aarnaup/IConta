@@ -16,10 +16,13 @@ public sealed record LineaIvaCalculada(
 public sealed record RetencionEntrada(long TipoRetencionId, long? VigenciaId, decimal Porcentaje);
 public sealed record RetencionCalculada(long TipoRetencionId, long? VigenciaId, decimal Base, decimal Porcentaje, decimal Importe);
 
-/// <summary>Total = líquido a cobrar/pagar = base + cuota + recargo - retención.</summary>
+/// <summary>
+/// Total = líquido a cobrar/pagar = base + cuota + recargo − retención − cuota autorrepercutida
+/// (la de adquisiciones intracomunitarias e inversión del sujeto pasivo, que no se paga al proveedor).
+/// </summary>
 public sealed record TotalesFactura(
     decimal Base, decimal Cuota, decimal CuotaDeducible, decimal CuotaNoDeducible,
-    decimal Recargo, decimal Retencion, decimal Total);
+    decimal Recargo, decimal Retencion, decimal Total, decimal CuotaAutorrepercutida = 0);
 
 public sealed record FacturaCalculada(
     IReadOnlyList<LineaIvaCalculada> Lineas, RetencionCalculada? Retencion, TotalesFactura Totales);

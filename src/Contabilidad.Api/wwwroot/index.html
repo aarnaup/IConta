@@ -221,7 +221,7 @@
           <label>Forma de pago <select id="fForma"></select></label>
         </div>
         <table>
-          <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th>
+          <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th><th style="width:220px">Operación</th>
             <th id="thDed" style="width:230px">Deducción</th><th style="width:28px"></th></tr></thead>
           <tbody id="fLineas"></tbody>
         </table>
@@ -232,7 +232,9 @@
           <button class="btn" id="fBorrador" data-guarda type="button">Guardar borrador</button>
           <span id="fMsg" role="status" aria-live="polite"></span>
         </div>
-        <p class="ayuda">El % de impuesto se toma de la fecha de la factura. El asiento sale de la plantilla de compras o ventas; con prorrata, la regla «Prorrata» usa el % del año natural.</p>
+        <p class="ayuda">El % de impuesto se toma de la fecha de la factura. El asiento sale de la plantilla de compras o ventas; con prorrata, la regla «Prorrata» usa el % del año natural.
+          En las adquisiciones intracomunitarias y con inversión del sujeto pasivo la cuota se autorrepercute: el proveedor cobra solo la base,
+          y el asiento lleva la cuota a la 477 (devengada) y la deducible a la 472.</p>
       </div>
 
       <div class="panel" id="fPreview" hidden>

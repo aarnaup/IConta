@@ -310,7 +310,15 @@ $('#mayorBtn').onclick = async () => {
 
 // ------------------------------------------------------------ facturas
 const fst = { tipos: [], rets: [], terceros: [], formas: [], lineas: [] };
-const nuevaFL = () => ({ tipoIvaId: null, base: '', regla: 'TOTAL', pct: '' });
+const nuevaFL = () => ({ tipoIvaId: null, base: '', regla: 'TOTAL', pct: '', op: '', inv: false });
+// Operaciones por libro ('' = interior, o exenta si el tipo es exento). En el IGIC no hay intracomunitarias.
+const OPS_FACTURA = {
+  EMITIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ENTREGA', 'Entrega intracomunitaria (exenta)'],
+             ['EXPORTACION', 'Exportación (exenta)'], ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo']],
+  RECIBIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ADQUISICION', 'Adquisición intracomunitaria'],
+              ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo'], ['IMPORTACION', 'Importación (DUA)']]
+};
+const opsFactura = () => OPS_FACTURA[$('#fLibro').value].filter(([v]) => !(S.empresa && S.empresa.impuestoIndirecto === 'IGIC' && v.startsWith('INTRACOM')));
 const esEmitida = () => $('#fLibro').value === 'EMITIDAS';
 const setF = (t, c) => msg($('#fMsg'), t, c);
 
@@ -343,6 +351,7 @@ function pintaFL() {
       <td><select data-f="tipoIvaId" aria-label="Tipo de impuesto ${i + 1}">${fst.tipos.map(t =>
         `<option value="${t.id}" ${t.id === l.tipoIvaId ? 'selected' : ''}>${esc(t.nombre)} (${fmt(t.porcentaje)} %${t.recargo ? ' + rec. ' + fmt(t.recargo) : ''})</option>`).join('')}</select></td>
       <td><input data-f="base" class="num" inputmode="decimal" value="${esc(l.base)}" aria-label="Base ${i + 1}"></td>
+      <td><select data-f="op" aria-label="Operación ${i + 1}">${opsFactura().map(([v, n]) => `<option value="${v}" ${v === l.op ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></td>
       <td ${esEmitida() ? 'style="display:none"' : ''}>
         <select data-f="regla" aria-label="Deducción ${i + 1}">
           <option value="TOTAL" ${l.regla === 'TOTAL' ? 'selected' : ''}>Deducible al 100 %</option>
@@ -351,6 +360,7 @@ function pintaFL() {
           <option value="NINGUNA" ${l.regla === 'NINGUNA' ? 'selected' : ''}>No deducible</option>
         </select>
         ${l.regla === 'PORCENTAJE_AFECTACION' ? `<input data-f="pct" class="num" inputmode="decimal" value="${esc(l.pct)}" placeholder="% afectación" aria-label="% afectación ${i + 1}">` : ''}
+        <label class="ayuda"><input type="checkbox" data-f="inv" ${l.inv ? 'checked' : ''}> Bien de inversión</label>
       </td>
       <td><button class="x" type="button" data-fdel="${i}" aria-label="Quitar línea ${i + 1}">×</button></td>
     </tr>`).join('');
@@ -358,7 +368,8 @@ function pintaFL() {
 
 $('#fLineas').addEventListener('input', e => {
   const tr = e.target.closest('tr'); if (!tr || !e.target.dataset.f) return;
-  fst.lineas[+tr.dataset.i][e.target.dataset.f] = e.target.dataset.f === 'tipoIvaId' ? +e.target.value : e.target.value;
+  const f = e.target.dataset.f;
+  fst.lineas[+tr.dataset.i][f] = f === 'tipoIvaId' ? +e.target.value : f === 'inv' ? e.target.checked : e.target.value;
 });
 $('#fLineas').addEventListener('change', e => { if (e.target.dataset.f === 'regla') pintaFL(); });
 $('#fLineas').addEventListener('click', e => {
@@ -366,7 +377,7 @@ $('#fLineas').addEventListener('click', e => {
   fst.lineas.splice(+d, 1); if (!fst.lineas.length) fst.lineas.push(nuevaFL()); pintaFL();
 });
 $('#fAdd').onclick = () => { const l = nuevaFL(); l.tipoIvaId = (fst.tipos[0] || {}).id ?? null; fst.lineas.push(l); pintaFL(); };
-$('#fLibro').onchange = () => { fst.lineas.forEach(l => l.regla = 'TOTAL'); $('#fPreview').hidden = true; cargaFacturas().catch(e => setF(e.message, 'err')); };
+$('#fLibro').onchange = () => { fst.lineas.forEach(l => { l.regla = 'TOTAL'; l.op = ''; l.inv = false; }); $('#fPreview').hidden = true; cargaFacturas().catch(e => setF(e.message, 'err')); };
 $('#fFecha').onchange = () => cargaFacturas().catch(e => setF(e.message, 'err'));
 
 function cmdFactura(borrador) {
@@ -376,8 +387,9 @@ function cmdFactura(borrador) {
     fechaExpedicion: $('#fFecha').value, tipoRetencionId: +$('#fRet').value || null, borrador,
     lineas: fst.lineas.filter(l => l.tipoIvaId && num(l.base)).map(l => {
       const t = fst.tipos.find(x => x.id === l.tipoIvaId);
-      return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: t && t.esExento ? 'EXENTA' : 'INTERIOR',
-               reglaDeduccion: esEmitida() ? 'TOTAL' : l.regla, porcentajeDeduccion: l.regla === 'PORCENTAJE_AFECTACION' ? num(l.pct) : null };
+      return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: l.op || (t && t.esExento ? 'EXENTA' : 'INTERIOR'),
+               reglaDeduccion: esEmitida() ? 'TOTAL' : l.regla, porcentajeDeduccion: l.regla === 'PORCENTAJE_AFECTACION' ? num(l.pct) : null,
+               esBienInversion: !esEmitida() && !!l.inv };
     })
   };
 }
@@ -387,6 +399,7 @@ function pintaPreview(r) {
   const caja = (n, v) => `<div><span>${n}</span><strong>${fmt(v)}</strong></div>`;
   $('#fTotales').innerHTML = caja('Base', t.base) + caja('Cuota', t.cuota)
     + (esEmitida() ? '' : caja('Cuota deducible', t.cuotaDeducible) + caja('No deducible', t.cuotaNoDeducible))
+    + (t.cuotaAutorrepercutida ? caja('Autorrepercutida', t.cuotaAutorrepercutida) : '')
     + (t.recargo ? caja('Recargo', t.recargo) : '') + (t.retencion ? caja('Retención', t.retencion) : '') + caja('Total', t.total);
   $('#fAsiento').innerHTML = r.asiento.map(a => `<tr><td>${esc(a.cuenta)}</td><td class="nombre">${esc(a.cuentaNombre)}</td>
     <td>${esc((S.canales.find(c => c.id === a.canalId) || {}).codigo || '')}</td>
@@ -871,7 +884,7 @@ const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#l
 $('#lrVer').onclick = async () => {
   try {
     const d = await api(urlE(consultaLibro()));
-    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta' };
+    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta', INTRACOM_ENTREGA: 'Entrega intracom.', INTRACOM_ADQUISICION: 'Adquisición intracom.', EXPORTACION: 'Exportación', IMPORTACION: 'Importación', INVERSION_SUJETO_PASIVO: 'Inv. sujeto pasivo' };
     $('#lrResumen').textContent = `${rec ? 'Facturas recibidas' : 'Facturas expedidas'} · ${imp} · del ${fechaES(d.desde)} al ${fechaES(d.hasta)} · ${d.facturas} factura(s). `
       + `Base ${fmt(d.totalBase)}, cuota ${fmt(d.totalCuota)}${d.totalRecargo ? ', recargo ' + fmt(d.totalRecargo) : ''}${rec ? ', deducible ' + fmt(d.totalCuotaDeducible) : ''}, total ${fmt(d.totalFacturas)}.`;
     $('#lrAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
