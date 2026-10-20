@@ -575,6 +575,19 @@
           <button class="btn" id="prGuardar" type="button">Guardar</button>
         </div>
         <p id="prMsg" class="ayuda" role="status"></p>
+        <h3>Regularización por prorrata definitiva</h3>
+        <p class="ayuda">Diferencia entre el % aplicado en el año y el definitivo (casilla 44 del 303). Se contabiliza contra 6391/6392 (más deducción)
+          o 6341/6342 (menos) antes de liquidar el último periodo.</p>
+        <div class="fila-acciones">
+          <label>Año <input id="prRegAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="prRegVer" type="button">Ver</button>
+          <button class="btn primario" id="prRegContabilizar" data-req="FISCAL_DIRECTO" data-guarda type="button">Contabilizar</button>
+          <button class="btn" id="prRegAnular" data-req="FISCAL_DIRECTO" type="button" hidden>Anular el asiento</button>
+        </div>
+        <ul id="prRegAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Factura</th><th>Proveedor</th><th>Fecha</th><th class="num">Cuota</th><th class="num">% aplicado</th><th class="num">% definitivo</th>
+          <th class="num">Regularización</th></tr></thead><tbody id="prRegLista"></tbody></table>
+        <p id="prRegMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">

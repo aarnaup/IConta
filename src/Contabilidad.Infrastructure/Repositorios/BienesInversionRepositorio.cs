@@ -15,6 +15,9 @@ public interface IBienesInversionRepositorio
     Task<LibroBienesInversionDto> LibroAsync(long empresaId, int anio, CancellationToken ct);
     Task<RegularizacionContabilizadaDto> ContabilizarAsync(long empresaId, long ejercicioId, long usuarioId, RegularizarBienesCmd cmd, CancellationToken ct);
     Task AnularAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
+    Task<RegularizacionProrrataDto> RegularizacionProrrataAsync(long empresaId, int anio, CancellationToken ct);
+    Task<RegularizacionProrrataDto> ContabilizarProrrataAsync(long empresaId, long ejercicioId, long usuarioId, RegularizarProrrataCmd cmd, CancellationToken ct);
+    Task AnularProrrataAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
 }
 
 /// <summary>
@@ -414,6 +417,157 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
             new { asientoId }, tx, cancellationToken: ct));
         await cn.ExecuteAsync(new CommandDefinition("UPDATE conta.asiento SET estado = 'ANULADO' WHERE id = @asientoId",
             new { asientoId }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+    }
+
+    // =====================================================================
+    // Asiento de regularización por prorrata definitiva (casilla 44 del 303 / REG del 420)
+    // =====================================================================
+    private sealed class LineaProrrataFila
+    {
+        public long FacturaId { get; set; }
+        public string Factura { get; set; } = "";
+        public string Tercero { get; set; } = "";
+        public DateOnly FechaContable { get; set; }
+        public long? CanalId { get; set; }
+        public long TipoIvaId { get; set; }
+        public decimal Cuota { get; set; }
+        public decimal PorcentajeAplicado { get; set; }
+        public int? PorcentajeDefinitivo { get; set; }
+        public bool BienInversion { get; set; }
+    }
+    private sealed class ProrrataHechaFila { public long AsientoId { get; set; } public int Numero { get; set; } public decimal Importe { get; set; } }
+
+    private static async Task<List<LineaProrrataFila>> LineasProrrataAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, int anio,
+        CancellationToken ct)
+        => (await cn.QueryAsync<LineaProrrataFila>(new CommandDefinition("""
+               SELECT f.id AS factura_id, COALESCE(f.serie, '') || f.numero AS factura, t.nombre AS tercero, f.fecha_contable, f.canal_id,
+                      fi.tipo_iva_id, fi.cuota, fi.porcentaje_deduccion AS porcentaje_aplicado, pr.porcentaje_definitivo,
+                      fi.es_bien_inversion AS bien_inversion
+               FROM fiscal.factura f
+               JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+               JOIN cat.tipo_iva ti ON ti.id = fi.tipo_iva_id
+               JOIN core.empresa e ON e.id = f.empresa_id
+               JOIN conta.tercero t ON t.id = f.tercero_id
+               LEFT JOIN core.empresa_actividad a ON a.id = f.actividad_id
+               LEFT JOIN fiscal.prorrata pr ON pr.empresa_id = f.empresa_id AND pr.anio = @anio
+                    AND pr.sector_diferenciado IS NOT DISTINCT FROM a.sector_diferenciado
+               WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
+                 AND fi.regla_deduccion = 'PRORRATA' AND fi.tipo_operacion IN ('INTERIOR','IMPORTACION','INTRACOM_ADQUISICION','INVERSION_SUJETO_PASIVO')
+                 AND ti.impuesto = e.impuesto_indirecto AND f.fecha_contable BETWEEN make_date(@anio, 1, 1) AND make_date(@anio, 12, 31)
+               ORDER BY f.fecha_contable, f.id
+               """, new { empresaId, anio }, tx, cancellationToken: ct))).AsList();
+
+    private static decimal ImporteProrrata(LineaProrrataFila l)
+        => l.PorcentajeDefinitivo is { } d ? Math.Round(l.Cuota * (d - l.PorcentajeAplicado) / 100m, 2, MidpointRounding.AwayFromZero) : 0;
+
+    public async Task<RegularizacionProrrataDto> RegularizacionProrrataAsync(long empresaId, int anio, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        return await RegularizacionProrrataAsync(cn, null, empresaId, anio, ct);
+    }
+
+    private static async Task<RegularizacionProrrataDto> RegularizacionProrrataAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, int anio,
+        CancellationToken ct)
+    {
+        if (anio is < 2000 or > 2100) throw new ReglaContableException("El año no es válido.");
+        var filas = await LineasProrrataAsync(cn, tx, empresaId, anio, ct);
+        var hecha = await cn.QuerySingleOrDefaultAsync<ProrrataHechaFila>(new CommandDefinition("""
+            SELECT r.asiento_id, s.numero, r.importe FROM fiscal.regularizacion_prorrata r JOIN conta.asiento s ON s.id = r.asiento_id
+            WHERE r.empresa_id = @empresaId AND r.anio = @anio AND s.estado <> 'ANULADO'
+            """, new { empresaId, anio = (short)anio }, tx, cancellationToken: ct));
+        var avisos = new List<string>();
+        var sinDefinitiva = filas.Count(f => f.PorcentajeDefinitivo is null);
+        if (sinDefinitiva > 0)
+            avisos.Add($"{sinDefinitiva} línea(s) sin porcentaje definitivo de {anio}: no se regularizan. Fija el definitivo y vuelve a calcular.");
+        if (filas.Count == 0) avisos.Add($"No hay facturas con la regla de prorrata en {anio}.");
+        var lineas = filas.Select(f => new LineaRegularizacionProrrataDto
+        {
+            FacturaId = f.FacturaId, Factura = f.Factura, Tercero = f.Tercero, FechaContable = f.FechaContable, Cuota = f.Cuota,
+            PorcentajeAplicado = f.PorcentajeAplicado, PorcentajeDefinitivo = f.PorcentajeDefinitivo ?? 0, Importe = ImporteProrrata(f),
+            BienInversion = f.BienInversion
+        }).ToList();
+        var total = lineas.Sum(l => l.Importe);
+        if (hecha is not null && hecha.Importe != total)
+            avisos.Add($"El asiento contabilizado regulariza {hecha.Importe:N2} y ahora sale {total:N2}: anúlalo y vuelve a contabilizarlo.");
+        return new RegularizacionProrrataDto(anio, lineas, total, hecha?.Importe ?? 0, hecha?.AsientoId, hecha?.Numero, avisos);
+    }
+
+    public async Task<RegularizacionProrrataDto> ContabilizarProrrataAsync(long empresaId, long ejercicioId, long usuarioId, RegularizarProrrataCmd cmd,
+        CancellationToken ct)
+    {
+        var fecha = cmd.Fecha ?? new DateOnly(cmd.Anio, 12, 31);
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        await cn.ExecuteAsync(new CommandDefinition("SELECT pg_advisory_xact_lock(hashtext(@clave))",
+            new { clave = $"prorrata|{empresaId}" }, tx, cancellationToken: ct));
+        var ej = await cn.QuerySingleOrDefaultAsync<EjercicioFila>(new CommandDefinition(
+            "SELECT fecha_inicio, fecha_fin, estado FROM core.ejercicio WHERE id = @ejercicioId AND empresa_id = @empresaId",
+            new { ejercicioId, empresaId }, tx, cancellationToken: ct)) ?? throw new ReglaContableException("El ejercicio no existe en la empresa.");
+        if (ej.Estado != "ABIERTO") throw new ReglaContableException("El ejercicio está cerrado.");
+        if (fecha < ej.FechaInicio || fecha > ej.FechaFin) throw new ReglaContableException("La fecha del asiento debe estar dentro del ejercicio seleccionado.");
+        if (fecha.Year != cmd.Anio) throw new ReglaContableException("La regularización se contabiliza con una fecha del mismo año natural.");
+
+        var previa = await RegularizacionProrrataAsync(cn, tx, empresaId, cmd.Anio, ct);
+        if (previa.AsientoId is not null)
+            throw new ReglaContableException($"La regularización de {cmd.Anio} ya está contabilizada (asiento nº {previa.AsientoNumero}).");
+        var filas = (await LineasProrrataAsync(cn, tx, empresaId, cmd.Anio, ct)).Where(f => ImporteProrrata(f) != 0).ToList();
+        if (filas.Count == 0) throw new ReglaContableException($"No hay nada que regularizar por prorrata en {cmd.Anio}.");
+
+        var reglas = (await cn.QueryAsync<(string Rol, long? TipoIvaId, long? TipoRetencionId, long CuentaId)>(new CommandDefinition(
+            "SELECT rol, tipo_iva_id, tipo_retencion_id, cuenta_id FROM conta.cuenta_automatica WHERE empresa_id = @empresaId",
+            new { empresaId }, tx, cancellationToken: ct))).Select(r => new Domain.Facturacion.CuentaAutomatica(r.Rol, r.TipoIvaId, r.TipoRetencionId, r.CuentaId)).ToList();
+        var cuentas = new Domain.Facturacion.ResolutorCuentas(reglas, null, null);
+        async Task<long> Pgc(string codigo) => await cn.ExecuteScalarAsync<long?>(new CommandDefinition("SELECT inmov.asegurar_cuenta(@empresaId, @codigo)",
+            new { empresaId, codigo }, tx, cancellationToken: ct)) ?? throw new ReglaContableException($"La empresa no tiene la cuenta {codigo}.");
+        var canalDefecto = await cn.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT id FROM canal.canal WHERE empresa_id = @empresaId ORDER BY id LIMIT 1", new { empresaId }, tx, cancellationToken: ct));
+
+        var apuntes = new List<ApunteGenerado>();
+        foreach (var g in filas.GroupBy(f => (Canal: f.CanalId ?? canalDefecto, f.TipoIvaId, f.BienInversion)))
+        {
+            var importe = g.Sum(ImporteProrrata);
+            if (importe == 0) continue;
+            var soportado = cuentas.Resolver(null, "IVA_SOPORTADO", g.Key.TipoIvaId);
+            if (importe > 0)
+            {
+                apuntes.Add(new(soportado, g.Key.Canal, importe, 0));
+                apuntes.Add(new(await Pgc(g.Key.BienInversion ? "6392" : "6391"), g.Key.Canal, 0, importe));
+            }
+            else
+            {
+                apuntes.Add(new(await Pgc(g.Key.BienInversion ? "6342" : "6341"), g.Key.Canal, -importe, 0));
+                apuntes.Add(new(soportado, g.Key.Canal, 0, -importe));
+            }
+        }
+        var concepto = $"Regularización por prorrata definitiva {cmd.Anio}";
+        var a = await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId, new CrearAsientoCmd
+        {
+            Fecha = fecha, DiarioId = await ConsultasContables.DiarioAsync(cn, tx, empresaId, null, ct), Concepto = concepto,
+            Apuntes = ConsultasContables.AApuntes(apuntes, concepto)
+        }, "PRORRATA", null, $"PRORRATA {cmd.Anio}", ct);
+        await cn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO fiscal.regularizacion_prorrata (empresa_id, anio, fecha, importe, asiento_id) VALUES (@empresaId, @anio, @fecha, @importe, @asientoId)
+            """, new { empresaId, anio = (short)cmd.Anio, fecha, importe = filas.Sum(ImporteProrrata), asientoId = a.Id }, tx, cancellationToken: ct));
+        var r = await RegularizacionProrrataAsync(cn, tx, empresaId, cmd.Anio, ct);
+        await tx.CommitAsync(ct);
+        return r;
+    }
+
+    public async Task AnularProrrataAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var a = await cn.QuerySingleOrDefaultAsync<AsientoFila>(new CommandDefinition("""
+            SELECT s.id, s.estado, s.ejercicio_id, e.estado AS ej_estado FROM conta.asiento s JOIN core.ejercicio e ON e.id = s.ejercicio_id
+            WHERE s.id = @asientoId AND s.empresa_id = @empresaId AND s.origen = 'PRORRATA' FOR UPDATE OF s
+            """, new { asientoId, empresaId }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException("El asiento no es una regularización por prorrata.");
+        if (a.Estado == "ANULADO") throw new ReglaContableException("El asiento ya está anulado.");
+        if (a.EjercicioId != ejercicioId) throw new ReglaContableException("El asiento pertenece a otro ejercicio: selecciónalo para anularlo.");
+        if (a.EjEstado != "ABIERTO") throw new ReglaContableException("El ejercicio está cerrado.");
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM fiscal.regularizacion_prorrata WHERE asiento_id = @asientoId", new { asientoId }, tx, cancellationToken: ct));
+        await cn.ExecuteAsync(new CommandDefinition("UPDATE conta.asiento SET estado = 'ANULADO' WHERE id = @asientoId", new { asientoId }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
     }
 }

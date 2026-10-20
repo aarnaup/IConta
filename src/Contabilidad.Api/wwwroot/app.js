@@ -922,7 +922,32 @@ async function listaProrratas() {
       <td class="num">${p.operacionesTotales != null ? fmt(p.operacionesTotales) : ''}</td></tr>`).join('')
     || '<tr><td colspan="6" class="vacio">Sin prorrata: se deduce todo el impuesto soportado.</td></tr>';
   if (!$('#prAnio').value) $('#prAnio').value = $('#mfAnio').value;
+  if (!$('#prRegAnio').value) $('#prRegAnio').value = $('#mfAnio').value;
 }
+let PR_ASIENTO = null;
+async function verRegProrrata() {
+  const r = await api(urlE(`/fiscal/prorratas/${+$('#prRegAnio').value}/regularizacion`));
+  PR_ASIENTO = r.asientoId;
+  $('#prRegAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#prRegLista').innerHTML = (r.lineas.map(l => `<tr><td>${esc(l.factura)}${l.bienInversion ? ' (bien de inversión)' : ''}</td><td>${esc(l.tercero)}</td>
+      <td>${fechaES(l.fechaContable)}</td><td class="num">${fmt(l.cuota)}</td><td class="num">${fmt(l.porcentajeAplicado)} %</td>
+      <td class="num">${l.porcentajeDefinitivo} %</td><td class="num">${fmt(l.importe)}</td></tr>`).join('')
+    + (r.lineas.length ? `<tr class="total"><td colspan="6">Total${r.asientoNumero ? ' · contabilizado en el asiento nº ' + r.asientoNumero : ' · sin contabilizar'}</td>
+      <td class="num">${fmt(r.importe)}</td></tr>` : '')) || '<tr><td colspan="7" class="vacio">Sin líneas con prorrata en el año.</td></tr>';
+  $('#prRegAnular').hidden = !r.asientoId || !permitido('FISCAL_DIRECTO');
+}
+$('#prRegVer').onclick = () => verRegProrrata().catch(e => msg($('#prRegMsg'), e.message, 'ayuda err-texto'));
+$('#prRegContabilizar').onclick = async () => {
+  try {
+    const r = await post(urlX('/fiscal/prorratas/regularizar'), { anio: +$('#prRegAnio').value });
+    await verRegProrrata(); msg($('#prRegMsg'), `Regularización contabilizada (asiento nº ${r.asientoNumero}) por ${fmt(r.importe)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#prRegMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#prRegAnular').onclick = async () => {
+  if (!PR_ASIENTO || !confirm('¿Anular el asiento de regularización por prorrata?')) return;
+  try { await api(urlX('/fiscal/prorratas/regularizacion/' + PR_ASIENTO), { method: 'DELETE' }); await verRegProrrata(); msg($('#prRegMsg'), 'Regularización anulada.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#prRegMsg'), e.message, 'ayuda err-texto'); }
+};
 $('#prGuardar').onclick = async () => {
   try {
     const ent = id => $(id).value.trim() ? parseInt($(id).value, 10) : null, dec = id => $(id).value.trim() ? num($(id).value) : null;

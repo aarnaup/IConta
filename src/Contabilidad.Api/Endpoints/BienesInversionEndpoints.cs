@@ -25,6 +25,25 @@ public static class BienesInversionEndpoints
             return Results.Ok(p);
         }).Requiere(Nivel.Escritura, Modulo.Fiscal);
 
+        fis.MapGet("/prorratas/{anio:int}/regularizacion", async (long empresaId, int anio, IBienesInversionRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.RegularizacionProrrataAsync(empresaId, anio, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+        var ejf = app.MapGroup("/api/empresas/{empresaId:long}/ejercicios/{ejercicioId:long}/fiscal/prorratas").RequireAuthorization();
+        ejf.MapPost("/regularizar", async (long empresaId, long ejercicioId, RegularizarProrrataCmd cmd, HttpContext http, IBienesInversionRepositorio r,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var v = await r.ContabilizarProrrataAsync(empresaId, ejercicioId, http.User.UsuarioId(), cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "PRORRATA_REGULARIZADA", "asiento", v.AsientoId, new { cmd.Anio, v.Importe }, ct);
+            return Results.Ok(v);
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+        ejf.MapDelete("/regularizacion/{asientoId:long}", async (long empresaId, long ejercicioId, long asientoId, HttpContext http,
+            IBienesInversionRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.AnularProrrataAsync(empresaId, ejercicioId, asientoId, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "PRORRATA_REGULARIZACION_ANULADA", "asiento", asientoId, null, ct);
+            return Results.NoContent();
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+
         var inm = app.MapGroup("/api/empresas/{empresaId:long}/inmovilizado").RequireAuthorization();
         inm.MapGet("/bienes-inversion", async (long empresaId, int? anio, IBienesInversionRepositorio r, CancellationToken ct)
             => Results.Ok(await r.LibroAsync(empresaId, anio ?? DateTime.Today.Year, ct)))

@@ -42,6 +42,7 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         public decimal ResultadoAntes { get; set; }
         public decimal Compensacion { get; set; }
         public decimal RegularizacionProrrata { get; set; }
+        public decimal ProrrataContabilizada { get; set; }
         public decimal RegularizacionBienes { get; set; }
         public decimal BienesContabilizado { get; set; }
     }
@@ -116,6 +117,9 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'COMP' ELSE '68' END), 0) AS compensacion,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'REG' ELSE '44' END), 0) AS regularizacion_prorrata,
+                      COALESCE((SELECT SUM(r.importe) FROM fiscal.regularizacion_prorrata r
+                                JOIN conta.asiento a ON a.id = r.asiento_id AND a.estado <> 'ANULADO'
+                                WHERE r.empresa_id = d.empresa_id AND r.fecha BETWEEN d.fecha_inicio AND d.fecha_fin), 0) AS prorrata_contabilizada,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'RBI' ELSE '43' END), 0) AS regularizacion_bienes,
                       COALESCE((SELECT SUM(r.importe_regularizacion) FROM inmov.bien_inversion_regularizacion r
@@ -215,13 +219,13 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
 
         // Contraste con la declaración: la regularización de prorrata no está en la contabilidad
         // La de bienes de inversión sí, si se ha contabilizado su asiento (472 contra 6342/6392) dentro del periodo
-        var esperado = d.ResultadoAntes + d.RegularizacionProrrata + d.RegularizacionBienes - d.BienesContabilizado;
+        var esperado = d.ResultadoAntes + d.RegularizacionProrrata - d.ProrrataContabilizada + d.RegularizacionBienes - d.BienesContabilizado;
         if (d.RegularizacionBienes != d.BienesContabilizado)
             avisos.Add($"La declaración regulariza {d.RegularizacionBienes:N2} por bienes de inversión y hay contabilizados {d.BienesContabilizado:N2} en el periodo: " +
                        "contabiliza la regularización (Inmovilizado → Bienes de inversión) antes de la liquidación.");
-        if (d.RegularizacionProrrata != 0)
-            avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y eso no está en la contabilidad: " +
-                       "regístralo con un asiento manual (634/639 contra 472).");
+        if (d.RegularizacionProrrata != d.ProrrataContabilizada)
+            avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y hay contabilizados {d.ProrrataContabilizada:N2} " +
+                       "en el periodo: contabiliza la regularización (Modelos fiscales → Prorrata) antes de la liquidación.");
         if (pendienteCaja != 0)
             avisos.Add($"Hay {pendienteCaja:N2} de impuesto en criterio de caja devengado en el periodo sin traspasar a las cuentas 477/472: " +
                        "contabiliza antes el traspaso (Modelos fiscales → Criterio de caja).");

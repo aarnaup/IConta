@@ -90,3 +90,29 @@ public sealed class RegularizarBienesCmd
 }
 
 public sealed record RegularizacionContabilizadaDto(long AsientoId, int AsientoNumero, decimal Importe, IReadOnlyList<AnioBienInversionDto> Lineas);
+
+// ---- Regularización por prorrata definitiva ----
+
+public sealed class LineaRegularizacionProrrataDto
+{
+    public long FacturaId { get; set; }
+    public string Factura { get; set; } = "";
+    public string Tercero { get; set; } = "";
+    public DateOnly FechaContable { get; set; }
+    public decimal Cuota { get; set; }
+    public decimal PorcentajeAplicado { get; set; }
+    public int PorcentajeDefinitivo { get; set; }
+    public decimal Importe { get; set; }
+    public bool BienInversion { get; set; }
+}
+
+/// <summary>Regularización del año: (cuota × (% definitivo − % aplicado)) por línea con regla PRORRATA.</summary>
+public sealed record RegularizacionProrrataDto(int Anio, IReadOnlyList<LineaRegularizacionProrrataDto> Lineas, decimal Importe,
+    decimal Contabilizado, long? AsientoId, int? AsientoNumero, IReadOnlyList<string> Avisos);
+
+public sealed class RegularizarProrrataCmd
+{
+    public int Anio { get; set; }
+    /// <summary>Por defecto, el 31 de diciembre del año.</summary>
+    public DateOnly? Fecha { get; set; }
+}
