@@ -790,13 +790,37 @@ async function cargaVencimientos() {
       <td>${esc(v.tercero)}</td><td>${esc(v.factura || '—')}</td><td>${v.numPlazo}/${v.totalPlazos}</td>
       <td class="num">${fmt(v.importe)}</td><td class="num">${fmt(v.importePendiente)}</td><td>${estadoTxt[v.estado] || esc(v.estado)}</td>
       <td class="fila-acciones">${abierto && directo ? `<button class="btn primario" data-liq="${v.id}" ${S.ejercicio.estado !== 'ABIERTO' ? 'disabled' : ''}>${v.tipo === 'COBRO' ? 'Cobrar' : 'Pagar'}</button>` : ''}
-        ${v.estado === 'PENDIENTE' && v.importePendiente === v.importe && directo ? `<button class="btn" data-anul="${v.id}">Anular</button>` : ''}</td></tr>`;
+        ${v.estado === 'PENDIENTE' && v.importePendiente === v.importe && directo ? `<button class="btn" data-anul="${v.id}">Anular</button>` : ''}
+        ${v.importePendiente < v.importe && v.estado !== 'ANULADO' ? `<button class="btn" data-cobros="${v.id}">${v.tipo === 'COBRO' ? 'Cobros' : 'Pagos'}</button>` : ''}</td></tr>`;
   }).join('') : '<tr><td colspan="9" class="vacio">No hay vencimientos con ese filtro.</td></tr>';
 }
+// Cobros o pagos de un vencimiento, con la opción de deshacerlos (extorno)
+async function verCobros(v) {
+  if (!v) return;
+  TES.cobrosDe = v;
+  const filas = await api(urlE(`/tesoreria/vencimientos/${v.id}/cobros`)), directo = permitido('TESORERIA_DIRECTO');
+  $('#vCobrosTitulo').textContent = `${v.tipo === 'COBRO' ? 'Cobros' : 'Pagos'} de ${v.tercero}${v.factura ? ' · factura ' + v.factura : ''}`;
+  $('#vCobrosBody').innerHTML = filas.map(c => `<tr><td>${fechaES(c.fecha)}</td><td class="num">${fmt(c.importe)}</td>
+      <td>${c.asientoNumero ? 'nº ' + c.asientoNumero + ' (' + esc(c.ejercicio || '') + ')' : ''}</td>
+      <td>${c.enRemesa ? 'en remesa' : c.conciliado ? 'conciliado' : ''}</td>
+      <td class="fila-acciones">${directo && !c.enRemesa && !c.conciliado ? `<button class="btn" data-extornar="${c.id}">Deshacer</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Sin cobros ni pagos registrados.</td></tr>';
+  $('#vCobros').hidden = false;
+}
+$('#vCobrosBody').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-extornar]'); if (!b || !confirm('¿Deshacer este cobro o pago? Se anula su asiento y el importe vuelve a quedar pendiente.')) return;
+  try {
+    await post(urlX(`/tesoreria/cobros/${b.dataset.extornar}/extornar`));
+    msg($('#vMsg'), 'Cobro o pago deshecho: el importe vuelve a estar pendiente.', 'ayuda ok-texto');
+    await cargaVencimientos(); await verCobros(TES.venc.find(x => x.id === TES.cobrosDe.id) || TES.cobrosDe);
+  } catch (err) { msg($('#vMsg'), err.message, 'ayuda err-texto'); }
+});
+
 $('#vTipo').onchange = $('#vEstado').onchange = () => cargaVencimientos().catch(e => msg($('#vMsg'), e.message, 'ayuda err-texto'));
 
 $('#vBody').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.cobros) { verCobros(TES.venc.find(x => String(x.id) === b.dataset.cobros)).catch(err => msg($('#vMsg'), err.message, 'ayuda err-texto')); return; }
   if (b.dataset.anul) {
     if (!confirm('¿Anular este vencimiento? No se podrá cobrar ni pagar.')) return;
     try { await post(urlE(`/tesoreria/vencimientos/${b.dataset.anul}/anular`)); await cargaTesoreria(); }

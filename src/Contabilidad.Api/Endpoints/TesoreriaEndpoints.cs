@@ -64,6 +64,18 @@ public static class TesoreriaEndpoints
             => t.PrevisionAsync(empresaId, DateOnly.FromDateTime(DateTime.Today), meses ?? 6, ct))
             .Requiere(Nivel.Lectura, Modulo.Tesoreria);
 
+        emp.MapGet("/tesoreria/vencimientos/{vencimientoId:long}/cobros", (long empresaId, long vencimientoId, ITesoreriaRepositorio t, CancellationToken ct)
+            => t.CobrosAsync(empresaId, vencimientoId, ct))
+            .Requiere(Nivel.Lectura, Modulo.Tesoreria);
+
+        emp.MapPost("/ejercicios/{ejercicioId:long}/tesoreria/cobros/{cobroPagoId:long}/extornar", async (long empresaId, long ejercicioId,
+            long cobroPagoId, HttpContext http, ITesoreriaRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await t.ExtornarAsync(empresaId, ejercicioId, cobroPagoId, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "COBRO_PAGO_EXTORNADO", "cobro_pago", cobroPagoId, null, ct);
+            return Results.NoContent();
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Tesoreria);
+
         emp.MapPost("/tesoreria/vencimientos/{vencimientoId:long}/anular", async (long empresaId, long vencimientoId, HttpContext http,
             ITesoreriaRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>
         {

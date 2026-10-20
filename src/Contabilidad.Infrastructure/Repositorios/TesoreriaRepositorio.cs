@@ -19,6 +19,10 @@ public interface ITesoreriaRepositorio
     Task AnularVencimientoAsync(long empresaId, long vencimientoId, CancellationToken ct);
     Task<LiquidacionCreada> LiquidarAsync(long empresaId, long ejercicioId, long usuarioId, long vencimientoId, LiquidarVencimientoCmd cmd, CancellationToken ct);
 
+    Task<IReadOnlyList<CobroPagoDto>> CobrosAsync(long empresaId, long vencimientoId, CancellationToken ct);
+    /// <summary>Deshace un cobro o pago: anula su asiento, quita el movimiento bancario y devuelve el importe al vencimiento.</summary>
+    Task ExtornarAsync(long empresaId, long ejercicioId, long cobroPagoId, CancellationToken ct);
+
     /// <summary>Como LiquidarAsync, dentro de una transacción existente (p. ej. al cobrar desde una línea del extracto y conciliarla).</summary>
     Task<LiquidacionCreada> LiquidarEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId, long usuarioId,
         long vencimientoId, LiquidarVencimientoCmd cmd, CancellationToken ct);
@@ -286,5 +290,93 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
             new { pendiente, estado, cuentaBancariaId = cmd.CuentaBancariaId, vencimientoId }, tx, cancellationToken: ct));
 
         return new LiquidacionCreada(cobroPagoId, a.Id, a.Numero, estado, pendiente);
+    }
+
+    // ---------------------------------------------------------------- extorno (deshacer un cobro o pago)
+    private sealed class CobroFila
+    {
+        public long Id { get; set; }
+        public long VencimientoId { get; set; }
+        public DateOnly Fecha { get; set; }
+        public decimal Importe { get; set; }
+        public long? AsientoId { get; set; }
+        public long? MovimientoId { get; set; }
+        public long? AsientoEjercicioId { get; set; }
+        public string? EjercicioEstado { get; set; }
+        public bool Conciliado { get; set; }
+        public bool EnRemesa { get; set; }
+        public long? FacturaId { get; set; }
+        public bool CriterioCaja { get; set; }
+    }
+
+    private const string SelectCobro = """
+        SELECT cp.id, cp.vencimiento_id, cp.fecha, cp.importe, cp.asiento_id, cp.movimiento_id,
+               s.ejercicio_id AS asiento_ejercicio_id, e.estado AS ejercicio_estado,
+               (COALESCE(m.conciliado, false) OR EXISTS (SELECT 1 FROM tes.conciliacion_apunte ca JOIN conta.apunte ap ON ap.id = ca.apunte_id
+                                                         WHERE ap.asiento_id = cp.asiento_id)) AS conciliado,
+               EXISTS (SELECT 1 FROM tes.remesa_vencimiento rv WHERE rv.cobro_pago_id = cp.id) AS en_remesa,
+               v.factura_id, COALESCE(f.criterio_caja, false) AS criterio_caja
+        FROM tes.cobro_pago cp
+        JOIN tes.vencimiento v ON v.id = cp.vencimiento_id
+        LEFT JOIN fiscal.factura f ON f.id = v.factura_id
+        LEFT JOIN conta.asiento s ON s.id = cp.asiento_id
+        LEFT JOIN core.ejercicio e ON e.id = s.ejercicio_id
+        LEFT JOIN tes.movimiento_bancario m ON m.id = cp.movimiento_id
+        """;
+
+    public async Task<IReadOnlyList<CobroPagoDto>> CobrosAsync(long empresaId, long vencimientoId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        return (await cn.QueryAsync<CobroPagoDto>(new CommandDefinition("""
+            SELECT cp.id, cp.fecha, cp.importe, cp.asiento_id, s.numero AS asiento_numero, e.codigo AS ejercicio,
+                   (COALESCE(m.conciliado, false) OR EXISTS (SELECT 1 FROM tes.conciliacion_apunte ca JOIN conta.apunte ap ON ap.id = ca.apunte_id
+                                                             WHERE ap.asiento_id = cp.asiento_id)) AS conciliado,
+                   EXISTS (SELECT 1 FROM tes.remesa_vencimiento rv WHERE rv.cobro_pago_id = cp.id) AS en_remesa
+            FROM tes.cobro_pago cp
+            JOIN tes.vencimiento v ON v.id = cp.vencimiento_id
+            LEFT JOIN conta.asiento s ON s.id = cp.asiento_id
+            LEFT JOIN core.ejercicio e ON e.id = s.ejercicio_id
+            LEFT JOIN tes.movimiento_bancario m ON m.id = cp.movimiento_id
+            WHERE cp.vencimiento_id = @vencimientoId AND v.empresa_id = @empresaId
+            ORDER BY cp.fecha, cp.id
+            """, new { empresaId, vencimientoId }, cancellationToken: ct))).AsList();
+    }
+
+    public async Task ExtornarAsync(long empresaId, long ejercicioId, long cobroPagoId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var c = await cn.QuerySingleOrDefaultAsync<CobroFila>(new CommandDefinition(SelectCobro +
+                " WHERE cp.id = @cobroPagoId AND cp.empresa_id = @empresaId FOR UPDATE OF cp, v", new { cobroPagoId, empresaId }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException("El cobro o pago no existe.");
+        if (c.EnRemesa)
+            throw new ReglaContableException("Este cobro viene de una remesa: regístralo como recibo devuelto desde la remesa.");
+        if (c.Conciliado)
+            throw new ReglaContableException("El cobro o pago está conciliado con el extracto: deshaz antes la conciliación.");
+        if (c.AsientoEjercicioId is not null && c.AsientoEjercicioId != ejercicioId)
+            throw new ReglaContableException("El asiento del cobro o pago es de otro ejercicio: selecciónalo para deshacerlo.");
+        if (c.EjercicioEstado is not null && c.EjercicioEstado != "ABIERTO")
+            throw new ReglaContableException("El ejercicio del cobro o pago está cerrado.");
+        if (c.CriterioCaja && await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+                SELECT EXISTS (SELECT 1 FROM fiscal.devengo_caja d JOIN conta.asiento s ON s.id = d.asiento_id
+                               WHERE d.factura_id = @facturaId AND s.estado <> 'ANULADO' AND s.fecha >= @fecha)
+                """, new { facturaId = c.FacturaId, fecha = c.Fecha }, tx, cancellationToken: ct)))
+            throw new ReglaContableException("La factura está en criterio de caja y el IVA de ese cobro ya se ha traspasado: anula antes el traspaso del periodo.");
+
+        if (c.AsientoId is { } asientoId)
+            await cn.ExecuteAsync(new CommandDefinition("UPDATE conta.asiento SET estado = 'ANULADO' WHERE id = @asientoId",
+                new { asientoId }, tx, cancellationToken: ct));
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM tes.cobro_pago WHERE id = @cobroPagoId", new { cobroPagoId }, tx, cancellationToken: ct));
+        if (c.MovimientoId is { } movimientoId)
+            await cn.ExecuteAsync(new CommandDefinition("DELETE FROM tes.movimiento_bancario WHERE id = @movimientoId AND NOT conciliado",
+                new { movimientoId }, tx, cancellationToken: ct));
+
+        var v = await cn.QuerySingleAsync<(decimal Importe, decimal Pendiente)>(new CommandDefinition(
+            "SELECT importe, importe_pendiente FROM tes.vencimiento WHERE id = @id", new { id = c.VencimientoId }, tx, cancellationToken: ct));
+        var pendiente = Math.Min(v.Importe, v.Pendiente + c.Importe);
+        await cn.ExecuteAsync(new CommandDefinition(
+            "UPDATE tes.vencimiento SET importe_pendiente = @pendiente, estado = @estado WHERE id = @id",
+            new { pendiente, estado = CalculadorVencimientos.EstadoTras(v.Importe, pendiente), id = c.VencimientoId }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
     }
 }
