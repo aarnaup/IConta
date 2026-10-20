@@ -2322,13 +2322,13 @@ const CAT = {
     guarda: o => put('/api/admin/catalogos/epigrafes', { ...o, seccion: +o.seccion }),
   },
   fp: {
-    url: () => `/api/empresas/${$('#caEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
+    url: () => `/api/empresas/${$('#cgEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
     cols: ['Código', 'Nombre', 'Tipo', 'Plazos', 'Días al primero', 'Días entre plazos', ''],
     fila: f => [esc(f.codigo), esc(f.nombre), esc(f.tipo), f.numPlazos, f.diasPrimerPlazo, f.diasEntrePlazos,
       `<button class="btn" type="button" data-borra="${f.id}">Borrar</button>`],
     campos: [['codigo', 'Código', 'text'], ['nombre', 'Nombre', 'text'], ['tipo', 'Tipo', ['TRANSFERENCIA', 'RECIBO', 'EFECTIVO', 'TARJETA', 'PAGARE', 'CHEQUE', 'OTRO']],
       ['numPlazos', 'Número de plazos', 'number'], ['diasPrimerPlazo', 'Días hasta el primero', 'number'], ['diasEntrePlazos', 'Días entre plazos', 'number']],
-    guarda: (o, id) => { const u = `/api/empresas/${$('#caEmpresa').value}/formas-pago`;
+    guarda: (o, id) => { const u = `/api/empresas/${$('#cgEmpresa').value}/formas-pago`;
       const c = { ...o, numPlazos: +o.numPlazos || 1, diasPrimerPlazo: +o.diasPrimerPlazo || 0, diasEntrePlazos: +o.diasEntrePlazos || 0 };
       return id ? put(`${u}/${id}`, c) : post(u, c); },
   },
@@ -2336,33 +2336,33 @@ const CAT = {
 const CA = { filas: [], sel: null };
 
 async function cargaCatalogos() {
-  if (!$('#caEmpresa').options.length) {
+  if (!$('#cgEmpresa').options.length) {
     const emps = await api('/api/admin/empresas');
-    $('#caEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
+    $('#cgEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
   }
   await pintaCatalogo();
 }
 
 async function pintaCatalogo() {
-  const c = CAT[$('#caTipo').value];
-  $('#caEmpresaL').hidden = !c.empresa; $('#caBuscaL').hidden = !c.busca;
-  $('#caAyuda').textContent = c.ayuda; msg($('#caMsg'), ''); msg($('#caFormMsg'), '');
-  $('#caFormPanel').hidden = !!c.sinForm; $('#caVigPanel').hidden = true;
+  const c = CAT[$('#cgTipo').value];
+  $('#cgEmpresaL').hidden = !c.empresa; $('#cgBuscaL').hidden = !c.busca;
+  $('#cgAyuda').textContent = c.ayuda; msg($('#cgMsg'), ''); msg($('#cgFormMsg'), '');
+  $('#cgFormPanel').hidden = !!c.sinForm; $('#cgVigPanel').hidden = true;
   let url = typeof c.url === 'function' ? c.url() : c.url;
-  if (c.busca && $('#caBusca').value.trim()) url += '?q=' + encodeURIComponent($('#caBusca').value.trim());
-  if (c.empresa && !$('#caEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
-  $('#caHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
-  $('#caBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
+  if (c.busca && $('#cgBusca').value.trim()) url += '?q=' + encodeURIComponent($('#cgBusca').value.trim());
+  if (c.empresa && !$('#cgEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
+  $('#cgHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
+  $('#cgBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
     : `<td><button class="btn" type="button" data-edita="${i}">Modificar</button></td>`}</tr>`).join('')
     || `<tr><td colspan="${c.cols.length + 1}" class="vacio">No hay registros.</td></tr>`;
   if (!c.sinForm) formCatalogo(null);
 }
 
 function formCatalogo(fila) {
-  const c = CAT[$('#caTipo').value];
+  const c = CAT[$('#cgTipo').value];
   CA.sel = fila;
-  $('#caFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
-  $('#caForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
+  $('#cgFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
+  $('#cgForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
       const v = fila ? fila[k] : (tipo === 'check' ? k === 'activo' : '');
       const bloquea = fila && soloAlta ? ' disabled' : '';
       if (fila && c.vigencias && ['porcentaje', 'recargo', 'fechaDesde'].includes(k)) return '';
@@ -2370,55 +2370,55 @@ function formCatalogo(fila) {
       if (tipo === 'check') return `<label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" data-k="${k}"${v ? ' checked' : ''}> ${etq}</label>`;
       return `<label>${etq} <input data-k="${k}" type="${tipo}"${tipo === 'number' ? ' step="0.01"' : ''} value="${esc(v ?? '')}"${bloquea}></label>`;
     }).join('');
-  $('#caVigPanel').hidden = !(fila && c.vigencias);
+  $('#cgVigPanel').hidden = !(fila && c.vigencias);
   if (fila && c.vigencias) {
-    $('#caVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
-    $('#caVigRecL').hidden = !c.recargo; $('#caVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#caVigDesde').value = '';
-    msg($('#caVigMsg'), '');
+    $('#cgVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
+    $('#cgVigRecL').hidden = !c.recargo; $('#cgVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#cgVigDesde').value = '';
+    msg($('#cgVigMsg'), '');
   }
 }
 
-$('#caTipo').onchange = () => pintaCatalogo().catch(e => msg($('#caMsg'), e.message, 'ayuda err-texto'));
-$('#caEmpresa').onchange = $('#caTipo').onchange;
-$('#caBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#caTipo').onchange(); });
-$('#caNuevo').onclick = () => formCatalogo(null);
-$('#caBody').addEventListener('click', async e => {
+$('#cgTipo').onchange = () => pintaCatalogo().catch(e => msg($('#cgMsg'), e.message, 'ayuda err-texto'));
+$('#cgEmpresa').onchange = $('#cgTipo').onchange;
+$('#cgBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#cgTipo').onchange(); });
+$('#cgNuevo').onclick = () => formCatalogo(null);
+$('#cgBody').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
-  const c = CAT[$('#caTipo').value];
+  const c = CAT[$('#cgTipo').value];
   try {
-    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#caFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#cgFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
     if (b.dataset.act) { await put(`/api/admin/catalogos/modelos-fiscales/${b.dataset.act}/activo`, { activo: b.dataset.v === 'true' }); }
     if (b.dataset.borra) {
       if (!confirm('¿Borrar la forma de pago?')) return;
       await api(`${c.url()}/${b.dataset.borra}`, { method: 'DELETE' });
     }
     await pintaCatalogo();
-    msg($('#caMsg'), 'Hecho.', 'ayuda ok-texto');
-  } catch (err) { msg($('#caMsg'), err.message, 'ayuda err-texto'); }
+    msg($('#cgMsg'), 'Hecho.', 'ayuda ok-texto');
+  } catch (err) { msg($('#cgMsg'), err.message, 'ayuda err-texto'); }
 });
-$('#caGuardar').onclick = async () => {
-  const c = CAT[$('#caTipo').value];
+$('#cgGuardar').onclick = async () => {
+  const c = CAT[$('#cgTipo').value];
   const o = { ...(CA.sel || {}) };
-  $$('#caForm [data-k]').forEach(el => {
+  $$('#cgForm [data-k]').forEach(el => {
     o[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : (el.value === '' ? null : el.value);
   });
   if ('recargo' in o && o.recargo == null) o.recargo = 0;
   try {
     await c.guarda(o, CA.sel?.id);
     await pintaCatalogo();
-    msg($('#caFormMsg'), 'Guardado.', 'ok-texto');
-  } catch (err) { msg($('#caFormMsg'), err.message, 'err-texto'); }
+    msg($('#cgFormMsg'), 'Guardado.', 'ok-texto');
+  } catch (err) { msg($('#cgFormMsg'), err.message, 'err-texto'); }
 };
-$('#caVigGuardar').onclick = async () => {
-  const c = CAT[$('#caTipo').value];
+$('#cgVigGuardar').onclick = async () => {
+  const c = CAT[$('#cgTipo').value];
   try {
     await post(`/api/admin/catalogos/${c.vigencias}/${CA.sel.id}/vigencias`,
-      { porcentaje: +$('#caVigPct').value, recargo: +$('#caVigRec').value || 0, fechaDesde: $('#caVigDesde').value || null });
+      { porcentaje: +$('#cgVigPct').value, recargo: +$('#cgVigRec').value || 0, fechaDesde: $('#cgVigDesde').value || null });
     const id = CA.sel.id;
     await pintaCatalogo();
     formCatalogo(CA.filas.find(f => f.id === id));
-    msg($('#caVigMsg'), 'Vigencia abierta.', 'ok-texto');
-  } catch (err) { msg($('#caVigMsg'), err.message, 'err-texto'); }
+    msg($('#cgVigMsg'), 'Vigencia abierta.', 'ok-texto');
+  } catch (err) { msg($('#cgVigMsg'), err.message, 'err-texto'); }
 };
 
 // ---- usuarios

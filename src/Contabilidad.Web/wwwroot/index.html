@@ -153,31 +153,31 @@
     <div class="panel">
       <h2>Catálogos</h2>
       <div class="cab2">
-        <label>Catálogo <select id="caTipo">
+        <label>Catálogo <select id="cgTipo">
           <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
           <option value="mod">Modelos fiscales</option><option value="pais">Países</option><option value="banco">Bancos</option>
           <option value="iae">Epígrafes del IAE</option><option value="fp">Formas de pago de una empresa</option></select></label>
-        <label id="caEmpresaL" hidden>Empresa <select id="caEmpresa"></select></label>
-        <label id="caBuscaL" hidden>Buscar <input id="caBusca" placeholder="código o descripción"></label>
+        <label id="cgEmpresaL" hidden>Empresa <select id="cgEmpresa"></select></label>
+        <label id="cgBuscaL" hidden>Buscar <input id="cgBusca" placeholder="código o descripción"></label>
       </div>
-      <p class="ayuda" id="caAyuda"></p>
-      <table><thead id="caHead"></thead><tbody id="caBody"></tbody></table>
-      <span id="caMsg" role="status"></span>
+      <p class="ayuda" id="cgAyuda"></p>
+      <table><thead id="cgHead"></thead><tbody id="cgBody"></tbody></table>
+      <span id="cgMsg" role="status"></span>
     </div>
-    <div class="panel" id="caFormPanel">
-      <h2 id="caFormTitulo">Nuevo</h2>
-      <div class="cab2" id="caForm"></div>
-      <div class="acciones"><button class="btn primario" id="caGuardar" type="button">Guardar</button>
-        <button class="btn" id="caNuevo" type="button">Limpiar</button><span id="caFormMsg" role="status"></span></div>
+    <div class="panel" id="cgFormPanel">
+      <h2 id="cgFormTitulo">Nuevo</h2>
+      <div class="cab2" id="cgForm"></div>
+      <div class="acciones"><button class="btn primario" id="cgGuardar" type="button">Guardar</button>
+        <button class="btn" id="cgNuevo" type="button">Limpiar</button><span id="cgFormMsg" role="status"></span></div>
     </div>
-    <div class="panel" id="caVigPanel" hidden>
-      <h2 id="caVigTitulo">Nueva vigencia</h2>
+    <div class="panel" id="cgVigPanel" hidden>
+      <h2 id="cgVigTitulo">Nueva vigencia</h2>
       <div class="cab2">
-        <label>Porcentaje <input id="caVigPct" type="number" step="0.01" min="0" max="100"></label>
-        <label id="caVigRecL">Recargo de equivalencia <input id="caVigRec" type="number" step="0.01" min="0" max="100" value="0"></label>
-        <label>Se aplica desde <input id="caVigDesde" type="date"></label>
+        <label>Porcentaje <input id="cgVigPct" type="number" step="0.01" min="0" max="100"></label>
+        <label id="cgVigRecL">Recargo de equivalencia <input id="cgVigRec" type="number" step="0.01" min="0" max="100" value="0"></label>
+        <label>Se aplica desde <input id="cgVigDesde" type="date"></label>
       </div>
-      <div class="acciones"><button class="btn" id="caVigGuardar" type="button">Abrir vigencia</button><span id="caVigMsg" role="status"></span></div>
+      <div class="acciones"><button class="btn" id="cgVigGuardar" type="button">Abrir vigencia</button><span id="cgVigMsg" role="status"></span></div>
       <p class="ayuda">La vigencia anterior se cierra en esa fecha: las facturas anteriores siguen con su porcentaje.</p>
     </div>
   </div>
