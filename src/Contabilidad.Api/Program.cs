@@ -132,6 +132,7 @@ try
     app.MapEmpresa();
     app.MapTesoreria();
     app.MapFiscal();
+    app.MapCierre();
 
     app.Run();
 }

@@ -29,6 +29,9 @@ BEGIN
 
   INSERT INTO conta.cuenta (empresa_id, codigo, nombre, nivel, naturaleza) VALUES
     (v_emp, '10000000', 'Capital social', 4, 'ACREEDORA'),
+    (v_emp, '12900000', 'Resultado del ejercicio', 4, 'MIXTA'),
+    (v_emp, '47000000', 'H.P. deudora por IGIC', 4, 'DEUDORA'),
+    (v_emp, '47500000', 'H.P. acreedora por IGIC', 4, 'ACREEDORA'),
     (v_emp, '40000000', 'Proveedores', 4, 'ACREEDORA'),
     (v_emp, '43000000', 'Clientes', 4, 'DEUDORA'),
     (v_emp, '47200000', 'H.P. IGIC soportado', 4, 'DEUDORA'),

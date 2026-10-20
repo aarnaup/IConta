@@ -138,6 +138,7 @@ function permitido(req) {
   if (!S.acceso) return false;
   if (req === 'TESORERIA_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.TESORERIA] >= ORDEN.ESCRITURA;
   if (req === 'FISCAL_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.FISCAL] >= ORDEN.ESCRITURA;
+  if (req === 'CONTABILIDAD_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.CONTABILIDAD] >= ORDEN.ESCRITURA;
   if (req === 'REVISOR')
     return S.acceso.puedeContabilizarDirecto && ['CONTABILIDAD', 'FACTURACION'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.ESCRITURA);
   const [m, n] = req.split(':');
@@ -150,10 +151,8 @@ async function entrarEmpresa(empresa, ejercicio) {
   S.acceso = await api(urlE('/mi-acceso'));
   aplicaPermisos();
 
-  const cerrado = ejercicio.estado !== 'ABIERTO';
-  $('#avisoEjercicio').hidden = !cerrado;
+  aplicaEstadoEjercicio();
   $('#avisoBorrador').hidden = S.acceso.puedeContabilizarDirecto;
-  $$('#vista-app [data-guarda]').forEach(b => b.disabled = cerrado);
 
   // Las fechas de trabajo quedan acotadas al ejercicio elegido
   const dentro = d => d < ejercicio.fechaInicio ? ejercicio.fechaInicio : d > ejercicio.fechaFin ? ejercicio.fechaFin : d;
@@ -171,7 +170,8 @@ async function entrarEmpresa(empresa, ejercicio) {
   $('#mayorCanal').innerHTML = '<option value="">Todos los canales</option>' + baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
   S.lineas = [nuevaLinea(), nuevaLinea()];
   fst.lineas = [];
-  MF.modelos = []; MF.actual = null; MF.presentando = null; $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true;
+  MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
+  $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
   pintaLineas(); recalcula();
 
@@ -181,10 +181,18 @@ async function entrarEmpresa(empresa, ejercicio) {
   else $$('#vista-app section').forEach(s => s.hidden = true);
 }
 
+// Un ejercicio cerrado solo se consulta: se desactivan los botones que graban
+function aplicaEstadoEjercicio() {
+  const cerrado = S.ejercicio.estado !== 'ABIERTO';
+  $('#avisoEjercicio').hidden = !cerrado;
+  $$('#vista-app [data-guarda]').forEach(b => b.disabled = cerrado);
+}
+
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
-  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes }[nombre];
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
+                  cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
 }
 $('#navApp').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTab(b.dataset.tab); });
@@ -504,7 +512,7 @@ $('#bCrear').onclick = async () => {
 };
 
 // ------------------------------------------------------------ modelos fiscales
-const MF = { modelos: [], actual: null, presentando: null };
+const MF = { modelos: [], actual: null, presentando: null, liq: null };
 const estadoDecl = { CALCULADA: 'calculada', PRESENTADA: 'presentada', SIN_GUARDAR: 'sin guardar', BORRADOR: 'borrador' };
 const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre' }[p] || 'Mes ' + p);
 
@@ -562,20 +570,29 @@ $('#mfGuardar').onclick = async () => {
 
 async function cargaDeclaraciones() {
   const filas = await api(urlE('/fiscal/declaraciones?anio=' + ($('#mfAnio').value || new Date().getFullYear())));
-  const directo = permitido('FISCAL_DIRECTO');
+  const directo = permitido('FISCAL_DIRECTO'), abierto = S.ejercicio.estado === 'ABIERTO';
   $('#mfLista').innerHTML = filas.length ? filas.map(d => `<tr><td>${esc(d.modelo)} <small>${esc(d.nombre)}</small></td><td>${d.anio}</td><td>${esc(periodoTxt(d.periodo))}</td>
     <td>${estadoDecl[d.estado] || esc(d.estado)}</td><td class="num">${d.resultado == null ? '' : fmt(d.resultado)}</td>
     <td>${d.fechaPresentacion ? fechaES(d.fechaPresentacion) + (d.justificante ? ' · ' + esc(d.justificante) : '') : ''}</td>
+    <td>${d.asientoNumero ? 'nº ' + d.asientoNumero : ''}</td>
     <td class="fila-acciones"><button class="btn" data-ver="${d.id}">Ver</button>
-      ${d.estado === 'CALCULADA' && directo ? `<button class="btn primario" data-pres="${d.id}">Presentar</button><button class="btn" data-desc="${d.id}">Descartar</button>` : ''}</td></tr>`).join('')
-    : '<tr><td colspan="7" class="vacio">No hay declaraciones guardadas en este año.</td></tr>';
+      ${d.estado === 'CALCULADA' && directo ? `<button class="btn primario" data-pres="${d.id}">Presentar</button><button class="btn" data-desc="${d.id}">Descartar</button>` : ''}
+      ${liquidable(d) && directo && !d.asientoNumero ? `<button class="btn primario" data-liq="${d.id}" ${abierto ? '' : 'disabled'}>Contabilizar liquidación</button>` : ''}
+      ${d.asientoNumero && directo ? `<button class="btn" data-anliq="${d.id}" ${abierto ? '' : 'disabled'}>Anular asiento</button>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="8" class="vacio">No hay declaraciones guardadas en este año.</td></tr>';
 }
+const liquidable = d => d.estado === 'PRESENTADA' && ['303', '420'].includes(d.modelo) && d.periodo !== '0A';
 $('#mfAnio').onchange = () => cargaDeclaraciones().catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto'));
 
 $('#mfLista').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
   try {
     if (b.dataset.ver) { muestraDeclaracion(await api(urlE('/fiscal/declaraciones/' + b.dataset.ver))); $('#mfResultado').scrollIntoView({ behavior: 'smooth' }); }
+    if (b.dataset.liq) await previsualizaLiquidacion(b.dataset.liq, null);
+    if (b.dataset.anliq && confirm('¿Anular el asiento de liquidación de esta declaración?')) {
+      await api(urlX(`/fiscal/declaraciones/${b.dataset.anliq}/asiento`), { method: 'DELETE' });
+      msg($('#mfMsg'), 'Asiento de liquidación anulado.', 'ayuda ok-texto'); await cargaDeclaraciones();
+    }
     if (b.dataset.desc && confirm('¿Descartar esta declaración calculada?')) { await post(urlE(`/fiscal/declaraciones/${b.dataset.desc}/descartar`)); await cargaDeclaraciones(); }
     if (b.dataset.pres) {
       const v = await api(urlE('/fiscal/declaraciones/' + b.dataset.pres));
@@ -596,6 +613,66 @@ $('#mfPresentar').onclick = async () => {
     muestraDeclaracion(v); msg($('#mfMsg'), 'Declaración marcada como presentada.', 'ayuda ok-texto');
     await cargaDeclaraciones();
   } catch (e) { msg($('#mfPresentarMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// Asiento de liquidación del IVA/IGIC: primero se previsualiza; se contabiliza al confirmar
+async function previsualizaLiquidacion(id, fecha) {
+  const v = await post(urlX(`/fiscal/declaraciones/${id}/asiento/previsualizar`), fecha ? { fecha } : {});
+  MF.liq = v;
+  const canal = cid => (S.canales.find(c => c.id === cid) || {}).codigo || cid;
+  $('#mfLiqTitulo').textContent = `Asiento de liquidación: modelo ${v.modelo} ${v.anio} ${periodoTxt(v.periodo)}`;
+  $('#mfLiqFecha').value = v.fecha;
+  $('#mfLiqAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#mfLiqCanales').innerHTML = v.canales.map(c => `<tr><td>${esc(c.canal)}</td><td class="num">${fmt(c.repercutido)}</td><td class="num">${fmt(c.soportado)}</td>
+    <td class="num">${fmt(c.compensado)}</td><td class="num">${fmt(c.aIngresar)}</td><td class="num">${fmt(c.aFavor)}</td></tr>`).join('');
+  $('#mfLiqApuntes').innerHTML = v.asiento.map(a => `<tr><td>${esc(a.cuenta)}</td><td>${esc(a.cuentaNombre)}</td><td>${esc(canal(a.canalId))}</td>
+    <td class="num">${a.debe ? fmt(a.debe) : ''}</td><td class="num">${a.haber ? fmt(a.haber) : ''}</td></tr>`).join('');
+  msg($('#mfLiqMsg'), '', 'ayuda');
+  $('#mfLiqPanel').hidden = false; $('#mfLiqPanel').scrollIntoView({ behavior: 'smooth' });
+}
+$('#mfLiqFecha').onchange = () => MF.liq && previsualizaLiquidacion(MF.liq.declaracionId, $('#mfLiqFecha').value)
+  .catch(e => msg($('#mfLiqMsg'), e.message, 'ayuda err-texto'));
+$('#mfLiqCancelar').onclick = () => { MF.liq = null; $('#mfLiqPanel').hidden = true; };
+$('#mfLiqGuardar').onclick = async () => {
+  if (!MF.liq) return;
+  try {
+    const r = await post(urlX(`/fiscal/declaraciones/${MF.liq.declaracionId}/asiento`), { fecha: $('#mfLiqFecha').value });
+    MF.liq = null; $('#mfLiqPanel').hidden = true;
+    msg($('#mfMsg'), `Liquidación contabilizada: asiento nº ${r.asientoNumero}.`, 'ayuda ok-texto');
+    await cargaDeclaraciones();
+  } catch (e) { msg($('#mfLiqMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ------------------------------------------------------------ cierre del ejercicio
+async function cargaCierre() {
+  const c = await api(urlX('/cierre'));
+  S.ejercicio.estado = c.estado; aplicaEstadoEjercicio();
+  $('#ciTitulo').textContent = `Cierre del ejercicio ${c.codigo}`;
+  $('#ciEstado').textContent = c.estado === 'ABIERTO'
+    ? (c.puedeCerrar ? `Listo para cerrar. La apertura irá al ejercicio ${c.siguiente.codigo}.` : 'Todavía no se puede cerrar:')
+    : `Ejercicio ${c.estado.toLowerCase()}.`;
+  $('#ciBloqueos').innerHTML = c.estado === 'ABIERTO' ? c.bloqueos.map(b => `<li>${esc(b)}</li>`).join('') : '';
+  $('#ciAvisos').innerHTML = c.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#ciResultados').innerHTML = c.resultados.length
+    ? c.resultados.map(r => `<tr><td>${esc(r.canal)}</td><td class="num">${fmt(r.ingresos)}</td><td class="num">${fmt(r.gastos)}</td>
+        <td class="num ${r.resultado < 0 ? 'estado-mal' : ''}">${fmt(r.resultado)}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="vacio">Sin ingresos ni gastos en el ejercicio.</td></tr>';
+  $('#ciCerrar').hidden = c.estado !== 'ABIERTO'; $('#ciCerrar').disabled = !c.puedeCerrar;
+  $('#ciDeshacer').hidden = c.estado !== 'CERRADO';
+}
+$('#ciCerrar').onclick = async () => {
+  if (!confirm(`Se generarán la regularización, el cierre y la apertura, y el ejercicio ${S.ejercicio.codigo} quedará cerrado. ¿Continuar?`)) return;
+  try {
+    const r = await post(urlX('/cierre'));
+    const tipos = { REGULARIZACION: 'regularización', CIERRE: 'cierre', APERTURA: 'apertura' };
+    await cargaCierre();
+    msg($('#ciMsg'), 'Ejercicio cerrado. ' + r.asientos.map(a => `Asiento de ${tipos[a.tipo]}: nº ${a.numero}`).join('; ') + '.', 'ayuda ok-texto');
+  } catch (e) { msg($('#ciMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#ciDeshacer').onclick = async () => {
+  if (!confirm('Se anularán los asientos de regularización, cierre y apertura, y el ejercicio volverá a estar abierto. ¿Continuar?')) return;
+  try { await post(urlX('/cierre/deshacer')); await cargaCierre(); msg($('#ciMsg'), 'Cierre deshecho: el ejercicio vuelve a estar abierto.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#ciMsg'), e.message, 'ayuda err-texto'); }
 };
 
 // ------------------------------------------------------------ pendientes de revisión

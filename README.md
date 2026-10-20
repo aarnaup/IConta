@@ -83,8 +83,26 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - **Numeración de casillas**: el 303 usa la del formulario (01–09, 16–24, 27, 28–31, 44–46, 64–71…); el IGIC y los resúmenes usan claves descriptivas. **Contrástala con el formulario del año antes de presentar**: esta aplicación calcula y registra, pero no genera el fichero oficial ni envía nada a la Agencia Tributaria.
 - Un tipo de IVA sin casilla (p. ej. 7 % en el 303) o una operación intracomunitaria/importación **detiene el cálculo** con un error en vez de omitirse en silencio.
 
+## Liquidación del IVA/IGIC
+`POST /api/empresas/{id}/ejercicios/{ej}/fiscal/declaraciones/{d}/asiento` contabiliza la liquidación de un 303 o 420 **presentado** (`.../asiento/previsualizar` la calcula sin guardar; `DELETE .../asiento` la anula).
+
+- Salda las cuentas 472 y 477 con su saldo a la fecha de fin del periodo: 477 (D) a 472 (H). La diferencia va a la **4750** si sale a ingresar o a la **4700** si sale a compensar o devolver.
+- Si la declaración aplica cuotas a compensar de periodos anteriores, esa parte sale de la 4700 (H) y solo el resto va a la 4750.
+- Se calcula canal a canal, como el resto de la contabilidad. Si ningún canal coincide con el resultado de la declaración, avisa (facturas contabilizadas después de presentar, apuntes manuales, periodos sin liquidar…).
+- Las liquidaciones van en orden: no se puede contabilizar un periodo si hay otro posterior ya liquidado, ni anular uno que tenga otro posterior.
+- La regularización por prorrata definitiva no está en la contabilidad: se avisa para registrarla a mano (634/639).
+- Cuentas: roles `HP_ACREEDORA_IVA` y `HP_DEUDORA_IVA` en cuentas automáticas o, si no, las subcuentas 4750 y 4700 del plan.
+
+## Cierre de ejercicio
+`GET /api/empresas/{id}/ejercicios/{ej}/cierre` dice si se puede cerrar, qué lo impide y el resultado por canal. `POST .../cierre` cierra; `POST .../cierre/deshacer` lo revierte.
+
+- En una transacción: **regularización** (periodo 13: gastos e ingresos contra la 129), **cierre** (periodo 14: todas las cuentas a cero) y **apertura** del ejercicio siguiente (periodo 0, mismos saldos). El ejercicio queda `CERRADO` y no admite más asientos.
+- Requisitos: el ejercicio anterior cerrado, el siguiente creado y contiguo, sin asientos ni facturas en borrador, sin saldo en los grupos 8 y 9 y con cuenta 129 (rol `RESULTADO_EJERCICIO`). Avisa si queda IVA/IGIC sin liquidar.
+- Deshacer anula los tres asientos (si el ejercicio siguiente sigue abierto) y reabre el ejercicio.
+- En la web: botón «Contabilizar liquidación» en Modelos fiscales y pestaña «Cierre».
+
 ## Pendiente
-Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; asiento de liquidación del IVA/IGIC; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; analítica, presupuestos y balances; cierre de ejercicios; gestión de catálogos e impresos en la UI de administración.
+Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; analítica, presupuestos y balances; gestión de catálogos e impresos en la UI de administración.
 
 ## Estado de verificación
-Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 116 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→07 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. La UI web carga y permite entrar.
+Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 134 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→07 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web.
