@@ -27,8 +27,8 @@ dotnet run --project src/Contabilidad.Api    # cadena de conexión en appsetting
 ```
 
 ## Facturas
-`POST /api/empresas/{id}/facturas/previsualizar` calcula cuotas y devuelve el asiento previsto sin guardar nada.
-`POST /api/empresas/{id}/facturas` guarda la factura y, si no es borrador, genera el asiento en la misma transacción.
+`POST /api/empresas/{id}/ejercicios/{ej}/facturas/previsualizar` calcula cuotas y devuelve el asiento previsto sin guardar nada.
+`POST /api/empresas/{id}/ejercicios/{ej}/facturas` guarda la factura y, si no es borrador, genera el asiento en la misma transacción.
 
 - % de IVA/IGIC: el vigente en la fecha de devengo (`fechaOperacion`, o la de expedición).
 - Recargo de equivalencia: en emitidas, si el cliente lo tiene marcado; en recibidas, si la empresa está en ese régimen.
@@ -76,4 +76,5 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 ## Pendiente
 Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; asiento de liquidación del IVA/IGIC; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; analítica, presupuestos y balances; carga de los datos del PGC en `cat.cuenta_modelo` (hoy vacía); cierre de ejercicios; gestión de catálogos e impresos en la UI de administración.
 
-**El código C# no se ha compilado ni ejecutado** (no había SDK de .NET disponible): el primer `dotnet build` puede sacar errores. Los scripts SQL 01→06 sí se han ejecutado de principio a fin en PostgreSQL 16, y las consultas de tesorería y de modelos fiscales se han probado contra esa base con datos de ejemplo.
+## Estado de verificación
+Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 116 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→06 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). La UI web carga y permite entrar.
