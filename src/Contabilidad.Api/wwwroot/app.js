@@ -450,8 +450,23 @@ async function listaFacturas() {
   $('#fLista').innerHTML = filas.length ? filas.map(f => `<tr><td>${f.libro === 'EMITIDAS' ? 'Emitida' : 'Recibida'}</td><td>${esc((f.serie || '') + f.numero)}</td>
     <td>${fechaES(f.fecha)}</td><td>${esc(f.tercero)}</td>
     <td class="num">${fmt(f.baseImponible)}</td><td class="num">${fmt(f.cuota)}</td><td class="num">${f.retencion ? fmt(f.retencion) : ''}</td>
-    <td class="num">${fmt(f.total)}</td><td>${f.asientoNumero ? 'asiento ' + f.asientoNumero : esc(f.estado.toLowerCase())}</td></tr>`).join('')
-    : '<tr><td colspan="9" class="vacio">Todavía no hay facturas en este ejercicio.</td></tr>';
+    <td class="num">${fmt(f.total)}</td><td>${f.asientoNumero ? 'asiento ' + f.asientoNumero : esc(f.estado.toLowerCase())}</td>
+    <td>${f.libro === 'EMITIDAS' && f.estado !== 'ANULADA' ? `<button type="button" class="btn" data-impreso="${f.id}">Imprimir</button>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="10" class="vacio">Todavía no hay facturas en este ejercicio.</td></tr>';
+  $('#fLista').querySelectorAll('[data-impreso]').forEach(b => b.onclick = () => imprimeFactura(b.dataset.impreso));
+}
+
+// Impreso de la factura: se abre en otra ventana y se lanza el diálogo de imprimir (desde ahí se guarda en PDF)
+async function imprimeFactura(id) {
+  const w = window.open('', '_blank');
+  try {
+    const r = await fetch(urlX(`/facturas/${id}/impreso`), { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
+    const url = URL.createObjectURL(new Blob([await r.text()], { type: 'text/html' }));
+    if (!w) { location.assign(url); return; }
+    w.location = url;
+    w.addEventListener('load', () => { w.focus(); w.print(); }, { once: true });
+  } catch (e) { if (w) w.close(); alert(e.message); }
 }
 
 $('#tCrear').onclick = async () => {
@@ -2244,10 +2259,164 @@ async function entrarAdmin() {
 
 function abreTabAdmin(t) {
   $$('#navAdmin button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === t)));
-  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas';
-  (t === 'usuarios' ? cargaUsuarios : cargaEmpresasAdmin)().catch(e => alert(e.message));
+  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas'; $('#adm-catalogos').hidden = t !== 'catalogos';
+  ({ usuarios: cargaUsuarios, empresas: cargaEmpresasAdmin, catalogos: cargaCatalogos })[t]().catch(e => alert(e.message));
 }
 $('#navAdmin').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTabAdmin(b.dataset.tab); });
+
+// ---- catálogos comunes y formas de pago de cada empresa
+// Cada catálogo: columnas de la tabla, campos del formulario (k, etiqueta, tipo; solo: no editable al modificar) y cómo se guarda.
+const pctVigente = t => { const v = t.vigencias.find(x => !x.fechaHasta) || t.vigencias[t.vigencias.length - 1]; return v ? v : null; };
+// fechaHasta es el día en que empieza la siguiente: se muestra el anterior
+const diaAntes = d => { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() - 1); return x.toLocaleDateString('es-ES'); };
+const vigTxt = t => t.vigencias.map(v => `${v.porcentaje} %${v.recargo ? ' (RE ' + v.recargo + ' %)' : ''} desde ${fechaES(v.fechaDesde)}${v.fechaHasta ? ' hasta ' + diaAntes(v.fechaHasta) : ''}`).join('<br>');
+const siNo = b => b ? 'sí' : 'no';
+const CAT = {
+  iva: {
+    url: '/api/admin/catalogos/tipos-iva', ayuda: 'Los tipos no se borran: se dan de baja o se abre una vigencia nueva con el porcentaje que entra en vigor.',
+    cols: ['Impuesto', 'Código', 'Nombre', 'Vigencias', 'Exento', 'Activo'],
+    fila: t => [esc(t.impuesto), esc(t.codigo), esc(t.nombre), vigTxt(t), siNo(t.esExento), siNo(t.activo)],
+    campos: [['impuesto', 'Impuesto', ['IVA', 'IGIC', 'IPSI'], 1], ['codigo', 'Código', 'text', 1], ['nombre', 'Nombre', 'text'],
+      ['porcentaje', 'Porcentaje inicial', 'number', 1], ['recargo', 'Recargo de equivalencia', 'number', 1], ['fechaDesde', 'Se aplica desde', 'date', 1],
+      ['esExento', 'Exento', 'check'], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => id ? put(`/api/admin/catalogos/tipos-iva/${id}`, o) : post('/api/admin/catalogos/tipos-iva', o), vigencias: 'tipos-iva', recargo: true,
+  },
+  ret: {
+    url: '/api/admin/catalogos/tipos-retencion', ayuda: 'El modelo de ingreso (111, 115…) y la clave del resumen anual (190, 180) deciden dónde se declara cada retención.',
+    cols: ['Código', 'Nombre', 'Naturaleza', 'Modelo', 'Clave', 'Vigencias', 'Activo'],
+    fila: t => [esc(t.codigo), esc(t.nombre), esc(t.naturaleza), esc(t.modeloIngreso || ''), esc(t.claveResumen || ''), vigTxt(t), siNo(t.activo)],
+    campos: [['codigo', 'Código', 'text', 1], ['nombre', 'Nombre', 'text'],
+      ['naturaleza', 'Naturaleza', ['PROFESIONAL', 'ARRENDAMIENTO', 'CAPITAL', 'AGRICOLA', 'TRABAJO', 'OTRA']],
+      ['modeloIngreso', 'Modelo de ingreso', ['', '111', '115', '123', '124', '126', '216']], ['claveResumen', 'Clave del resumen anual', 'text'],
+      ['porcentaje', 'Porcentaje inicial', 'number', 1], ['fechaDesde', 'Se aplica desde', 'date', 1], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => id ? put(`/api/admin/catalogos/tipos-retencion/${id}`, o) : post('/api/admin/catalogos/tipos-retencion', o), vigencias: 'tipos-retencion',
+  },
+  mod: {
+    url: '/api/admin/catalogos/modelos-fiscales', ayuda: 'Un modelo desactivado deja de ofrecerse en Modelos fiscales de todas las empresas.', sinForm: true,
+    cols: ['Administración', 'Modelo', 'Nombre', 'Impuesto', 'Activo'],
+    fila: m => [esc(m.administracion), esc(m.codigo), esc(m.nombre), esc(m.impuesto),
+      `<button class="btn" type="button" data-act="${m.id}" data-v="${!m.activo}">${m.activo ? 'Desactivar' : 'Activar'}</button>`],
+  },
+  pais: {
+    url: '/api/admin/catalogos/paises', ayuda: 'El código ISO de 2 letras identifica el país: guardar uno existente lo modifica.', clave: 'iso2',
+    cols: ['ISO 2', 'ISO 3', 'Nombre', 'UE', 'Prefijo VIES'],
+    fila: p => [esc(p.iso2), esc(p.iso3), esc(p.nombre), siNo(p.esUe), esc(p.prefijoVies || '')],
+    campos: [['iso2', 'ISO 2', 'text', 1], ['iso3', 'ISO 3', 'text'], ['nombre', 'Nombre', 'text'], ['prefijoVies', 'Prefijo VIES', 'text'], ['esUe', 'Unión Europea', 'check']],
+    guarda: o => put('/api/admin/catalogos/paises', o),
+  },
+  banco: {
+    url: '/api/admin/catalogos/bancos', ayuda: 'Entidades bancarias (código de 4 dígitos del IBAN español y BIC).',
+    cols: ['Entidad', 'BIC', 'Nombre', 'País', 'Activo'],
+    fila: b => [esc(b.codigoEntidad || ''), esc(b.bic || ''), esc(b.nombre), esc(b.pais || ''), siNo(b.activo)],
+    campos: [['codigoEntidad', 'Código de entidad', 'text'], ['bic', 'BIC', 'text'], ['nombre', 'Nombre', 'text'], ['pais', 'País (ISO 2)', 'text'], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => put('/api/admin/catalogos/bancos', { ...o, id: id || 0 }),
+  },
+  iae: {
+    url: '/api/admin/catalogos/epigrafes', ayuda: 'Sección 1 empresarial, 2 profesional, 3 artística. Se muestran como mucho 300: usa el buscador.', busca: true,
+    cols: ['Sección', 'Código', 'Descripción', 'Profesional'],
+    fila: e => [e.seccion, esc(e.codigo), esc(e.descripcion), siNo(e.esProfesional)],
+    campos: [['seccion', 'Sección', ['1', '2', '3'], 1], ['codigo', 'Código', 'text', 1], ['descripcion', 'Descripción', 'text'], ['esProfesional', 'Actividad profesional', 'check']],
+    guarda: o => put('/api/admin/catalogos/epigrafes', { ...o, seccion: +o.seccion }),
+  },
+  fp: {
+    url: () => `/api/empresas/${$('#caEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
+    cols: ['Código', 'Nombre', 'Tipo', 'Plazos', 'Días al primero', 'Días entre plazos', ''],
+    fila: f => [esc(f.codigo), esc(f.nombre), esc(f.tipo), f.numPlazos, f.diasPrimerPlazo, f.diasEntrePlazos,
+      `<button class="btn" type="button" data-borra="${f.id}">Borrar</button>`],
+    campos: [['codigo', 'Código', 'text'], ['nombre', 'Nombre', 'text'], ['tipo', 'Tipo', ['TRANSFERENCIA', 'RECIBO', 'EFECTIVO', 'TARJETA', 'PAGARE', 'CHEQUE', 'OTRO']],
+      ['numPlazos', 'Número de plazos', 'number'], ['diasPrimerPlazo', 'Días hasta el primero', 'number'], ['diasEntrePlazos', 'Días entre plazos', 'number']],
+    guarda: (o, id) => { const u = `/api/empresas/${$('#caEmpresa').value}/formas-pago`;
+      const c = { ...o, numPlazos: +o.numPlazos || 1, diasPrimerPlazo: +o.diasPrimerPlazo || 0, diasEntrePlazos: +o.diasEntrePlazos || 0 };
+      return id ? put(`${u}/${id}`, c) : post(u, c); },
+  },
+};
+const CA = { filas: [], sel: null };
+
+async function cargaCatalogos() {
+  if (!$('#caEmpresa').options.length) {
+    const emps = await api('/api/admin/empresas');
+    $('#caEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
+  }
+  await pintaCatalogo();
+}
+
+async function pintaCatalogo() {
+  const c = CAT[$('#caTipo').value];
+  $('#caEmpresaL').hidden = !c.empresa; $('#caBuscaL').hidden = !c.busca;
+  $('#caAyuda').textContent = c.ayuda; msg($('#caMsg'), ''); msg($('#caFormMsg'), '');
+  $('#caFormPanel').hidden = !!c.sinForm; $('#caVigPanel').hidden = true;
+  let url = typeof c.url === 'function' ? c.url() : c.url;
+  if (c.busca && $('#caBusca').value.trim()) url += '?q=' + encodeURIComponent($('#caBusca').value.trim());
+  if (c.empresa && !$('#caEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
+  $('#caHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
+  $('#caBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
+    : `<td><button class="btn" type="button" data-edita="${i}">Modificar</button></td>`}</tr>`).join('')
+    || `<tr><td colspan="${c.cols.length + 1}" class="vacio">No hay registros.</td></tr>`;
+  if (!c.sinForm) formCatalogo(null);
+}
+
+function formCatalogo(fila) {
+  const c = CAT[$('#caTipo').value];
+  CA.sel = fila;
+  $('#caFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
+  $('#caForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
+      const v = fila ? fila[k] : (tipo === 'check' ? k === 'activo' : '');
+      const bloquea = fila && soloAlta ? ' disabled' : '';
+      if (fila && c.vigencias && ['porcentaje', 'recargo', 'fechaDesde'].includes(k)) return '';
+      if (Array.isArray(tipo)) return `<label>${etq} <select data-k="${k}"${bloquea}>${tipo.map(o => `<option value="${o}"${String(v ?? '') === o ? ' selected' : ''}>${o || '—'}</option>`).join('')}</select></label>`;
+      if (tipo === 'check') return `<label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" data-k="${k}"${v ? ' checked' : ''}> ${etq}</label>`;
+      return `<label>${etq} <input data-k="${k}" type="${tipo}"${tipo === 'number' ? ' step="0.01"' : ''} value="${esc(v ?? '')}"${bloquea}></label>`;
+    }).join('');
+  $('#caVigPanel').hidden = !(fila && c.vigencias);
+  if (fila && c.vigencias) {
+    $('#caVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
+    $('#caVigRecL').hidden = !c.recargo; $('#caVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#caVigDesde').value = '';
+    msg($('#caVigMsg'), '');
+  }
+}
+
+$('#caTipo').onchange = () => pintaCatalogo().catch(e => msg($('#caMsg'), e.message, 'ayuda err-texto'));
+$('#caEmpresa').onchange = $('#caTipo').onchange;
+$('#caBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#caTipo').onchange(); });
+$('#caNuevo').onclick = () => formCatalogo(null);
+$('#caBody').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const c = CAT[$('#caTipo').value];
+  try {
+    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#caFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (b.dataset.act) { await put(`/api/admin/catalogos/modelos-fiscales/${b.dataset.act}/activo`, { activo: b.dataset.v === 'true' }); }
+    if (b.dataset.borra) {
+      if (!confirm('¿Borrar la forma de pago?')) return;
+      await api(`${c.url()}/${b.dataset.borra}`, { method: 'DELETE' });
+    }
+    await pintaCatalogo();
+    msg($('#caMsg'), 'Hecho.', 'ayuda ok-texto');
+  } catch (err) { msg($('#caMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#caGuardar').onclick = async () => {
+  const c = CAT[$('#caTipo').value];
+  const o = { ...(CA.sel || {}) };
+  $$('#caForm [data-k]').forEach(el => {
+    o[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : (el.value === '' ? null : el.value);
+  });
+  if ('recargo' in o && o.recargo == null) o.recargo = 0;
+  try {
+    await c.guarda(o, CA.sel?.id);
+    await pintaCatalogo();
+    msg($('#caFormMsg'), 'Guardado.', 'ok-texto');
+  } catch (err) { msg($('#caFormMsg'), err.message, 'err-texto'); }
+};
+$('#caVigGuardar').onclick = async () => {
+  const c = CAT[$('#caTipo').value];
+  try {
+    await post(`/api/admin/catalogos/${c.vigencias}/${CA.sel.id}/vigencias`,
+      { porcentaje: +$('#caVigPct').value, recargo: +$('#caVigRec').value || 0, fechaDesde: $('#caVigDesde').value || null });
+    const id = CA.sel.id;
+    await pintaCatalogo();
+    formCatalogo(CA.filas.find(f => f.id === id));
+    msg($('#caVigMsg'), 'Vigencia abierta.', 'ok-texto');
+  } catch (err) { msg($('#caVigMsg'), err.message, 'err-texto'); }
+};
 
 // ---- usuarios
 async function cargaUsuarios() {

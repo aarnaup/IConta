@@ -107,7 +107,10 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         await using var cn = await conexiones.AbrirAsync(ct);
         var e = await EmpresaAsync(cn, null, empresaId, ct);
         var directa = e.RegimenIrpf is "DIRECTA_NORMAL" or "DIRECTA_SIMPLIFICADA";
-        return ModelosFiscales.Soportados.Where(m => m.Impuesto switch
+        // Los modelos que el administrador ha desactivado en Catálogos no se ofrecen
+        var inactivos = (await cn.QueryAsync<string>(new CommandDefinition(
+            "SELECT codigo FROM fiscal.modelo_fiscal WHERE NOT activo", cancellationToken: ct))).ToHashSet();
+        return ModelosFiscales.Soportados.Where(m => !inactivos.Contains(m.Codigo)).Where(m => m.Impuesto switch
         {
             // Recargo de equivalencia: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
             "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva != "RECARGO_EQUIVALENCIA" && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),

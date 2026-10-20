@@ -90,5 +90,76 @@ public static class AdminEndpoints
             await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "EMPRESA_DESASIGNADA", "usuario", id, null, ct);
             return Results.NoContent();
         }).SoloSuperadmin();
+
+        // ---- Catálogos comunes ----
+        var cat = admin.MapGroup("/catalogos");
+        cat.MapGet("/tipos-iva", (ICatalogosAdminRepositorio c, CancellationToken ct) => c.TiposImpuestoAsync(ct)).SoloGestor();
+        cat.MapPost("/tipos-iva", async (TipoImpuestoCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var id = await c.CrearTipoImpuestoAsync(cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_IVA_CREADO", "tipo_iva", id, cmd, ct);
+            return Results.Created($"/api/admin/catalogos/tipos-iva/{id}", new { id });
+        }).SoloSuperadmin();
+        cat.MapPut("/tipos-iva/{id:int}", async (int id, TipoImpuestoCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.ModificarTipoImpuestoAsync(id, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_IVA_MODIFICADO", "tipo_iva", id, cmd, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+        cat.MapPost("/tipos-iva/{id:int}/vigencias", async (int id, NuevaVigenciaCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.NuevaVigenciaImpuestoAsync(id, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_IVA_VIGENCIA", "tipo_iva", id, cmd, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+
+        cat.MapGet("/tipos-retencion", (ICatalogosAdminRepositorio c, CancellationToken ct) => c.TiposRetencionAsync(ct)).SoloGestor();
+        cat.MapPost("/tipos-retencion", async (TipoRetencionCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var id = await c.CrearTipoRetencionAsync(cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_RETENCION_CREADO", "tipo_retencion", id, cmd, ct);
+            return Results.Created($"/api/admin/catalogos/tipos-retencion/{id}", new { id });
+        }).SoloSuperadmin();
+        cat.MapPut("/tipos-retencion/{id:int}", async (int id, TipoRetencionCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.ModificarTipoRetencionAsync(id, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_RETENCION_MODIFICADO", "tipo_retencion", id, cmd, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+        cat.MapPost("/tipos-retencion/{id:int}/vigencias", async (int id, NuevaVigenciaCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.NuevaVigenciaRetencionAsync(id, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "TIPO_RETENCION_VIGENCIA", "tipo_retencion", id, cmd, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+
+        cat.MapGet("/paises", (ICatalogosAdminRepositorio c, CancellationToken ct) => c.PaisesAsync(ct)).SoloGestor();
+        cat.MapPut("/paises", async (PaisDto p, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.GuardarPaisAsync(p, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "PAIS_GUARDADO", "pais", null, p, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+        cat.MapGet("/bancos", (ICatalogosAdminRepositorio c, CancellationToken ct) => c.BancosAsync(ct)).SoloGestor();
+        cat.MapPut("/bancos", async (BancoDto b, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var id = await c.GuardarBancoAsync(b, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "BANCO_GUARDADO", "banco", id, b, ct);
+            return Results.Ok(new { id });
+        }).SoloSuperadmin();
+        cat.MapGet("/epigrafes", (string? q, ICatalogosAdminRepositorio c, CancellationToken ct) => c.EpigrafesAsync(q, ct)).SoloGestor();
+        cat.MapPut("/epigrafes", async (EpigrafeDto e, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var id = await c.GuardarEpigrafeAsync(e, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "EPIGRAFE_GUARDADO", "epigrafe_iae", id, e, ct);
+            return Results.Ok(new { id });
+        }).SoloSuperadmin();
+        cat.MapGet("/modelos-fiscales", (ICatalogosAdminRepositorio c, CancellationToken ct) => c.ModelosFiscalesAsync(ct)).SoloGestor();
+        cat.MapPut("/modelos-fiscales/{id:int}/activo", async (int id, ActivarUsuarioCmd cmd, HttpContext http, ICatalogosAdminRepositorio c, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.ActivarModeloFiscalAsync(id, cmd.Activo, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, cmd.Activo ? "MODELO_ACTIVADO" : "MODELO_DESACTIVADO", "modelo_fiscal", id, null, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
     }
 }

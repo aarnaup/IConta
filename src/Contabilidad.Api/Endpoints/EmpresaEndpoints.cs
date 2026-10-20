@@ -1,3 +1,4 @@
+using Contabilidad.Domain.Facturacion;
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Canales;
@@ -134,6 +135,10 @@ public static class EmpresaEndpoints
 
         ej.MapGet("/facturas", (long empresaId, long ejercicioId, string? libro, int? limite, IFacturaRepositorio f, CancellationToken ct)
             => f.ListarAsync(empresaId, ejercicioId, string.IsNullOrWhiteSpace(libro) ? null : libro, Math.Clamp(limite ?? 50, 1, 500), ct))
+            .Requiere(Nivel.Lectura, Modulo.Facturacion);
+
+        ej.MapGet("/facturas/{facturaId:long}/impreso", async (long empresaId, long ejercicioId, long facturaId, IFacturaRepositorio f, CancellationToken ct)
+            => Results.Content(ImpresoFactura.Html(await f.ImpresoAsync(empresaId, ejercicioId, facturaId, ct)), "text/html; charset=utf-8"))
             .Requiere(Nivel.Lectura, Modulo.Facturacion);
 
         // ---- Revisión de borradores ----

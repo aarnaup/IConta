@@ -29,6 +29,23 @@ public static class TesoreriaEndpoints
             return Results.Created($"/api/empresas/{empresaId}/formas-pago/{f.Id}", f);
         }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
 
+        emp.MapPut("/formas-pago/{id:long}", async (long empresaId, long id, FormaPagoDto f, HttpContext http, ICatalogosAdminRepositorio c,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            f.Id = id;
+            await c.GuardarFormaPagoAsync(empresaId, f, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "FORMA_PAGO_MODIFICADA", "forma_pago", id, new { f.Codigo }, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+
+        emp.MapDelete("/formas-pago/{id:long}", async (long empresaId, long id, HttpContext http, ICatalogosAdminRepositorio c,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.EliminarFormaPagoAsync(empresaId, id, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "FORMA_PAGO_ELIMINADA", "forma_pago", id, null, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+
         emp.MapPut("/terceros/{terceroId:long}/forma-pago", async (long empresaId, long terceroId, AsignarFormaPagoCmd cmd,
             ITesoreriaRepositorio t, CancellationToken ct) =>
         {

@@ -16,6 +16,8 @@ public interface IFacturaRepositorio
     /// <summary>Contabiliza una factura en borrador: genera su asiento con la plantilla y la pasa a CONTABILIZADA.</summary>
     Task<FacturaCreada> AprobarAsync(long empresaId, long ejercicioId, long facturaId, long usuarioId, CancellationToken ct);
     Task RechazarAsync(long empresaId, long ejercicioId, long facturaId, CancellationToken ct);
+    /// <summary>Datos de una factura emitida para su impreso.</summary>
+    Task<FacturaImpreso> ImpresoAsync(long empresaId, long ejercicioId, long facturaId, CancellationToken ct);
 }
 
 public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepositorio asientos) : IFacturaRepositorio
@@ -456,6 +458,90 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             ORDER BY f.fecha_expedicion, f.id
             """;
         return (await cn.QueryAsync<PendienteDto>(new CommandDefinition(sql, new { empresaId, ejercicioId }, cancellationToken: ct))).AsList();
+    }
+
+    public async Task<FacturaImpreso> ImpresoAsync(long empresaId, long ejercicioId, long facturaId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var f = await cn.QuerySingleOrDefaultAsync<FacturaImpresoFila>(new CommandDefinition("""
+            SELECT f.libro, f.tipo_factura, f.serie, f.numero, f.fecha_expedicion, f.fecha_operacion, f.descripcion, f.estado,
+                   f.criterio_caja, f.base_total, f.cuota_total, f.recargo_total, f.retencion_total, f.total,
+                   COALESCE(r.serie, '') || r.numero AS rectificada, r.fecha_expedicion AS fecha_rectificada,
+                   f.empresa_id, f.tercero_id
+            FROM fiscal.factura f LEFT JOIN fiscal.factura r ON r.id = f.factura_rectificada_id
+            WHERE f.id = @facturaId AND f.empresa_id = @empresaId AND f.ejercicio_id = @ejercicioId
+            """, new { facturaId, empresaId, ejercicioId }, cancellationToken: ct))
+            ?? throw new ReglaContableException("La factura no existe en este ejercicio.");
+        if (f.Libro != "EMITIDAS") throw new ReglaContableException("Solo se imprimen las facturas emitidas.");
+        if (f.Estado == "ANULADA") throw new ReglaContableException("La factura está anulada.");
+
+        const string sqlParte = """
+            SELECT {0} AS nombre, n.numero AS nif, COALESCE({1}, n.direccion) AS direccion, n.codigo_postal, n.poblacion,
+                   pr.nombre AS provincia, p.iso2 AS pais
+            FROM core.nif n JOIN cat.pais p ON p.id = n.pais_id LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
+            """;
+        var emisor = await cn.QuerySingleAsync<ParteImpreso>(new CommandDefinition(
+            string.Format(sqlParte, "n.razon_social", "NULL") + " JOIN core.empresa e ON e.nif_id = n.id WHERE e.id = @empresaId",
+            new { empresaId }, cancellationToken: ct));
+        var destinatario = await cn.QuerySingleAsync<ParteImpreso>(new CommandDefinition(
+            string.Format(sqlParte, "t.nombre", "t.direccion") + " JOIN conta.tercero t ON t.nif_id = n.id WHERE t.id = @terceroId",
+            new { terceroId = f.TerceroId }, cancellationToken: ct));
+
+        var lineas = (await cn.QueryAsync<LineaIvaImpreso>(new CommandDefinition("""
+            SELECT ti.impuesto, fi.tipo_operacion, fi.base, fi.porcentaje, fi.cuota, fi.porcentaje_recargo, fi.cuota_recargo
+            FROM fiscal.factura_iva fi JOIN cat.tipo_iva ti ON ti.id = fi.tipo_iva_id
+            WHERE fi.factura_id = @facturaId ORDER BY fi.porcentaje DESC, fi.id
+            """, new { facturaId }, cancellationToken: ct))).AsList();
+        var retenciones = (await cn.QueryAsync<RetencionImpreso>(new CommandDefinition(
+            "SELECT base, porcentaje, importe FROM fiscal.factura_retencion WHERE factura_id = @facturaId ORDER BY id",
+            new { facturaId }, cancellationToken: ct))).AsList();
+        var venc = (await cn.QueryAsync<VencimientoImpresoFila>(new CommandDefinition("""
+            SELECT v.fecha_vencimiento AS fecha, v.importe, fp.nombre AS forma_pago, cb.iban
+            FROM tes.vencimiento v LEFT JOIN core.forma_pago fp ON fp.id = v.forma_pago_id
+            LEFT JOIN tes.cuenta_bancaria cb ON cb.id = v.cuenta_bancaria_id
+            WHERE v.factura_id = @facturaId AND v.estado <> 'ANULADO' ORDER BY v.fecha_vencimiento, v.id
+            """, new { facturaId }, cancellationToken: ct))).AsList();
+
+        return new FacturaImpreso
+        {
+            TipoFactura = f.TipoFactura, Serie = f.Serie, Numero = f.Numero, FechaExpedicion = f.FechaExpedicion, FechaOperacion = f.FechaOperacion,
+            Descripcion = f.Descripcion, Estado = f.Estado, CriterioCaja = f.CriterioCaja, Rectificada = f.Rectificada, FechaRectificada = f.FechaRectificada,
+            BaseTotal = f.BaseTotal, CuotaTotal = f.CuotaTotal, RecargoTotal = f.RecargoTotal, RetencionTotal = f.RetencionTotal, Total = f.Total,
+            Emisor = emisor, Destinatario = destinatario, Lineas = lineas, Retenciones = retenciones,
+            Vencimientos = venc.Select(v => new VencimientoImpreso { Fecha = v.Fecha, Importe = v.Importe }).ToList(),
+            FormaPago = venc.Select(v => v.FormaPago).FirstOrDefault(x => x is not null),
+            Iban = venc.Select(v => v.Iban).FirstOrDefault(x => x is not null),
+        };
+    }
+
+    private sealed class FacturaImpresoFila
+    {
+        public string Libro { get; set; } = "";
+        public string TipoFactura { get; set; } = "";
+        public string? Serie { get; set; }
+        public string Numero { get; set; } = "";
+        public DateOnly FechaExpedicion { get; set; }
+        public DateOnly? FechaOperacion { get; set; }
+        public string? Descripcion { get; set; }
+        public string Estado { get; set; } = "";
+        public bool CriterioCaja { get; set; }
+        public decimal BaseTotal { get; set; }
+        public decimal CuotaTotal { get; set; }
+        public decimal RecargoTotal { get; set; }
+        public decimal RetencionTotal { get; set; }
+        public decimal Total { get; set; }
+        public string? Rectificada { get; set; }
+        public DateOnly? FechaRectificada { get; set; }
+        public long EmpresaId { get; set; }
+        public long TerceroId { get; set; }
+    }
+
+    private sealed class VencimientoImpresoFila
+    {
+        public DateOnly Fecha { get; set; }
+        public decimal Importe { get; set; }
+        public string? FormaPago { get; set; }
+        public string? Iban { get; set; }
     }
 
     public async Task<IReadOnlyList<FacturaResumenDto>> ListarAsync(long empresaId, long ejercicioId, string? libro, int limite, CancellationToken ct)
