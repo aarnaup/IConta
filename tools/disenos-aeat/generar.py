@@ -13,6 +13,7 @@ MODELOS = [
     ("l10n_es_aeat_mod347", "aeat_mod347_main_export_config", "347", "2016-01-01", None, "M347"),
     ("l10n_es_aeat_mod349", "aeat_mod349_main_export_config", "349", "2016-01-01", None, "M349"),
     ("l10n_es_aeat_mod190", "aeat_mod190_2025_main_export_config", "190", "2025-01-01", None, "M190"),
+    ("l10n_es_aeat_mod390", "aeat_mod390_2025_main_export_config", "390", "2025-01-01", None, "M390"),
 ]
 
 # Expresiones con lógica o nombres de OCA -> clave nuestra
@@ -85,12 +86,28 @@ MAPA = {
     "${'N' if object.percepciones_en_especie < 0 else ' '}": None,
     "${'N' if object.percepciones_dinerarias_incap < 0 else ' '}": None,
     "${'0' if object.report_id.year > 2023 else ''}": "D:cero",
+    # 390: datos estadísticos y representantes
+    "${object.main_activity}": "D:actividad1Nombre", "${object.main_activity_code_id.code}": "D:actividad1Clave",
+    "${object.main_activity_iae}": "D:actividad1Iae",
+    "${object.previous_number if object.statement_type in ('S', 'SF') else ''}": "D:justificanteAnterior",
 }
+# Expresiones que se resuelven siempre igual
+FIJOS = {
+    "${object.other_first_activity_code_id.code or '0'}": "0", "${object.other_second_activity_code_id.code or '0'}": "0",
+    "${object.other_third_activity_code_id.code or '0'}": "0", "${object.other_fourth_activity_code_id.code or '0'}": "0",
+    "${object.other_fifth_activity_code_id.code or '0'}": "0",
+    "${object._get_formatted_date(object.first_representative_date) or '00000000'}": "00000000",
+    "${object._get_formatted_date(object.second_representative_date) or '00000000'}": "00000000",
+    "${object._get_formatted_date(object.third_representative_date) or '00000000'}": "00000000",
+}
+# 390: casillas que OCA deja a cero y aquí se calculan (salvo apartados que no se gestionan)
+SECCIONES_SIN_CALCULO_390 = ("8. Tributación", "13. Reg. Deducc", "12. Prorratas - 3", "12. Prorratas - 4", "12. Prorratas - 5",
+                             "6. Operaciones Reg. Simplificado", "Agricultura", "agric.")
 # En los registros de detalle del 349 rectificado, «year/period» son los del periodo que se corrige
 MAPA_RECT = {"${object.year}": "I:ejercicio", "${object.period_type}": "I:periodo"}
 COLECCIONES = {"object.partner_record_ids": "R:registros", "object.real_estate_record_ids": "R:inmuebles",
                "object.partner_refund_ids": "R:rectificaciones"}
-CONDICIONES = {"True": None, "object.period_type in ('4T', '12') and object.exonerated_390 == '1'": "D:pagina4"}
+CONDICIONES = {"True": None, "False": "D:nunca", "object.period_type in ('4T', '12') and object.exonerated_390 == '1'": "D:pagina4"}
 
 def clave(expr, cid):
     if expr is None: return None
@@ -101,7 +118,7 @@ def clave(expr, cid):
     m = re.fullmatch(r"\$\{object\.casilla_(\d+)\}", expr)
     if m: return f"C:{int(m.group(1)):02d}"
     m = re.fullmatch(r"\$\{object\.\w+\}", expr)
-    if m and ("190" in cid or "real_state" in cid): return None   # datos personales del perceptor que no gestionamos: van a cero o en blanco
+    if m and ("190" in cid or "real_state" in cid or "mod390" in cid): return None   # datos personales del perceptor que no gestionamos: van a cero o en blanco
     raise SystemExit(f"Sin traducir en {cid}: {expr!r}")
 
 def cs(s): return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
@@ -131,6 +148,14 @@ def campo(l, cid):
         if l["no"] and l["no"] != " ": named.append(f"No: '{l['no']}'")
     if l["align"] == "right" and t in ("Alfanumerico", "Alfabetico"): named.append("Derecha: true")
     e = l["expr"]
+    if e in FIJOS: e = FIJOS[e]
+    if "mod390" in cid and l["type"] == "float" and (l["fixed"] in ("0", None)) and not e \
+            and not any(x in l["name"] for x in SECCIONES_SIN_CALCULO_390):
+        m390 = re.search(r"\[(\d+)\]\s*\.?$", l["name"].strip())
+        if m390: e = "${object.casilla_" + m390.group(1) + "}"
+    if "mod390" in cid and l["type"] == "string" and re.search(r"Prorratas - ([12]) - Tipo de prorrata", l["name"]):
+        e = "${__D:prorrata" + re.search(r"Prorratas - ([12])", l["name"]).group(1) + "Tipo}"
+        MAPA[e] = e[4:-1]
     if e and ("\\r\\n" in e):
         return f"new CampoAeat({args[0]}, TipoCampoAeat.Alfanumerico, 2, Literal: \"\\r\\n\")"
     m0 = re.match(r"\$\{'(\d{5})' if object\.year > 2024", e or "")

@@ -1121,7 +1121,7 @@ function muestraDeclaracion(v) {
   $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
       <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
   // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
-  const conFichero = !!v.id && ['303', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
+  const conFichero = !!v.id && ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
   $('#mfFichero').hidden = !conFichero;
   if (conFichero) {
     const autoliq = ['303', '111', '115', '130'].includes(v.modelo);

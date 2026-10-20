@@ -169,6 +169,7 @@ public class FicheroAeatTests
     public void Sin_diseno_para_el_ano_avisa()
     {
         Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("303", 2024));
-        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("390", 2025));
+        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("390", 2024));
+        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("180", 2025));
     }
 }

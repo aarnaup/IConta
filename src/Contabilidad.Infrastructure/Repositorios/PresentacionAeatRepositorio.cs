@@ -23,6 +23,7 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         public string Nombre { get; set; } = "";
         public string RegimenIva { get; set; } = "";
         public string? Iae { get; set; }
+        public string? Actividad { get; set; }
         public short? Seccion { get; set; }
     }
 
@@ -50,6 +51,8 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             SELECT n.numero AS nif, e.nombre, e.regimen_iva,
                    (SELECT ep.codigo FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
                     WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS iae,
+                   (SELECT COALESCE(a.nombre, ep.descripcion) FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+                    WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS actividad,
                    (SELECT ep.seccion FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
                     WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS seccion
             FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id WHERE e.id = @empresaId
@@ -76,9 +79,13 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
                            WHERE d.empresa_id = @empresaId AND m.codigo = '347' AND d.anio = @anio AND d.estado <> 'ANULADA')
             """, new { empresaId, anio = (short)v.Anio }, cancellationToken: ct));
 
-        if (cmd.Exonerado390 && string.IsNullOrWhiteSpace(cmd.ActividadIae)) cmd.ActividadIae = e.Iae;
-        if (cmd.Exonerado390 && string.IsNullOrWhiteSpace(cmd.ActividadClave))
-            cmd.ActividadClave = e.Seccion switch { 2 => "A02", 3 => "A03", _ => "A01" };
+        // Actividad principal: página 4 del 303 de exonerados y datos estadísticos del 390
+        if (cmd.Exonerado390 || v.Modelo == "390")
+        {
+            if (string.IsNullOrWhiteSpace(cmd.ActividadIae)) cmd.ActividadIae = e.Iae;
+            if (string.IsNullOrWhiteSpace(cmd.ActividadClave)) cmd.ActividadClave = e.Seccion switch { 2 => "A02", 3 => "A03", _ => "A01" };
+            if (string.IsNullOrWhiteSpace(cmd.ActividadNombre)) cmd.ActividadNombre = e.Actividad;
+        }
 
         var d = new DeclaracionParaFichero(v.Id ?? 0, v.Modelo, v.Anio, v.Periodo, v.TipoDeclaracion, NifEspanol(e.Nif), e.Nombre,
             v.Casillas, v.Resultado, v.ADevolver, anterior?.Trim(), registros,

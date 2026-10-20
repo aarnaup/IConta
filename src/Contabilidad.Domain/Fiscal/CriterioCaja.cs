@@ -62,6 +62,6 @@ public static class CriterioCaja
         => devengos.SelectMany(d => d.Lineas.Select(l => (d.Factura, l)))
             .GroupBy(x => (x.Factura.Libro, x.Factura.Rectificativa, x.l.Porcentaje, x.l.PorcentajeRecargo, x.l.EsBienInversion))
             .Select(g => new GrupoIva(g.Key.Libro, g.Key.Rectificativa, "INTERIOR", g.Key.Porcentaje, g.Key.PorcentajeRecargo, g.Key.EsBienInversion,
-                g.Sum(x => x.l.Base), g.Sum(x => x.l.Cuota), g.Sum(x => x.l.CuotaRecargo), g.Sum(x => x.l.CuotaDeducible)))
+                g.Sum(x => x.l.Base), g.Sum(x => x.l.Cuota), g.Sum(x => x.l.CuotaRecargo), g.Sum(x => x.l.CuotaDeducible), CriterioCaja: true))
             .ToList();
 }

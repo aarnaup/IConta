@@ -15,6 +15,8 @@ public sealed class FicheroAeatCmd
     public bool Exonerado390 { get; set; }
     public string? ActividadClave { get; set; }
     public string? ActividadIae { get; set; }
+    /// <summary>Descripción de la actividad principal (datos estadísticos del 390).</summary>
+    public string? ActividadNombre { get; set; }
 }
 
 /// <summary>Registro de detalle (un tercero del 347, un operador del 349, un perceptor del 190…).</summary>
@@ -38,7 +40,7 @@ public static class FicheroModelo
 {
     public const string VersionPrograma = "1.00";
 
-    public static readonly string[] Modelos = ["303", "111", "115", "130", "347", "349", "190"];
+    public static readonly string[] Modelos = ["303", "390", "111", "115", "130", "347", "349", "190"];
 
     public static DisenoAeat Diseno(string modelo, int anio)
     {
@@ -92,6 +94,10 @@ public static class FicheroModelo
 
     private sealed class Datos(DeclaracionParaFichero d, FicheroAeatCmd cmd, string? nifDesarrollador) : IDatosAeat
     {
+        // Prorrata del 390: G general o E especial, solo si el bloque tiene datos
+        private string TipoProrrata(string porcentaje, string tipo)
+            => Importe(d.Casillas, porcentaje) is null ? "" : Importe(d.Casillas, tipo) == 1 ? "E" : "G";
+
         private readonly string _tipo = Tipo(d, cmd);
         private bool UltimoPeriodo => d.Periodo is "4T" or "12";
 
@@ -130,6 +136,10 @@ public static class FicheroModelo
                 "pagina4" => UltimoPeriodo && cmd.Exonerado390,
                 "actividad1Clave" => cmd.ActividadClave,
                 "actividad1Iae" => cmd.ActividadIae,
+                "actividad1Nombre" => cmd.ActividadNombre,
+                "prorrata1Tipo" => TipoProrrata("118", "117"),
+                "prorrata2Tipo" => TipoProrrata("123", "122"),
+                "nunca" => false,
                 "presenta347" => d.PresentaModelo347,
                 "versionPrograma" => VersionPrograma,
                 "nifDesarrollador" => nifDesarrollador ?? "",

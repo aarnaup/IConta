@@ -6,7 +6,7 @@ namespace Contabilidad.Domain.Fiscal;
 /// </summary>
 public sealed record GrupoIva(
     string Libro, bool Rectificativa, string TipoOperacion, decimal Porcentaje, decimal PorcentajeRecargo, bool EsBienInversion,
-    decimal Base, decimal Cuota, decimal CuotaRecargo, decimal CuotaDeducible);
+    decimal Base, decimal Cuota, decimal CuotaRecargo, decimal CuotaDeducible, bool CriterioCaja = false);
 
 public sealed record EntradaImpuestoIndirecto(
     IReadOnlyList<GrupoIva> Grupos,

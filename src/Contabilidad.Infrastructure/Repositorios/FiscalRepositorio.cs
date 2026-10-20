@@ -28,6 +28,24 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public string RegimenIva { get; set; } = "";
         public string? RegimenIrpf { get; set; }
     }
+    private sealed class Resumen303Fila
+    {
+        public string Periodo { get; set; } = "";
+        public decimal Resultado { get; set; }
+        public decimal AIngresar { get; set; }
+        public decimal ADevolver { get; set; }
+        public decimal ACompensar { get; set; }
+        public decimal PendienteInicial { get; set; }
+        public decimal Aplicada { get; set; }
+        public decimal PendientePosterior { get; set; }
+    }
+    private sealed class Prorrata390Fila
+    {
+        public string Tipo { get; set; } = "";
+        public decimal OperacionesTotales { get; set; }
+        public decimal OperacionesConDerecho { get; set; }
+        public int? PorcentajeDefinitivo { get; set; }
+    }
     private sealed class GrupoFila
     {
         public string Libro { get; set; } = "";
@@ -252,6 +270,36 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                   AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                         WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
                 """, new { empresaId, mid, inicio = p.Inicio, clave = claveCompensada }, tx, cancellationToken: ct)));
+        }
+
+        if (anual && !igic)
+        {
+            // 390 con las casillas del modelo oficial: necesita además las autoliquidaciones del año y la prorrata
+            var mid303 = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener("303"), ct);
+            var autoliq = (await cn.QueryAsync<Resumen303Fila>(new CommandDefinition("""
+                SELECT d.periodo, COALESCE(d.resultado, 0) AS resultado, COALESCE(d.a_ingresar, 0) AS a_ingresar,
+                       COALESCE(d.a_devolver, 0) AS a_devolver, COALESCE(d.a_compensar, 0) AS a_compensar,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = '110'), 0) AS pendiente_inicial,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla IN ('78', '68')
+                                 ORDER BY c.casilla DESC LIMIT 1), 0) AS aplicada,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = '87'), 0) AS pendiente_posterior
+                FROM fiscal.declaracion d
+                WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid303 AND d.anio = @anio AND d.estado = 'PRESENTADA'
+                  AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                        WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+                ORDER BY d.fecha_inicio
+                """, new { empresaId, mid303, anio = (short)p.Anio }, tx, cancellationToken: ct)))
+                .Select(a => new Resumen303(a.Periodo, a.Resultado, a.AIngresar, a.ADevolver, a.ACompensar, a.PendienteInicial, a.Aplicada,
+                                            a.PendientePosterior)).ToList();
+            var prorratas = (await cn.QueryAsync<Prorrata390Fila>(new CommandDefinition("""
+                SELECT tipo, COALESCE(operaciones_totales, 0) AS operaciones_totales, COALESCE(operaciones_con_derecho, 0) AS operaciones_con_derecho,
+                       porcentaje_definitivo
+                FROM fiscal.prorrata WHERE empresa_id = @empresaId AND anio = @anio ORDER BY COALESCE(sector_diferenciado, 0)
+                """, new { empresaId, anio = (short)p.Anio }, tx, cancellationToken: ct)))
+                .Select(x => new Prorrata390(x.Tipo, x.OperacionesTotales, x.OperacionesConDerecho, x.PorcentajeDefinitivo)).ToList();
+            Calculador390.Calcular(new Entrada390(grupos, regBienes, regularizacion, autoliq, infoCaja, prorratas,
+                RecargoEquivalencia: empresa.RegimenIva == "RECARGO_EQUIVALENCIA"), d);
+            return;
         }
 
         CalculadorImpuestoIndirecto.Calcular(igic,
