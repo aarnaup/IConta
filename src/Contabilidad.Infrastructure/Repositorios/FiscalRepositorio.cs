@@ -115,7 +115,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             // Recargo de equivalencia y REAGP: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
             "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP")
                      && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
-            "IGIC" => e.ImpuestoIndirecto == "IGIC",
+            // Comerciante minorista: no presenta el 420 (sus ventas están exentas); el 425 informa de ellas
+            "IGIC" => e.ImpuestoIndirecto == "IGIC" && !(m.Codigo == "420" && e.RegimenIva == "COMERCIANTE_MINORISTA"),
             "IRPF" => m.Codigo == "131" ? e.RegimenIrpf == "OBJETIVA" : directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
             "INTRACOM" => e.ImpuestoIndirecto == "IVA",
@@ -220,7 +221,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 "Solo las adquisiciones intracomunitarias y las operaciones con inversión del sujeto pasivo se declaran, en el modelo 309.");
         if (empresa.RegimenIva == "SIMPLIFICADO" && modelo.Codigo == "390")
             throw new ReglaContableException("Quien tributa solo en el régimen simplificado está exonerado del 390.");
-        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO"))
+        if (empresa.RegimenIva == "AGRICULTURA_GYP")
+            throw new ReglaContableException($"En el régimen especial de la agricultura, ganadería y pesca no se presenta el {modelo.Codigo}.",
+                "Las adquisiciones intracomunitarias y las operaciones con inversión del sujeto pasivo se declaran en el modelo 309.");
+        if (empresa.RegimenIva == "COMERCIANTE_MINORISTA" && modelo.Codigo == "420")
+            throw new ReglaContableException("El comerciante minorista del IGIC no presenta el 420: sus ventas están exentas y el IGIC de las compras es coste.");
+        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "COMERCIANTE_MINORISTA"))
             throw new ReglaContableException($"El régimen {empresa.RegimenIva} todavía no está soportado en {modelo.Codigo}.");
 
         var igic = modelo.Impuesto == "IGIC";
@@ -349,8 +355,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     """, new { empresaId, mid303, anio = (short)p.Anio, inicio = p.Inicio }, tx, cancellationToken: ct));
             }
             cuotaSimplificado = CalculadorModulos.Simplificado303(modulos, p.EsUltimoDelAnio, anteriores, d);
-            d.Avisos.Add("Régimen simplificado: la cuota sale de los módulos del año; las ventas interiores y las compras corrientes no van en el 303. " +
-                         "El fichero de presentación no lleva la parte del simplificado: complétala en el formulario.");
+            d.Avisos.Add($"Régimen simplificado: la cuota sale de los módulos del año; las ventas interiores y las compras corrientes no van en el {modelo.Codigo}. " +
+                         (igic ? "VERIFICA con el formulario del 420 del año cómo se declara el ingreso a cuenta del simplificado del IGIC."
+                               : "El fichero de presentación no lleva la parte del simplificado: complétala en el formulario."));
         }
 
         CalculadorImpuestoIndirecto.Calcular(igic,

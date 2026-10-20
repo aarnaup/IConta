@@ -2,7 +2,7 @@ namespace Contabilidad.Domain;
 
 public sealed class ConfiguracionFiscalDto
 {
-    /// <summary>GENERAL, CRITERIO_CAJA, SIMPLIFICADO (módulos), RECARGO_EQUIVALENCIA (comercio minorista) o AGRICULTURA_GYP (REAGP).</summary>
+    /// <summary>GENERAL, CRITERIO_CAJA, SIMPLIFICADO (módulos), RECARGO_EQUIVALENCIA (comercio minorista) AGRICULTURA_GYP (REAGP) o COMERCIANTE_MINORISTA (IGIC).</summary>
     public string RegimenIva { get; set; } = "GENERAL";
     public string ImpuestoIndirecto { get; set; } = "";
     /// <summary>Empresario persona física: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA; null para sociedades.</summary>

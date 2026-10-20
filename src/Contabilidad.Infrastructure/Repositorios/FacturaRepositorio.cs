@@ -166,14 +166,18 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             else if (t.Codigo.StartsWith("REAGP", StringComparison.Ordinal))
                 throw new ReglaContableException("El tipo de compensación del REAGP solo se usa con la operación «compensación REAGP».");
 
-            var interior = l.TipoOperacion == "INTERIOR";
+            // Comerciante minorista del IGIC: sus ventas interiores están exentas (art. 10.1.27 de la Ley 20/1991)
+            var operacion = empresa.RegimenIva == "COMERCIANTE_MINORISTA" && libro == LibroFactura.Emitidas && l.TipoOperacion == "INTERIOR"
+                ? "EXENTA" : l.TipoOperacion;
+            var interior = operacion == "INTERIOR";
             entradas.Add(new LineaIvaEntrada(
-                t.TipoIvaId, t.VigenciaId, l.TipoOperacion, l.Base,
-                OperacionesIva.LlevaCuota(libro, l.TipoOperacion) ? t.Porcentaje.Value : 0m,
+                t.TipoIvaId, t.VigenciaId, operacion, l.Base,
+                OperacionesIva.LlevaCuota(libro, operacion) ? t.Porcentaje.Value : 0m,
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
                 // En recargo de equivalencia el IVA (y el recargo) soportado en las compras interiores no se deduce: es más coste
                 // (igual en el REAGP: el agricultor no deduce, se compensa a tanto alzado)
-                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" ? "NINGUNA" : l.ReglaDeduccion,
+                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" or "COMERCIANTE_MINORISTA"
+                    ? "NINGUNA" : l.ReglaDeduccion,
                 l.PorcentajeDeduccion, l.EsBienInversion));
         }
 

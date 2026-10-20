@@ -191,6 +191,15 @@ public class CalculadorImpuestoIndirectoTests
     }
 
     [Fact]
+    public void IGIC_simplificado_suma_la_cuota_de_los_modulos()
+    {
+        var d = new DeclaracionCalculada { Modelo = "420" };
+        CalculadorImpuestoIndirecto.Calcular(true, new([G("RECIBIDAS", 7, 1000, 70, ded: 70, inv: true)], 0, 0, false, false, CuotaSimplificado: 300), d);
+        Assert.Equal(230m, d["RES"]);
+        Assert.Equal(230m, d.AIngresar);
+    }
+
+    [Fact]
     public void Compensaciones_REAGP_en_la_casilla_42()
     {
         var d = Nueva();

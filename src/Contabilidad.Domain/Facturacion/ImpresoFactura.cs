@@ -88,7 +88,10 @@ public static class ImpresoFactura
         if (ops.Contains("INVERSION_SUJETO_PASIVO")) m.Add("Inversión del sujeto pasivo (art. 84.Uno.2º de la Ley 37/1992).");
         if (ops.Contains("INTRACOM_ENTREGA")) m.Add("Entrega intracomunitaria exenta (art. 25 de la Ley 37/1992).");
         if (ops.Contains("EXPORTACION")) m.Add("Exportación exenta (art. 21 de la Ley 37/1992).");
-        if (ops.Contains("EXENTA")) m.Add("Operación exenta (art. 20 de la Ley 37/1992).");
+        if (ops.Contains("EXENTA"))
+            m.Add(f.Lineas.Any(l => l.TipoOperacion == "EXENTA" && l.Impuesto == "IGIC")
+                ? "Operación exenta del IGIC (Ley 20/1991)."
+                : "Operación exenta (art. 20 de la Ley 37/1992).");
         if (ops.Contains("NO_SUJETA")) m.Add("Operación no sujeta al impuesto.");
         if (ops.Contains("NO_SUJETA_LOCAL") || ops.Contains("NO_SUJETA_OSS"))
             m.Add("Operación no sujeta al IVA español por las reglas de localización (arts. 68 a 70 de la Ley 37/1992).");

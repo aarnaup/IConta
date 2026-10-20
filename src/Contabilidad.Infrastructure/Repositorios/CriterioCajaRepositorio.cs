@@ -147,8 +147,8 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
     public async Task<ConfiguracionFiscalDto> GuardarConfiguracionAsync(long empresaId, GuardarConfiguracionFiscalCmd cmd, CancellationToken ct)
     {
         var regimen = (cmd.RegimenIva ?? "").Trim().ToUpperInvariant();
-        if (regimen is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP"))
-            throw new ReglaContableException("Régimen no disponible: GENERAL, CRITERIO_CAJA, SIMPLIFICADO, RECARGO_EQUIVALENCIA o AGRICULTURA_GYP.");
+        if (regimen is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" or "COMERCIANTE_MINORISTA"))
+            throw new ReglaContableException("Régimen no disponible: GENERAL, CRITERIO_CAJA, SIMPLIFICADO, RECARGO_EQUIVALENCIA, AGRICULTURA_GYP o COMERCIANTE_MINORISTA.");
         var irpf = cmd.RegimenIrpf?.Trim().ToUpperInvariant();
         if (irpf is not (null or "" or "DIRECTA_NORMAL" or "DIRECTA_SIMPLIFICADA" or "OBJETIVA"))
             throw new ReglaContableException("Régimen de IRPF no válido: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA (o vacío para sociedades).");
@@ -157,9 +157,12 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         var actual = await cn.QuerySingleAsync<ConfiguracionFiscalDto>(new CommandDefinition(
             "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii, tributa_is, is_tipo, is_porcentaje, is_modalidad_202 FROM core.empresa WHERE id = @empresaId FOR UPDATE",
             new { empresaId }, tx, cancellationToken: ct));
-        if (actual.ImpuestoIndirecto == "IGIC" && regimen is "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA")
-            throw new ReglaContableException("En el IGIC solo se admiten el régimen general y el criterio de caja.",
-                "El régimen simplificado y el de comerciante minorista del IGIC están pendientes.");
+        if (actual.ImpuestoIndirecto == "IGIC" && regimen == "RECARGO_EQUIVALENCIA")
+            throw new ReglaContableException("En el IGIC no hay recargo de equivalencia: el minorista va en el régimen especial del comerciante minorista.");
+        if (actual.ImpuestoIndirecto != "IGIC" && regimen == "COMERCIANTE_MINORISTA")
+            throw new ReglaContableException("El régimen especial del comerciante minorista es del IGIC; en el IVA es el recargo de equivalencia.");
+        if (regimen == "COMERCIANTE_MINORISTA" && (irpf is null ? actual.RegimenIrpf : irpf.Length == 0 ? null : irpf) is null)
+            throw new ReglaContableException("El régimen del comerciante minorista es para personas físicas.", "Indica su régimen de IRPF.");
         var irpfFinal = irpf is null ? actual.RegimenIrpf : irpf.Length == 0 ? null : irpf;
         if (regimen == "SIMPLIFICADO" && irpfFinal != "OBJETIVA")
             throw new ReglaContableException("El régimen simplificado del IVA va con la estimación objetiva del IRPF (módulos).",

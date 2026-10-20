@@ -239,11 +239,13 @@ public static class CalculadorImpuestoIndirecto
         decimal resultado, aplicada = 0;
         if (igic)
         {
-            Add("RES", "Resultado antes de compensaciones (devengado − deducible)", resultadoRG);
-            if (resultadoRG > 0) aplicada = Math.Min(resultadoRG, e.CompensacionPendiente);
+            var res = resultadoRG + e.CuotaSimplificado;
+            Add("RES", e.CuotaSimplificado != 0 ? "Resultado antes de compensaciones (régimen general + simplificado)"
+                                                : "Resultado antes de compensaciones (devengado − deducible)", res);
+            if (res > 0) aplicada = Math.Min(res, e.CompensacionPendiente);
             Add("PEND_ANT", "Cuotas a compensar de periodos anteriores (pendientes)", e.CompensacionPendiente);
             Add("COMP", "Cuotas a compensar aplicadas en este periodo", aplicada);
-            resultado = resultadoRG - aplicada;
+            resultado = res - aplicada;
             Add("LIQ", "Resultado de la liquidación", resultado);
         }
         else

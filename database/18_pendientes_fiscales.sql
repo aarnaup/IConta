@@ -76,3 +76,8 @@ ON CONFLICT (codigo) DO NOTHING;
 INSERT INTO cat.tipo_iva_vigencia (tipo_iva_id, porcentaje, recargo_equivalencia, fecha_desde)
 SELECT t.id, v.pct, 0, DATE '2013-01-01' FROM cat.tipo_iva t JOIN (VALUES ('REAGP_AGR', 12.00), ('REAGP_GAN', 10.50)) v(cod, pct) ON v.cod = t.codigo
 WHERE NOT EXISTS (SELECT 1 FROM cat.tipo_iva_vigencia x WHERE x.tipo_iva_id = t.id);
+
+-- ---------------------------------------------------------------- IGIC: régimen especial del comerciante minorista
+ALTER TABLE core.empresa DROP CONSTRAINT IF EXISTS empresa_regimen_iva_check;
+ALTER TABLE core.empresa ADD CONSTRAINT empresa_regimen_iva_check
+  CHECK (regimen_iva IN ('GENERAL','SIMPLIFICADO','RECARGO_EQUIVALENCIA','AGRICULTURA_GYP','CRITERIO_CAJA','EXENTO','COMERCIANTE_MINORISTA'));
