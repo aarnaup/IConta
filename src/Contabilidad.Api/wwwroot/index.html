@@ -317,6 +317,59 @@
         <p id="liqMsg" class="ayuda" role="status"></p>
       </div>
 
+      <div class="panel" id="rePanel" data-req="TESORERIA:LECTURA">
+        <h2>Remesas SEPA</h2>
+        <p class="ayuda">Cobros: recibos domiciliados con mandato (adeudos, fichero pain.008). Pagos: transferencias a proveedores (pain.001).
+          Genera el fichero, súbelo a la banca electrónica y contabiliza la remesa cuando el banco la abone o la cargue.</p>
+        <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
+          <label>Tipo <select id="reTipo"><option value="COBRO">Cobros (recibos)</option><option value="PAGO">Pagos (transferencias)</option></select></label>
+          <label>Cuenta <select id="reBanco"></select></label>
+          <label>Vencen hasta <input type="date" id="reHasta"></label>
+          <button class="btn" id="reBuscar" type="button">Buscar vencimientos</button>
+        </div>
+        <div id="reCandidatos" hidden>
+          <table><thead><tr><th></th><th>Vence</th><th>Tercero</th><th>Factura</th><th class="num">Pendiente</th><th>IBAN</th><th>Mandato</th></tr></thead>
+          <tbody id="reCandBody"></tbody></table>
+          <div class="fila-acciones">
+            <span id="reSeleccion" class="ayuda"></span>
+            <label>Fecha de cargo <input type="date" id="reFecha"></label>
+            <button class="btn primario" id="reGenerar" type="button" disabled>Generar remesa</button>
+          </div>
+        </div>
+        <p id="reMsg" class="ayuda" role="status"></p>
+        <h3>Remesas</h3>
+        <table><thead><tr><th>Referencia</th><th>Tipo</th><th>Cargo</th><th class="num">Operaciones</th><th class="num">Importe</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="reLista"></tbody></table>
+        <div class="panel" id="reDetalle" hidden>
+          <h3 id="reDetTitulo"></h3>
+          <table><thead><tr><th>Tercero</th><th>Factura</th><th class="num">Importe</th><th>IBAN</th><th>Secuencia</th><th>Estado</th><th></th></tr></thead>
+          <tbody id="reDetBody"></tbody></table>
+          <div class="fila-acciones" id="reContabForm" data-req="TESORERIA_DIRECTO">
+            <label>Fecha de abono/cargo en el banco <input type="date" id="reContabFecha"></label>
+            <button class="btn primario" id="reContabilizar" data-guarda type="button">Contabilizar la remesa</button>
+          </div>
+        </div>
+
+        <h3>Cuentas y mandatos de clientes y proveedores</h3>
+        <div class="fila-acciones">
+          <label>Tercero <select id="mtTercero"></select></label>
+        </div>
+        <table><thead><tr><th>IBAN</th><th>BIC</th><th>Mandatos</th></tr></thead><tbody id="mtCuentas"></tbody></table>
+        <div class="cab2" data-req="TESORERIA:ESCRITURA">
+          <label>Nuevo IBAN <input id="mtIban" autocomplete="off"></label>
+          <label>BIC (opcional) <input id="mtBic" maxlength="11"></label>
+          <label>&nbsp;<button class="btn" id="mtAnadirCuenta" type="button">Añadir cuenta</button></label>
+        </div>
+        <div class="cab2" data-req="TESORERIA:ESCRITURA" id="mtMandatoForm">
+          <label>Mandato sobre la cuenta <select id="mtCuenta"></select></label>
+          <label>Fecha de firma <input type="date" id="mtFirma"></label>
+          <label>Esquema <select id="mtEsquema"><option value="CORE">CORE</option><option value="B2B">B2B (solo empresas)</option></select></label>
+          <label>Referencia <input id="mtRef" maxlength="35" placeholder="Automática"></label>
+          <label>&nbsp;<button class="btn" id="mtCrear" type="button">Crear mandato</button></label>
+        </div>
+        <p id="mtMsg" class="ayuda" role="status"></p>
+      </div>
+
       <div class="panel" id="coPanel">
         <h2>Conciliación bancaria</h2>
         <p class="ayuda">Importa el extracto del banco (Norma 43 o CSV) y cásalo con los apuntes de la cuenta contable del banco.

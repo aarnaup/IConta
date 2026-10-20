@@ -176,6 +176,7 @@ async function entrarEmpresa(empresa, ejercicio) {
   $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
   IN.ficha = null; $('#inFicha').hidden = true; $('#inNuevo').hidden = true;
+  RE.terceros = []; RE.detalle = null; $('#reDetalle').hidden = true; $('#reCandidatos').hidden = true;
   pintaLineas(); recalcula();
 
   vista('app');
@@ -435,8 +436,161 @@ const estadoTxt = { PENDIENTE: 'pendiente', PARCIAL: 'parcial', LIQUIDADO: 'liqu
 
 async function cargaTesoreria() {
   await Promise.all([cargaPrevision(), cargaVencimientos(), cargaBancos()]);
-  await cargaConciliacion();
+  await Promise.all([cargaConciliacion(), cargaRemesas()]);
 }
+
+// ------------------------------------------------------------ remesas SEPA
+const RE = { candidatos: [], sel: new Set(), detalle: null, terceros: [] };
+const estadoRemesa = { GENERADA: 'Generada', CONTABILIZADA: 'Contabilizada', ANULADA: 'Anulada' };
+const masDias = (d, n) => { const f = new Date(d + 'T00:00:00'); f.setDate(f.getDate() + n); return f.toISOString().slice(0, 10); };
+
+async function cargaRemesas() {
+  const propias = TES.bancos.filter(b => b.activa && b.cuentaContable);
+  $('#reBanco').innerHTML = propias.map(b => `<option value="${b.id}">${esc(b.alias || b.iban)}</option>`).join('');
+  if (!$('#reHasta').value) $('#reHasta').value = masDias(hoy(), 30);
+  if (!$('#reFecha').value) $('#reFecha').value = masDias(hoy(), 3);
+  if (!RE.terceros.length) {
+    RE.terceros = await api(urlE('/terceros'));
+    $('#mtTercero').innerHTML = RE.terceros.map(t => `<option value="${t.id}">${esc(t.nombre)} · ${esc(t.nif)}</option>`).join('');
+  }
+  await Promise.all([listaRemesas(), cargaCuentasTercero()]);
+}
+
+async function listaRemesas() {
+  const filas = await api(urlE('/tesoreria/remesas'));
+  const escribe = permitido('TESORERIA:ESCRITURA');
+  $('#reLista').innerHTML = filas.map(r => `<tr><td>${esc(r.referencia)}</td><td>${r.tipo === 'COBRO' ? 'Cobros' : 'Pagos'}</td><td>${fechaES(r.fechaCargo)}</td>
+      <td class="num">${r.numOperaciones}${r.devueltos ? ` <small>(${r.devueltos} devuelto${r.devueltos > 1 ? 's' : ''})</small>` : ''}</td><td class="num">${fmt(r.importe)}</td>
+      <td>${estadoRemesa[r.estado] || esc(r.estado)}${r.asientoNumero ? ' · asiento nº ' + r.asientoNumero : ''}</td>
+      <td class="fila-acciones"><button class="btn" data-ver="${r.id}">Ver</button>${r.estado !== 'ANULADA' ? `<button class="btn" data-xml="${r.id}">Fichero</button>` : ''}
+        ${r.estado === 'GENERADA' && escribe ? `<button class="btn" data-anular="${r.id}">Anular</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">Todavía no hay remesas.</td></tr>';
+}
+
+$('#reBuscar').onclick = async () => {
+  try {
+    RE.candidatos = await api(urlE(`/tesoreria/remesas/candidatos?tipo=${$('#reTipo').value}&hasta=${$('#reHasta').value}`));
+    RE.sel = new Set(RE.candidatos.filter(c => !c.problema).map(c => c.vencimientoId));
+    $('#reCandBody').innerHTML = RE.candidatos.map(c => `<tr>
+        <td><input type="checkbox" data-sel="${c.vencimientoId}" ${c.problema ? 'disabled' : 'checked'} aria-label="Incluir"></td>
+        <td>${fechaES(c.fechaVencimiento)}</td><td>${esc(c.tercero)}</td><td>${esc(c.factura || '')}</td><td class="num">${fmt(c.importePendiente)}</td>
+        <td>${c.iban ? esc(c.iban) : `<span class="err-texto">${esc(c.problema)}</span>`}</td><td>${esc(c.mandato || '')}${c.esquema && c.esquema !== 'CORE' ? ' (' + c.esquema + ')' : ''}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="vacio">No hay vencimientos pendientes hasta esa fecha.</td></tr>';
+    $('#reCandidatos').hidden = false; pintaSelRemesa(); msg($('#reMsg'), '', 'ayuda');
+  } catch (e) { msg($('#reMsg'), e.message, 'ayuda err-texto'); }
+};
+function pintaSelRemesa() {
+  const elegidos = RE.candidatos.filter(c => RE.sel.has(c.vencimientoId));
+  $('#reSeleccion').textContent = elegidos.length ? `${elegidos.length} vencimiento(s) · ${fmt(elegidos.reduce((a, c) => a + c.importePendiente, 0))}` : '';
+  $('#reGenerar').disabled = !elegidos.length;
+}
+$('#reCandBody').addEventListener('change', e => {
+  const id = e.target.dataset.sel; if (!id) return;
+  e.target.checked ? RE.sel.add(+id) : RE.sel.delete(+id); pintaSelRemesa();
+});
+$('#reGenerar').onclick = async () => {
+  try {
+    const d = await post(urlE('/tesoreria/remesas'), { tipo: $('#reTipo').value, cuentaBancariaId: +$('#reBanco').value, fechaCargo: $('#reFecha').value, vencimientoIds: [...RE.sel] });
+    $('#reCandidatos').hidden = true;
+    await Promise.all([listaRemesas(), cargaVencimientos(), cargaPrevision(), cargaCuentasTercero()]);
+    pintaDetalleRemesa(d); await descargaRemesa(d.remesa.id);
+    msg($('#reMsg'), `Remesa ${d.remesa.referencia} generada: ${d.remesa.numOperaciones} operación(es) por ${fmt(d.remesa.importe)}. Sube el fichero a tu banca electrónica.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#reMsg'), e.message, 'ayuda err-texto'); }
+};
+
+async function descargaRemesa(id) {
+  const r = await fetch(urlE(`/tesoreria/remesas/${id}/fichero`), { headers: { Authorization: 'Bearer ' + S.token } });
+  if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
+  const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'remesa.xml').replace(/"/g, '');
+  const url = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement('a'), { href: url, download: nombre });
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+
+function pintaDetalleRemesa(d) {
+  RE.detalle = d; const r = d.remesa;
+  const devolver = r.tipo === 'COBRO' && r.estado === 'CONTABILIZADA' && permitido('TESORERIA_DIRECTO');
+  $('#reDetTitulo').textContent = `${r.referencia} · ${r.tipo === 'COBRO' ? 'cobros' : 'pagos'} · ${fechaES(r.fechaCargo)} · ${fmt(r.importe)} · ${estadoRemesa[r.estado]}`;
+  $('#reDetBody').innerHTML = d.lineas.map(l => `<tr><td>${esc(l.tercero)}</td><td>${esc(l.factura || '')}</td><td class="num">${fmt(l.importe)}</td>
+      <td>${esc(l.iban)}</td><td>${esc(l.secuencia || '')}</td>
+      <td>${l.estado === 'DEVUELTO' ? 'Devuelto el ' + fechaES(l.fechaDevolucion) + (l.motivoDevolucion ? ' · ' + esc(l.motivoDevolucion) : '') : 'Incluido'}</td>
+      <td class="fila-acciones">${devolver && l.estado !== 'DEVUELTO' ? `<button class="btn" data-devolver="${l.id}" ${S.ejercicio.estado === 'ABIERTO' ? '' : 'disabled'}>Devolución</button>` : ''}</td></tr>`).join('');
+  $('#reContabForm').hidden = r.estado !== 'GENERADA' || !permitido('TESORERIA_DIRECTO');
+  const f = r.fechaCargo < S.ejercicio.fechaInicio ? S.ejercicio.fechaInicio : r.fechaCargo > S.ejercicio.fechaFin ? S.ejercicio.fechaFin : r.fechaCargo;
+  $('#reContabFecha').value = f;
+  $('#reDetalle').hidden = false;
+}
+
+$('#reLista').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.ver) { pintaDetalleRemesa(await api(urlE('/tesoreria/remesas/' + b.dataset.ver))); $('#reDetalle').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    if (b.dataset.xml) await descargaRemesa(b.dataset.xml);
+    if (b.dataset.anular && confirm('¿Anular la remesa? Los vencimientos vuelven a quedar pendientes. Si ya enviaste el fichero al banco, anúlalo también allí.')) {
+      await post(urlE(`/tesoreria/remesas/${b.dataset.anular}/anular`)); $('#reDetalle').hidden = true;
+      await Promise.all([listaRemesas(), cargaVencimientos(), cargaCuentasTercero()]); msg($('#reMsg'), 'Remesa anulada.', 'ayuda');
+    }
+  } catch (err) { msg($('#reMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#reContabilizar').onclick = async () => {
+  if (!RE.detalle) return;
+  try {
+    const a = await post(urlX(`/tesoreria/remesas/${RE.detalle.remesa.id}/contabilizar`), { fecha: $('#reContabFecha').value });
+    pintaDetalleRemesa(await api(urlE('/tesoreria/remesas/' + RE.detalle.remesa.id)));
+    await Promise.all([listaRemesas(), cargaVencimientos(), cargaPrevision(), cargaBancos()]);
+    msg($('#reMsg'), `Remesa contabilizada (asiento nº ${a.asientoNumero}).`, 'ayuda ok-texto');
+  } catch (e) { msg($('#reMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#reDetBody').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-devolver]'); if (!b) return;
+  const motivo = prompt('Motivo de la devolución (p. ej. MD06, AC04, AM04):', ''); if (motivo === null) return;
+  const gastos = num(prompt('Gastos de devolución que cobra el banco (0 si no hay):', '0'));
+  let cuentaGastosId = null;
+  if (gastos > 0) {
+    const cod = prompt('Cuenta de los gastos (código, p. ej. 62600000):', '');
+    const c = S.cuentas.find(x => x.codigo === (cod || '').trim());
+    if (!c) return msg($('#reMsg'), 'Esa cuenta no existe.', 'ayuda err-texto');
+    cuentaGastosId = c.id;
+  }
+  try {
+    const a = await post(urlX(`/tesoreria/remesas/lineas/${b.dataset.devolver}/devolver`), { fecha: dentroEj(hoy()), motivo, gastos, cuentaGastosId });
+    pintaDetalleRemesa(await api(urlE('/tesoreria/remesas/' + RE.detalle.remesa.id)));
+    await Promise.all([listaRemesas(), cargaVencimientos(), cargaPrevision()]);
+    msg($('#reMsg'), `Devolución contabilizada (asiento nº ${a.asientoNumero}). El recibo vuelve a estar pendiente.`, 'ayuda ok-texto');
+  } catch (err) { msg($('#reMsg'), err.message, 'ayuda err-texto'); }
+});
+
+// Cuentas bancarias y mandatos de terceros
+async function cargaCuentasTercero() {
+  const t = $('#mtTercero').value; if (!t) return;
+  const [cuentas, mandatos] = await Promise.all([api(urlE(`/terceros/${t}/cuentas-bancarias`)), api(urlE(`/tesoreria/mandatos?terceroId=${t}`))]);
+  $('#mtCuentas').innerHTML = cuentas.map(c => `<tr><td>${esc(c.iban)}${c.activa ? '' : ' (inactiva)'}</td><td>${esc(c.bic || '')}</td>
+      <td>${mandatos.filter(m => m.cuentaBancariaId === c.id).map(m => `${esc(m.referencia)} · ${m.esquema} · firmado ${fechaES(m.fechaFirma)}${m.usado ? ' · usado' : ''}${m.activo ? '' : ' · desactivado'}
+        ${m.activo && permitido('TESORERIA:ESCRITURA') ? `<button class="btn" data-desactivar="${m.id}">Desactivar</button>` : ''}`).join('<br>')}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="vacio">Sin cuentas bancarias.</td></tr>';
+  $('#mtCuenta').innerHTML = cuentas.filter(c => c.activa).map(c => `<option value="${c.id}">${esc(c.iban)}</option>`).join('');
+  $('#mtMandatoForm').hidden = !cuentas.some(c => c.activa) || !permitido('TESORERIA:ESCRITURA');
+  if (!$('#mtFirma').value) $('#mtFirma').value = hoy();
+}
+$('#mtTercero').onchange = () => cargaCuentasTercero().catch(e => msg($('#mtMsg'), e.message, 'ayuda err-texto'));
+$('#mtAnadirCuenta').onclick = async () => {
+  try {
+    await post(urlE(`/terceros/${$('#mtTercero').value}/cuentas-bancarias`), { iban: $('#mtIban').value, bic: $('#mtBic').value || null });
+    $('#mtIban').value = ''; $('#mtBic').value = ''; await cargaCuentasTercero(); msg($('#mtMsg'), 'Cuenta añadida.', 'ayuda ok-texto');
+  } catch (e) { msg($('#mtMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#mtCrear').onclick = async () => {
+  try {
+    const m = await post(urlE('/tesoreria/mandatos'), { terceroId: +$('#mtTercero').value, cuentaBancariaId: +$('#mtCuenta').value, fechaFirma: $('#mtFirma').value,
+      esquema: $('#mtEsquema').value, referencia: $('#mtRef').value || null });
+    $('#mtRef').value = ''; await cargaCuentasTercero(); msg($('#mtMsg'), `Mandato ${m.referencia} creado.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#mtMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#mtCuentas').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-desactivar]'); if (!b || !confirm('¿Desactivar el mandato? No se podrán remesar más recibos con él.')) return;
+  try { await post(urlE(`/tesoreria/mandatos/${b.dataset.desactivar}/desactivar`)); await cargaCuentasTercero(); msg($('#mtMsg'), 'Mandato desactivado.', 'ayuda'); }
+  catch (err) { msg($('#mtMsg'), err.message, 'ayuda err-texto'); }
+});
 
 // ------------------------------------------------------------ conciliación bancaria
 const CO = { estado: null, lineas: new Set(), apuntes: new Set(), accion: null };
@@ -647,6 +801,7 @@ $('#liqGuardar').onclick = async () => {
     msg($('#vMsg'), `Contabilizado en el asiento ${r.asientoNumero}.` + (r.pendiente > 0 ? ` Quedan ${fmt(r.pendiente)} pendientes.` : ''), 'ayuda ok-texto');
     TES.liq = null; $('#liqPanel').hidden = true;
   IN.ficha = null; $('#inFicha').hidden = true; $('#inNuevo').hidden = true;
+  RE.terceros = []; RE.detalle = null; $('#reDetalle').hidden = true; $('#reCandidatos').hidden = true;
     await cargaTesoreria();
   } catch (err) { msg($('#liqMsg'), err.message, 'ayuda err-texto'); }
 };
