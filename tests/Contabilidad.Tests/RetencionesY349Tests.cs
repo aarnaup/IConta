@@ -126,3 +126,30 @@ public class CriterioCajaTests
         Assert.Equal((1000m, 210m, 500m, 105m), (d["62"], d["63"], d["74"], d["75"]));
     }
 }
+
+public class ResumenRetencionesTests
+{
+    [Fact]
+    public void Modelo_190_por_perceptor_y_contraste_con_los_111()
+    {
+        var d = new DeclaracionCalculada { Modelo = "190", Anio = 2026, Periodo = "0A" };
+        CalculadorResumenRetenciones.Calcular("190", [
+            new(1, "11111111H", "Abogada", "ES", "28", "PROF_GEN", 15, 1000, 150), new(1, "11111111H", "Abogada", "ES", "28", "PROF_GEN", 15, 300, 45),
+            new(2, "22222222J", "Diseñador", "ES", null, "PROF_INI", 7, 1000, 70)], 265, 4, d);
+        var det = (IReadOnlyList<PerceptorResumen>)d.Detalle!;
+        Assert.Equal(2, det.Count);
+        Assert.Equal(("G", "01", 1300m, 195m), (det[0].Clave, det[0].Subclave, det[0].Base, det[0].Retencion));
+        Assert.Equal((2m, 2300m, 265m), (d["01"], d["02"], d["03"]));
+        Assert.Contains(d.Avisos, a => a.Contains("Diseñador"));            // sin provincia
+        Assert.DoesNotContain(d.Avisos, a => a.Contains("no coinciden"));
+    }
+
+    [Fact]
+    public void Modelo_180_avisa_si_no_cuadra_con_los_115_y_no_residentes_van_a_la_98()
+    {
+        var d = new DeclaracionCalculada { Modelo = "180" };
+        CalculadorResumenRetenciones.Calcular("180", [new(3, "X1", "Owner Ltd", "GB", null, "ARREND", 19, 12000, 2280)], 1710, 3, d);
+        Assert.Equal("98", ((IReadOnlyList<PerceptorResumen>)d.Detalle!)[0].Provincia);
+        Assert.Contains(d.Avisos, a => a.Contains("no coinciden"));
+    }
+}

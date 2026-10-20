@@ -448,9 +448,10 @@ $('#tCrear').onclick = async () => {
   const tipo = $('#tTipo').value;
   try {
     await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE',
+      codigoPostal: $('#tCp').value || null, pais: $('#tPais').value || 'ES', tipoDocumento: ($('#tPais').value || 'ES') === 'ES' ? 'NIF' : 'VIES',
       criterioCaja: tipo !== 'CLIENTE' && $('#tCaja').checked });
     $('#tCaja').checked = false;
-    msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = '';
+    msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = ''; $('#tCp').value = '';
     await cargaFacturas();
   } catch (e) { msg($('#tMsg'), e.message, 'err-texto'); }
 };
@@ -1087,6 +1088,11 @@ function muestraDeclaracion(v) {
     titulo = 'Perceptores'; cab = th(['NIF', 'Nombre', '#Base', '#Retención']);
     cuerpo = det.map(p => `<tr><td>${esc(p.nif)}</td><td>${esc(p.nombre)}</td><td class="num">${fmt(p.base)}</td><td class="num">${fmt(p.retencion)}</td></tr>`).join('')
       || '<tr><td colspan="4" class="vacio">Sin retenciones en el periodo.</td></tr>';
+  } else if (['190', '180'].includes(v.modelo) && Array.isArray(det)) {
+    titulo = 'Perceptores'; cab = th(['NIF', 'Nombre', 'Provincia', 'Clave', '#%', '#Base', '#Retención']);
+    cuerpo = det.map(p => `<tr><td>${esc(p.nif)}</td><td>${esc(p.nombre)}</td><td>${esc(p.provincia || '—')}</td>
+        <td>${esc(p.clave ? p.clave + (p.subclave || '') : '')}</td><td class="num">${fmt(p.porcentaje)}</td><td class="num">${fmt(p.base)}</td>
+        <td class="num">${fmt(p.retencion)}</td></tr>`).join('') || '<tr><td colspan="7" class="vacio">Sin retenciones en el año.</td></tr>';
   } else if (v.modelo === '349' && det) {
     titulo = 'Operadores intracomunitarios'; cab = th(['NIF-IVA', 'Nombre', 'Clave', '#Base imponible']);
     cuerpo = det.operaciones.map(o => `<tr><td>${esc(o.nifComunitario)}</td><td>${esc(o.nombre)}</td><td>${esc(o.clave)}</td><td class="num">${fmt(o.base)}</td></tr>`).join('')

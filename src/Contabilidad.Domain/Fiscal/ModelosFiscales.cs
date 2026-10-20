@@ -19,6 +19,8 @@ public static class ModelosFiscales
             ["1T", "2T", "3T", "4T", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]),
         new("AEAT", "115", "Retenciones de arrendamientos de inmuebles urbanos", "RETENCIONES",
             ["1T", "2T", "3T", "4T", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]),
+        new("AEAT", "190", "Resumen anual de retenciones de trabajo y actividades económicas", "RETENCIONES", ["0A"]),
+        new("AEAT", "180", "Resumen anual de retenciones de arrendamientos", "RETENCIONES", ["0A"]),
         new("ATC",  "415", "IGIC - Operaciones con terceras personas", "TERCEROS", ["0A"]),
     ];
 

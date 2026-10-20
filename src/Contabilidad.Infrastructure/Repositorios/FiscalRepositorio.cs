@@ -323,9 +323,59 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal Retencion { get; set; }
     }
 
+    private sealed class PercepcionAnualFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string Pais { get; set; } = "";
+        public string? Provincia { get; set; }
+        public string TipoRetencion { get; set; } = "";
+        public decimal Porcentaje { get; set; }
+        public decimal Base { get; set; }
+        public decimal Retencion { get; set; }
+    }
+    private sealed class TrimestralFila { public decimal? Importe { get; set; } public int Presentados { get; set; } }
+
+    private static async Task CalcularResumenRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
+        PeriodoFiscal p, DeclaracionCalculada d, CancellationToken ct)
+    {
+        var trimestral = modelo.Codigo == "190" ? "111" : "115";
+        var filas = (await cn.QueryAsync<PercepcionAnualFila>(new CommandDefinition("""
+            SELECT f.tercero_id, n.numero AS nif, t.nombre, pa.iso2 AS pais, pr.codigo AS provincia, tr.codigo AS tipo_retencion,
+                   r.porcentaje, SUM(r.base) AS base, SUM(r.importe) AS retencion
+            FROM fiscal.factura f
+            JOIN fiscal.factura_retencion r ON r.factura_id = f.id
+            JOIN cat.tipo_retencion_irpf tr ON tr.id = r.tipo_retencion_id
+            JOIN conta.tercero t ON t.id = f.tercero_id
+            JOIN core.nif n ON n.id = t.nif_id
+            JOIN cat.pais pa ON pa.id = n.pais_id
+            LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
+            WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
+              AND f.fecha_contable BETWEEN @inicio AND @fin AND tr.modelo_ingreso = @trimestral
+            GROUP BY 1, 2, 3, 4, 5, 6, 7
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct)))
+            .Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje, f.Base, f.Retencion)).ToList();
+
+        var mid = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener(trimestral), ct);
+        var t = await cn.QuerySingleAsync<TrimestralFila>(new CommandDefinition("""
+            SELECT SUM(c.importe) AS importe, COUNT(*) AS presentados FROM fiscal.declaracion d
+            LEFT JOIN fiscal.declaracion_casilla c ON c.declaracion_id = d.id AND c.casilla = @casilla
+            WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.anio = @anio AND d.estado = 'PRESENTADA'
+              AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                    WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+            """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "09" : "03" }, tx, cancellationToken: ct));
+        CalculadorResumenRetenciones.Calcular(modelo.Codigo, filas, t.Importe, t.Presentados, d);
+    }
+
     private static async Task CalcularRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
         PeriodoFiscal p, DeclaracionCalculada d, CancellationToken ct)
     {
+        if (modelo.Codigo is "190" or "180")
+        {
+            await CalcularResumenRetencionesAsync(cn, tx, empresaId, modelo, p, d, ct);
+            return;
+        }
         // Retenciones practicadas en facturas recibidas, por fecha contable
         var filas = (await cn.QueryAsync<PercepcionFila>(new CommandDefinition("""
             SELECT f.tercero_id, n.numero AS nif, t.nombre, tr.modelo_ingreso AS modelo, SUM(r.base) AS base, SUM(r.importe) AS retencion

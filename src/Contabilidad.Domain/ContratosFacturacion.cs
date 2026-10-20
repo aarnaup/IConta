@@ -80,7 +80,11 @@ public sealed class TerceroDto
 
 public sealed class CrearTerceroCmd
 {
-    public string TipoDocumento { get; set; } = "NIF";            // NIF | NIE | CIF | OTRO
+    public string TipoDocumento { get; set; } = "NIF";            // NIF | NIE | CIF | PASAPORTE | VIES | OTRO
+    /// <summary>País del NIF (ISO 3166-1 alfa-2); por defecto ES.</summary>
+    public string? Pais { get; set; }
+    /// <summary>Código postal: da la provincia (modelos 190 y 180).</summary>
+    public string? CodigoPostal { get; set; }
     public string Nif { get; set; } = "";
     public string Nombre { get; set; } = "";
     public bool EsCliente { get; set; }

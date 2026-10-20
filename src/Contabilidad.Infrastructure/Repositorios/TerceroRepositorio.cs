@@ -51,6 +51,13 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             throw new ReglaContableException("Indica si es cliente, proveedor o ambos.");
 
         var nif = cmd.Nif.Trim().ToUpperInvariant().Replace(" ", "").Replace("-", "");
+        var pais = string.IsNullOrWhiteSpace(cmd.Pais) ? "ES" : cmd.Pais.Trim().ToUpperInvariant();
+        var tipoDoc = string.IsNullOrWhiteSpace(cmd.TipoDocumento) ? "NIF" : cmd.TipoDocumento.Trim().ToUpperInvariant();
+        if (tipoDoc is not ("NIF" or "NIE" or "CIF" or "PASAPORTE" or "VIES" or "OTRO"))
+            throw new ReglaContableException("Tipo de documento no válido: NIF, NIE, CIF, PASAPORTE, VIES u OTRO.");
+        var cp = string.IsNullOrWhiteSpace(cmd.CodigoPostal) ? null : cmd.CodigoPostal.Trim();
+        if (cp is not null && pais == "ES" && !System.Text.RegularExpressions.Regex.IsMatch(cp, "^(0[1-9]|[1-4][0-9]|5[0-2])[0-9]{3}$"))
+            throw new ReglaContableException("El código postal no es válido (5 dígitos, provincia 01 a 52).");
 
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
@@ -59,11 +66,16 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             "SELECT digitos_cuenta FROM core.empresa WHERE id = @empresaId", new { empresaId }, tx, cancellationToken: ct));
 
         var nifId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
-            INSERT INTO core.nif (pais_id, tipo_documento, numero, razon_social)
-            SELECT id, @tipo, @numero, @nombre FROM cat.pais WHERE iso2 = 'ES'
-            ON CONFLICT (pais_id, numero) DO UPDATE SET razon_social = core.nif.razon_social
+            INSERT INTO core.nif (pais_id, tipo_documento, numero, razon_social, codigo_postal, provincia_id)
+            SELECT p.id, @tipo, @numero, @nombre, @cp,
+                   (SELECT pr.id FROM cat.provincia pr WHERE pr.pais_id = p.id AND pr.codigo = left(@cp, 2))
+            FROM cat.pais p WHERE p.iso2 = @pais
+            ON CONFLICT (pais_id, numero) DO UPDATE SET razon_social = core.nif.razon_social,
+                   codigo_postal = COALESCE(EXCLUDED.codigo_postal, core.nif.codigo_postal),
+                   provincia_id = COALESCE(EXCLUDED.provincia_id, core.nif.provincia_id)
             RETURNING id
-            """, new { tipo = cmd.TipoDocumento, numero = nif, nombre = cmd.Nombre.Trim() }, tx, cancellationToken: ct));
+            """, new { tipo = tipoDoc, numero = nif, nombre = cmd.Nombre.Trim(), cp, pais }, tx, cancellationToken: ct));
+        if (nifId == 0) throw new ReglaContableException($"El país {pais} no está en el catálogo.");
 
         var cli = cmd.EsCliente ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4300", digitos, $"Cliente {cmd.Nombre.Trim()}", "DEUDORA", ct) : null;
         var pro = cmd.EsProveedor ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4000", digitos, $"Proveedor {cmd.Nombre.Trim()}", "ACREEDORA", ct) : null;
