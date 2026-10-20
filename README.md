@@ -1,7 +1,7 @@
 # Contabilidad (.NET 10 · Dapper · Autofac · Serilog · PostgreSQL)
 
 ## Estructura (`Contabilidad.slnx`)
-- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES).
+- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES), `08_aplicacion_resultado.sql` (origen de asiento para la aplicación del resultado).
 - `src/Contabilidad.Domain` → reglas puras: canales (`RepartidorCanales`, evaluador de fórmulas) y facturación (`FacturaCalculadora`, `ResolutorCuentas`, `GeneradorAsientoFactura`).
 - `src/Contabilidad.Infrastructure` → Dapper + Npgsql, repositorios y módulo Autofac.
 - `src/Contabilidad.Api` → API minimal + Serilog + UI estática (`wwwroot/index.html`).
@@ -17,6 +17,7 @@ psql contabilidad -f database/04_seguridad.sql
 psql contabilidad -f database/05_tesoreria.sql
 psql contabilidad -f database/06_fiscal.sql
 psql contabilidad -f database/07_pgc.sql
+psql contabilidad -f database/08_aplicacion_resultado.sql
 
 # clave de firma JWT (mín. 32 caracteres; en Development ya hay una de pruebas)
 export Jwt__Key="<cadena-aleatoria-larga>"
@@ -101,6 +102,15 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - Deshacer anula los tres asientos (si el ejercicio siguiente sigue abierto) y reabre el ejercicio.
 - En la web: botón «Contabilizar liquidación» en Modelos fiscales y pestaña «Cierre».
 
+## Aplicación del resultado
+`GET /api/empresas/{id}/ejercicios/{ej}/aplicacion-resultado` muestra, por canal, el resultado pendiente de aplicar (saldo de la 129, que llega con la apertura), el capital, la reserva legal y la **reserva legal mínima** (10 % del beneficio hasta llegar al 20 % del capital, art. 274 LSC). `POST .../previsualizar` calcula el asiento; `POST .../aplicacion-resultado` lo contabiliza; `DELETE .../aplicacion-resultado/{asiento}` lo anula. En la web, dentro de la pestaña «Cierre».
+
+- Destinos: reserva legal (112), reservas voluntarias (113), remanente (120), compensar pérdidas anteriores (121), dividendos, otra cuenta del grupo 1 y, si hay pérdida, resultados negativos (121) o compensación con reservas.
+- Cada destino va por importe, por porcentaje o «el resto»; lo repartido debe coincidir con el resultado.
+- Dividendos: lo ya repartido a cuenta (557) se cancela primero y el resto queda a pagar (526).
+- Avisa (sin bloquear) si la reserva legal queda por debajo del mínimo o si se reparten dividendos con pérdidas anteriores sin compensar (art. 273 LSC).
+- Canal a canal: se puede aplicar un canal concreto o todos a la vez (mejor con porcentajes). No deja aplicar dos veces el mismo resultado.
+
 ## Balances
 `GET /api/empresas/{id}/ejercicios/{ej}/balances/...` (permiso de lectura en Balances o Contabilidad). En la web, pestaña «Balances», con opción de imprimir.
 
@@ -117,7 +127,7 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - **Contrasta la asignación de cuentas y la numeración con el modelo oficial antes de depositar las cuentas.** No hay todavía modelo normal completo, estado de cambios en el patrimonio neto, estado de flujos de efectivo ni memoria.
 
 ## Pendiente
-Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; aplicación del resultado (de la 129 a reservas o dividendos); modelo normal de cuentas anuales, estado de cambios en el patrimonio neto, flujos de efectivo y memoria; analítica y presupuestos; gestión de catálogos e impresos en la UI de administración.
+Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; modelo normal de cuentas anuales, estado de cambios en el patrimonio neto, flujos de efectivo y memoria; analítica y presupuestos; gestión de catálogos e impresos en la UI de administración.
 
 ## Estado de verificación
-Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 149 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→07 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web. Y los balances de sumas y saldos, situación y pérdidas y ganancias de esos dos ejercicios, con comparativo, por canal y en pantalla e impresión.
+Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 165 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→08 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web. Y los balances de sumas y saldos, situación y pérdidas y ganancias de esos dos ejercicios, con comparativo, por canal y en pantalla e impresión, y la aplicación del resultado de 2026/27 en 2027/28 (reserva legal, dividendos, voluntarias y remanente; anular y repetir).

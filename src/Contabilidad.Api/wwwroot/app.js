@@ -739,7 +739,106 @@ async function cargaCierre() {
     : '<tr><td colspan="4" class="vacio">Sin ingresos ni gastos en el ejercicio.</td></tr>';
   $('#ciCerrar').hidden = c.estado !== 'ABIERTO'; $('#ciCerrar').disabled = !c.puedeCerrar;
   $('#ciDeshacer').hidden = c.estado !== 'CERRADO';
+  await cargaAplicacion();
 }
+// ------------------------------------------------------------ aplicación del resultado
+const AR = { propuesta: null, lineas: [] };
+const DESTINOS = [
+  ['RESERVA_LEGAL', 'Reserva legal (112)'], ['RESERVA_VOLUNTARIA', 'Reservas voluntarias (113)'], ['REMANENTE', 'Remanente (120)'],
+  ['COMPENSAR_PERDIDAS', 'Compensar pérdidas anteriores (121)'], ['DIVIDENDOS', 'Dividendos (557/526)'],
+  ['RESULTADOS_NEGATIVOS', 'Resultados negativos (121)'], ['CUENTA', 'Otra cuenta del grupo 1']];
+const MODOS = [['IMPORTE', 'Importe'], ['PORCENTAJE', '% del resultado'], ['RESTO', 'El resto']];
+const opciones = (lista, sel) => lista.map(([v, t]) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${esc(t)}</option>`).join('');
+
+async function cargaAplicacion() {
+  const p = AR.propuesta = await api(urlX('/aplicacion-resultado'));
+  $('#arTitulo').textContent = p.resultadoDe ? `Aplicación del resultado de ${p.resultadoDe}` : 'Aplicación del resultado';
+  $('#arCanales').innerHTML = p.canales.map(c => `<tr><td>${esc(c.canal)}</td><td class="num ${c.resultado < 0 ? 'estado-mal' : ''}">${fmt(c.resultado)}</td>
+      <td class="num">${fmt(c.capital)}</td><td class="num">${fmt(c.reservaLegal)}</td><td class="num">${fmt(c.reservaLegalMinima)}</td>
+      <td class="num">${fmt(c.perdidasAnteriores)}</td></tr>`).join('');
+  $('#arAvisos').innerHTML = p.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#arHechas').innerHTML = p.aplicaciones.map(a => `<tr><td>nº ${a.numero}</td><td>${fechaES(a.fecha)}</td><td>${esc(a.concepto)}</td>
+      <td class="fila-acciones">${permitido('CONTABILIDAD_DIRECTO') ? `<button class="btn" data-anular="${a.asientoId}" ${S.ejercicio.estado === 'ABIERTO' ? '' : 'disabled'}>Anular</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="vacio">Ninguna.</td></tr>';
+
+  const pendientes = p.canales.filter(c => c.resultado !== 0);
+  $('#arCanal').innerHTML = (pendientes.length > 1 ? '<option value="">Todos los canales con resultado</option>' : '')
+    + pendientes.map(c => `<option value="${c.canalId}">Canal ${esc(c.canal)}</option>`).join('');
+  $('#arForm').hidden = !permitido('CONTABILIDAD_DIRECTO') || !pendientes.length;
+  if (!$('#arFecha').value || $('#arFecha').value < S.ejercicio.fechaInicio || $('#arFecha').value > S.ejercicio.fechaFin) {
+    $('#arFecha').min = S.ejercicio.fechaInicio; $('#arFecha').max = S.ejercicio.fechaFin;
+    const h = hoy(); $('#arFecha').value = h < S.ejercicio.fechaInicio ? S.ejercicio.fechaInicio : h > S.ejercicio.fechaFin ? S.ejercicio.fechaFin : h;
+  }
+  propuestaLineas();
+}
+
+// Propuesta por defecto: con beneficio, la reserva legal mínima y el resto a voluntarias; con pérdida, a resultados negativos
+function propuestaLineas() {
+  const canal = AR.propuesta.canales.find(c => String(c.canalId) === $('#arCanal').value) || AR.propuesta.canales.find(c => c.resultado !== 0);
+  if (!canal) { AR.lineas = []; pintaLineasAR(); return; }
+  AR.lineas = canal.resultado > 0
+    ? [...(canal.reservaLegalMinima > 0 && $('#arCanal').value ? [{ destino: 'RESERVA_LEGAL', modo: 'IMPORTE', valor: canal.reservaLegalMinima }]
+           : canal.reservaLegalMinima > 0 ? [{ destino: 'RESERVA_LEGAL', modo: 'PORCENTAJE', valor: 10 }] : []),
+       { destino: 'RESERVA_VOLUNTARIA', modo: 'RESTO', valor: '' }]
+    : [{ destino: 'RESULTADOS_NEGATIVOS', modo: 'RESTO', valor: '' }];
+  $('#arPreviaPanel').hidden = true;
+  pintaLineasAR();
+}
+$('#arCanal').onchange = propuestaLineas;
+
+function pintaLineasAR() {
+  $('#arLineas').innerHTML = AR.lineas.map((l, i) => `<tr data-i="${i}">
+    <td><select data-k="destino" aria-label="Destino">${opciones(DESTINOS, l.destino)}</select></td>
+    <td><select data-k="modo" aria-label="Cómo">${opciones(MODOS, l.modo)}</select></td>
+    <td class="num"><input data-k="valor" inputmode="decimal" value="${l.modo === 'RESTO' ? '' : esc(l.valor)}" ${l.modo === 'RESTO' ? 'disabled' : ''} aria-label="Valor"></td>
+    <td><input data-k="cuenta" list="dl-cuentas" value="${esc(l.cuenta || '')}" ${l.destino === 'CUENTA' ? '' : 'disabled'} aria-label="Cuenta"></td>
+    <td><button class="btn" data-quitar="${i}" type="button" aria-label="Quitar">✕</button></td></tr>`).join('');
+}
+$('#arLineas').addEventListener('change', e => {
+  const tr = e.target.closest('tr[data-i]'); if (!tr) return;
+  const l = AR.lineas[+tr.dataset.i]; l[e.target.dataset.k] = e.target.value;
+  if (['modo', 'destino'].includes(e.target.dataset.k)) pintaLineasAR();
+});
+$('#arLineas').addEventListener('click', e => {
+  const b = e.target.closest('button[data-quitar]'); if (!b) return;
+  AR.lineas.splice(+b.dataset.quitar, 1); pintaLineasAR();
+});
+$('#arAnadir').onclick = () => { AR.lineas.push({ destino: 'REMANENTE', modo: 'IMPORTE', valor: '' }); pintaLineasAR(); };
+
+function cmdAplicacion() {
+  return {
+    fecha: $('#arFecha').value, canalId: $('#arCanal').value ? +$('#arCanal').value : null, acuerdo: $('#arAcuerdo').value || null,
+    lineas: AR.lineas.map(l => {
+      const cuenta = l.destino === 'CUENTA' ? S.cuentas.find(c => c.codigo === (l.cuenta || '').trim()) : null;
+      if (l.destino === 'CUENTA' && !cuenta) throw new Error(`La cuenta «${l.cuenta || ''}» no existe.`);
+      return { destino: l.destino, modo: l.modo, valor: l.modo === 'RESTO' ? 0 : num(l.valor), cuentaId: cuenta ? cuenta.id : null };
+    })
+  };
+}
+
+$('#arPrevia').onclick = async () => {
+  try {
+    const v = await post(urlX('/aplicacion-resultado/previsualizar'), cmdAplicacion());
+    const canal = cid => (S.canales.find(c => c.id === cid) || {}).codigo || cid;
+    $('#arPreviaAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    $('#arPreviaApuntes').innerHTML = v.asiento.map(a => `<tr><td>${esc(a.cuenta)}</td><td>${esc(a.cuentaNombre)}</td><td>${esc(canal(a.canalId))}</td>
+      <td class="num">${a.debe ? fmt(a.debe) : ''}</td><td class="num">${a.haber ? fmt(a.haber) : ''}</td></tr>`).join('');
+    $('#arPreviaPanel').hidden = false; msg($('#arMsg'), '', 'ayuda');
+  } catch (e) { $('#arPreviaPanel').hidden = true; msg($('#arMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#arGuardar').onclick = async () => {
+  try {
+    const r = await post(urlX('/aplicacion-resultado'), cmdAplicacion());
+    await cargaAplicacion();
+    msg($('#arMsg'), `Resultado aplicado: asiento nº ${r.asientoNumero}.` + (r.avisos.length ? ' Revisa los avisos: ' + r.avisos.join(' ') : ''), 'ayuda ok-texto');
+  } catch (e) { msg($('#arMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#arHechas').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-anular]'); if (!b || !confirm('¿Anular esta aplicación del resultado?')) return;
+  try { await api(urlX('/aplicacion-resultado/' + b.dataset.anular), { method: 'DELETE' }); await cargaAplicacion(); msg($('#arMsg'), 'Aplicación anulada.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#arMsg'), err.message, 'ayuda err-texto'); }
+});
+
 $('#ciCerrar').onclick = async () => {
   if (!confirm(`Se generarán la regularización, el cierre y la apertura, y el ejercicio ${S.ejercicio.codigo} quedará cerrado. ¿Continuar?`)) return;
   try {

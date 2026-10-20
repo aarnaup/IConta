@@ -456,6 +456,38 @@
         </div>
         <p id="ciMsg" class="ayuda" role="status"></p>
       </div>
+
+      <div class="panel">
+        <h2 id="arTitulo">Aplicación del resultado</h2>
+        <p class="ayuda">Reparte el resultado del ejercicio anterior (saldo de la 129, que llega con la apertura) según el acuerdo de la junta:
+          reservas, remanente, compensación de pérdidas o dividendos. Lo ya repartido a cuenta (557) se cancela con el dividendo acordado.</p>
+        <table><thead><tr><th>Canal</th><th class="num">Resultado pendiente</th><th class="num">Capital</th><th class="num">Reserva legal</th>
+          <th class="num">Reserva legal mínima</th><th class="num">Pérdidas anteriores</th></tr></thead><tbody id="arCanales"></tbody></table>
+        <ul id="arAvisos" class="avisos"></ul>
+        <div id="arForm" data-req="CONTABILIDAD_DIRECTO">
+          <div class="cab2">
+            <label>Fecha del acuerdo <input type="date" id="arFecha"></label>
+            <label>Canal <select id="arCanal"></select></label>
+            <label>Acuerdo <input id="arAcuerdo" maxlength="120" placeholder="Junta general de …"></label>
+          </div>
+          <table><thead><tr><th>Destino</th><th>Cómo</th><th class="num">Valor</th><th>Cuenta (si es otra)</th><th></th></tr></thead>
+          <tbody id="arLineas"></tbody></table>
+          <div class="fila-acciones">
+            <button class="btn" id="arAnadir" type="button">Añadir destino</button>
+            <button class="btn" id="arPrevia" type="button">Previsualizar</button>
+            <button class="btn primario" id="arGuardar" data-guarda type="button">Contabilizar</button>
+          </div>
+          <div id="arPreviaPanel" hidden>
+            <h3>Asiento previsto</h3>
+            <ul id="arPreviaAvisos" class="avisos"></ul>
+            <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
+            <tbody id="arPreviaApuntes"></tbody></table>
+          </div>
+        </div>
+        <p id="arMsg" class="ayuda" role="status"></p>
+        <h3>Aplicaciones contabilizadas en este ejercicio</h3>
+        <table><thead><tr><th>Asiento</th><th>Fecha</th><th>Concepto</th><th></th></tr></thead><tbody id="arHechas"></tbody></table>
+      </div>
     </div>
   </section>
 

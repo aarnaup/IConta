@@ -9,6 +9,7 @@ namespace Contabilidad.Api.Endpoints;
 /// Asientos de fin de periodo, dentro del ejercicio elegido:
 ///   - Liquidación del IVA/IGIC de una declaración 303/420 presentada.
 ///   - Cierre del ejercicio (regularización, cierre y apertura del siguiente) y su deshacer.
+///   - Aplicación del resultado del ejercicio anterior (reservas, remanente, dividendos...).
 /// Consultar es lectura; contabilizar, cerrar y deshacer exigen poder contabilizar sin revisión.
 /// </summary>
 public static class CierreEndpoints
@@ -39,6 +40,33 @@ public static class CierreEndpoints
             await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "LIQUIDACION_IVA_ANULADA", "declaracion", declaracionId, null, ct);
             return Results.NoContent();
         }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+
+        // ---- Aplicación del resultado del ejercicio anterior ----
+        ej.MapGet("/aplicacion-resultado", async (long empresaId, long ejercicioId, IAplicacionResultadoRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.PropuestaAsync(empresaId, ejercicioId, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Contabilidad);
+
+        ej.MapPost("/aplicacion-resultado/previsualizar", async (long empresaId, long ejercicioId, AplicarResultadoCmd cmd,
+            IAplicacionResultadoRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.PrevisualizarAsync(empresaId, ejercicioId, cmd, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Contabilidad);
+
+        ej.MapPost("/aplicacion-resultado", async (long empresaId, long ejercicioId, AplicarResultadoCmd cmd, HttpContext http,
+            IAplicacionResultadoRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var v = await r.ContabilizarAsync(empresaId, ejercicioId, http.User.UsuarioId(), cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "RESULTADO_APLICADO", "asiento", v.AsientoId,
+                new { v.Fecha, v.Concepto, canales = v.Canales.Select(c => new { c.Canal, c.Resultado }) }, ct);
+            return Results.Ok(v);
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Contabilidad);
+
+        ej.MapDelete("/aplicacion-resultado/{asientoId:long}", async (long empresaId, long ejercicioId, long asientoId, HttpContext http,
+            IAplicacionResultadoRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.AnularAsync(empresaId, ejercicioId, asientoId, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "APLICACION_RESULTADO_ANULADA", "asiento", asientoId, null, ct);
+            return Results.NoContent();
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Contabilidad);
 
         // ---- Cierre del ejercicio ----
         ej.MapGet("/cierre", async (long empresaId, long ejercicioId, ICierreEjercicioRepositorio r, CancellationToken ct)
