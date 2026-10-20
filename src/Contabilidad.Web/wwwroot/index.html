@@ -759,6 +759,7 @@
           <th class="num">Op. totales</th></tr></thead><tbody id="prLista"></tbody></table>
         <div data-req="FISCAL:ESCRITURA" class="fila-acciones">
           <label>Año <input id="prAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Sector diferenciado <input id="prSector" inputmode="numeric" style="width:5em" placeholder="—"></label>
           <label>Provisional % <input id="prProv" inputmode="numeric" style="width:5em"></label>
           <label>Definitivo % <input id="prDef" inputmode="numeric" style="width:5em"></label>
           <label>Op. con derecho <input id="prCon" inputmode="decimal" style="width:9em"></label>
@@ -861,10 +862,17 @@
               <label>Cuota soportada <input id="inBICuota" inputmode="decimal" placeholder="La de la factura"></label>
               <label>Prorrata del año de inicio (%) <input id="inBIProrrata" inputmode="numeric" placeholder="La del año"></label>
               <label>Año de inicio de utilización <input id="inBIAnio" inputmode="numeric" placeholder="El de inicio de amortización"></label>
+              <label>Sector diferenciado <input id="inBISector" inputmode="numeric" placeholder="Ninguno" style="width:6em"></label>
               <label><input type="checkbox" id="inBIInmueble"> Inmueble (10 años)</label>
               <label><input type="checkbox" id="inBIExenta"> Su venta será exenta o no sujeta</label>
             </div>
             <div class="fila-acciones"><button class="btn" id="inBIAlta" type="button">Registrar como bien de inversión</button></div>
+          </div>
+          <div id="inBIAfecta" class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA" hidden>
+            <label>Año <input id="inBIPAnio" inputmode="numeric" style="width:6em"></label>
+            <label>% de deducción <input id="inBIPPct" inputmode="numeric" style="width:5em" placeholder="vacío: quitar"></label>
+            <button class="btn" id="inBIPGuardar" type="button">Fijar el % del año</button>
+            <span class="ayuda">Cambio de afectación (o empresa sin prorrata): el % con el que se usa el bien en operaciones con derecho a deducción ese año.</span>
           </div>
           <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inBIQuitar" type="button" hidden>Quitar del registro</button></div>
         </div>

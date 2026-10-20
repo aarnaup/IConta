@@ -54,3 +54,11 @@ CREATE TABLE IF NOT EXISTS conta.nomina (
   creado_en           timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS ix_nomina_fecha ON conta.nomina (empresa_id, fecha) WHERE estado = 'CONTABILIZADA';
+
+-- ---------------------------------------------------------------- bienes de inversión: % de deducción por año (cambio de afectación)
+CREATE TABLE IF NOT EXISTS inmov.bien_inversion_porcentaje (
+  bien_inversion_id bigint NOT NULL REFERENCES inmov.bien_inversion(id) ON DELETE CASCADE,
+  anio              smallint NOT NULL,
+  porcentaje        smallint NOT NULL CHECK (porcentaje BETWEEN 0 AND 100),
+  PRIMARY KEY (bien_inversion_id, anio)
+);

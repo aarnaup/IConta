@@ -58,6 +58,14 @@ public static class BienesInversionEndpoints
             return Results.Ok(b);
         }).Requiere(Nivel.Escritura, Modulo.Inmovilizado);
 
+        inm.MapPut("/{inmovilizadoId:long}/bien-inversion/porcentajes", async (long empresaId, long inmovilizadoId, PorcentajeBienInversionCmd cmd,
+            HttpContext http, IBienesInversionRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.FijarPorcentajeAsync(empresaId, inmovilizadoId, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "BIEN_INVERSION_PORCENTAJE", "inmovilizado", inmovilizadoId, cmd, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Inmovilizado);
+
         inm.MapDelete("/{inmovilizadoId:long}/bien-inversion", async (long empresaId, long inmovilizadoId, HttpContext http,
             IBienesInversionRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
         {

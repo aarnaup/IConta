@@ -42,6 +42,8 @@ public static class RegularizacionBienesInversion
         if (b.FechaBaja is { } f && f.Year <= anio) return null;
         if (prorrataDefinitiva is not { } p)
             return new(b.Id, anio, "ANUAL", 0, 1, 0, $"Falta el porcentaje definitivo de prorrata de {anio}.");
+        if (p == b.ProrrataInicial)
+            return new(b.Id, anio, "ANUAL", p, 1, 0, "Mismo porcentaje de deducción que el año de inicio: no se regulariza.");
         if (Math.Abs(p - b.ProrrataInicial) <= 10)
             return new(b.Id, anio, "ANUAL", p, 1, 0, "Diferencia de 10 puntos o menos con el año de inicio: no se regulariza.");
         return new(b.Id, anio, "ANUAL", p, 1, R(b.CuotaSoportada * (p - b.ProrrataInicial) / 100m / b.Anios), null);

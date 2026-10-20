@@ -1247,9 +1247,9 @@ $('#prRegAnular').onclick = async () => {
 $('#prGuardar').onclick = async () => {
   try {
     const ent = id => $(id).value.trim() ? parseInt($(id).value, 10) : null, dec = id => $(id).value.trim() ? num($(id).value) : null;
-    const p = await api(urlE('/fiscal/prorratas'), { method: 'PUT', body: JSON.stringify({ anio: +$('#prAnio').value,
+    const p = await api(urlE('/fiscal/prorratas'), { method: 'PUT', body: JSON.stringify({ anio: +$('#prAnio').value, sectorDiferenciado: ent('#prSector'),
       porcentajeProvisional: ent('#prProv'), porcentajeDefinitivo: ent('#prDef'), operacionesConDerecho: dec('#prCon'), operacionesTotales: dec('#prTot') }) });
-    ['#prProv', '#prDef', '#prCon', '#prTot'].forEach(i => $(i).value = '');
+    ['#prProv', '#prDef', '#prCon', '#prTot', '#prSector'].forEach(i => $(i).value = '');
     await listaProrratas();
     msg($('#prMsg'), `Prorrata de ${p.anio} guardada${p.porcentajeDefinitivo != null ? ': definitivo ' + p.porcentajeDefinitivo + ' %' : ''}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#prMsg'), e.message, 'ayuda err-texto'); }
@@ -1644,12 +1644,15 @@ async function pintaBienInversion(e) {
   const b = l.bienes.find(x => x.inmovilizadoId === e.id);
   $('#inBIResumen').textContent = b
     ? `En el registro desde ${b.anioInicio} hasta ${b.ultimoAnio}${b.esInmueble ? ' (inmueble)' : ''}: cuota soportada ${fmt(b.cuotaSoportada)}, prorrata del año de inicio ${b.prorrataInicial} %, `
-      + `deducción ${fmt(b.deduccionInicial)}.${b.transmisionExenta ? ' Venta exenta o no sujeta.' : ''} ${textoCuadro(b)}`
+      + `deducción ${fmt(b.deduccionInicial)}.${b.sectorDiferenciado != null ? ' Sector diferenciado ' + b.sectorDiferenciado + '.' : ''}`
+      + `${b.transmisionExenta ? ' Venta exenta o no sujeta.' : ''}`
+      + `${b.porcentajes.length ? ' % fijados: ' + b.porcentajes.map(p => p.anio + ': ' + p.porcentaje + ' %').join(', ') + '.' : ''} ${textoCuadro(b)}`
     : e.valorAdquisicion > 3005.06 ? 'No está en el registro de bienes de inversión. Si su IVA/IGIC se dedujo con prorrata, regístralo para regularizarlo los años siguientes.'
       : 'Valor de 3.005,06 € o menos: no es bien de inversión a efectos del impuesto.';
   $('#inBIForm').hidden = !!b || e.valorAdquisicion <= 3005.06 || !permitido('INMOVILIZADO:ESCRITURA');
   $('#inBIQuitar').hidden = !b;
-  ['#inBICuota', '#inBIProrrata', '#inBIAnio'].forEach(i => $(i).value = ''); $('#inBIInmueble').checked = $('#inBIExenta').checked = false;
+  $('#inBIAfecta').hidden = !b || !permitido('INMOVILIZADO:ESCRITURA');
+  ['#inBICuota', '#inBIProrrata', '#inBIAnio', '#inBISector', '#inBIPAnio', '#inBIPPct'].forEach(i => $(i).value = ''); $('#inBIInmueble').checked = $('#inBIExenta').checked = false;
 }
 $('#inBIAlta').onclick = async () => {
   if (!IN.ficha) return;
@@ -1658,9 +1661,19 @@ $('#inBIAlta').onclick = async () => {
     await post(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion`), {
       cuotaSoportada: n($('#inBICuota').value), prorrataInicial: $('#inBIProrrata').value.trim() ? parseInt($('#inBIProrrata').value, 10) : null,
       anioInicio: $('#inBIAnio').value.trim() ? parseInt($('#inBIAnio').value, 10) : null,
+      sectorDiferenciado: $('#inBISector').value.trim() ? parseInt($('#inBISector').value, 10) : null,
       esInmueble: $('#inBIInmueble').checked, transmisionExenta: $('#inBIExenta').checked });
     await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
     msg($('#inFichaMsg'), 'Registrado como bien de inversión.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#inBIPGuardar').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    await put(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion/porcentajes`), { anio: parseInt($('#inBIPAnio').value, 10),
+      porcentaje: $('#inBIPPct').value.trim() ? parseInt($('#inBIPPct').value, 10) : null });
+    await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
+    msg($('#inFichaMsg'), 'Porcentaje del año guardado: la regularización se recalcula.', 'ayuda ok-texto');
   } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
 };
 $('#inBIQuitar').onclick = async () => {

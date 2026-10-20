@@ -12,6 +12,7 @@ public interface IBienesInversionRepositorio
     Task<ProrrataDto> GuardarProrrataAsync(long empresaId, GuardarProrrataCmd cmd, CancellationToken ct);
     Task<BienInversionDto> AltaAsync(long empresaId, long inmovilizadoId, AltaBienInversionCmd cmd, CancellationToken ct);
     Task QuitarAsync(long empresaId, long inmovilizadoId, CancellationToken ct);
+    Task FijarPorcentajeAsync(long empresaId, long inmovilizadoId, PorcentajeBienInversionCmd cmd, CancellationToken ct);
     Task<LibroBienesInversionDto> LibroAsync(long empresaId, int anio, CancellationToken ct);
     Task<RegularizacionContabilizadaDto> ContabilizarAsync(long empresaId, long ejercicioId, long usuarioId, RegularizarBienesCmd cmd, CancellationToken ct);
     Task AnularAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
@@ -76,17 +77,31 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
         public DateOnly? Fecha { get; set; }
     }
 
-    /// <summary>Bienes de la empresa con su prorrata inicial efectiva y las prorratas definitivas por (año, sector).</summary>
-    internal sealed record Datos(IReadOnlyList<BienFila> Filas, IReadOnlyDictionary<(int Anio, int Sector), int?> Definitivas)
+    /// <summary>
+    /// Bienes de la empresa con su prorrata inicial efectiva, las prorratas definitivas por (año, sector) y los porcentajes de deducción
+    /// fijados para un bien y año (cambio de afectación). El % de un año es, por este orden: el fijado para el bien, el definitivo de la
+    /// prorrata de su sector y, si la empresa no tiene prorrata ese año, el del año de inicio (sin cambio, nada que regularizar).
+    /// </summary>
+    internal sealed record Datos(IReadOnlyList<BienFila> Filas, IReadOnlyDictionary<(int Anio, int Sector), int?> Definitivas,
+        IReadOnlyDictionary<(long BienId, int Anio), int> Porcentajes)
     {
         public int? Definitiva(int anio, int? sector) => Definitivas.TryGetValue((anio, sector ?? 0), out var p) ? p : null;
 
-        public BienInversionRegularizable Bien(BienFila f) => new(f.Id, f.Codigo, f.Descripcion, f.AnioInicio, f.Anios, f.CuotaSoportada,
-            Definitiva(f.AnioInicio, f.SectorDiferenciado) ?? f.ProrrataInicial,
-            f.Estado == "VENDIDO" ? f.FechaBaja : null, f.TransmisionExenta, f.Estado == "BAJA" ? f.FechaBaja : null);
+        public int? Fijado(long bienId, int anio) => Porcentajes.TryGetValue((bienId, anio), out var p) ? p : null;
 
-        public int? Definitiva(BienInversionRegularizable b, int anio)
-            => Definitiva(anio, Filas.First(f => f.Id == b.Id).SectorDiferenciado);
+        private int Inicial(BienFila f) => Fijado(f.Id, f.AnioInicio) ?? Definitiva(f.AnioInicio, f.SectorDiferenciado) ?? f.ProrrataInicial;
+
+        public BienInversionRegularizable Bien(BienFila f) => new(f.Id, f.Codigo, f.Descripcion, f.AnioInicio, f.Anios, f.CuotaSoportada,
+            Inicial(f), f.Estado == "VENDIDO" ? f.FechaBaja : null, f.TransmisionExenta, f.Estado == "BAJA" ? f.FechaBaja : null);
+
+        public int? PorcentajeAnio(BienFila f, int anio)
+        {
+            if (Fijado(f.Id, anio) is { } fijado) return fijado;
+            if (Definitivas.ContainsKey((anio, f.SectorDiferenciado ?? 0))) return Definitiva(anio, f.SectorDiferenciado);
+            return Definitivas.Keys.Any(k => k.Anio == anio) ? null : Inicial(f);
+        }
+
+        public int? Definitiva(BienInversionRegularizable b, int anio) => PorcentajeAnio(Filas.First(f => f.Id == b.Id), anio);
     }
 
     internal static async Task<Datos> DatosAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, CancellationToken ct)
@@ -102,7 +117,13 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
         var prorratas = await cn.QueryAsync<ProrrataFila>(new CommandDefinition(
             "SELECT anio, sector_diferenciado, porcentaje_definitivo FROM fiscal.prorrata WHERE empresa_id = @empresaId",
             new { empresaId }, tx, cancellationToken: ct));
-        return new Datos(filas, prorratas.ToDictionary(p => (p.Anio, p.SectorDiferenciado ?? 0), p => p.PorcentajeDefinitivo));
+        var porcentajes = await cn.QueryAsync<(long BienId, short Anio, short Porcentaje)>(new CommandDefinition("""
+            SELECT p.bien_inversion_id, p.anio, p.porcentaje FROM inmov.bien_inversion_porcentaje p
+            JOIN inmov.bien_inversion b ON b.id = p.bien_inversion_id JOIN inmov.inmovilizado i ON i.id = b.inmovilizado_id
+            WHERE i.empresa_id = @empresaId
+            """, new { empresaId }, tx, cancellationToken: ct));
+        return new Datos(filas, prorratas.ToDictionary(p => (p.Anio, p.SectorDiferenciado ?? 0), p => p.PorcentajeDefinitivo),
+            porcentajes.ToDictionary(p => (p.BienId, (int)p.Anio), p => (int)p.Porcentaje));
     }
 
     /// <summary>Lo que el 303/420 del periodo debe llevar en la casilla de regularización de bienes de inversión.</summary>
@@ -237,6 +258,35 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
         return (await LibroAsync(empresaId, anio, ct)).Bienes.First(b => b.InmovilizadoId == inmovilizadoId);
     }
 
+    /// <summary>Fija (o quita, con porcentaje null) el % de deducción de un bien en un año: cambio de afectación sin prorrata.</summary>
+    public async Task FijarPorcentajeAsync(long empresaId, long inmovilizadoId, PorcentajeBienInversionCmd cmd, CancellationToken ct)
+    {
+        if (cmd.Anio is < 2000 or > 2100) throw new ReglaContableException("El año no es válido.");
+        if (cmd.Porcentaje is < 0 or > 100) throw new ReglaContableException("El porcentaje va de 0 a 100.");
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var b = await cn.QuerySingleOrDefaultAsync<(long Id, int AnioInicio, int Anios)?>(new CommandDefinition("""
+            SELECT b.id, b.anio_inicio_utilizacion, b.anios_regularizacion FROM inmov.bien_inversion b JOIN inmov.inmovilizado i ON i.id = b.inmovilizado_id
+            WHERE b.inmovilizado_id = @inmovilizadoId AND i.empresa_id = @empresaId FOR UPDATE OF b
+            """, new { inmovilizadoId, empresaId }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException("El elemento no está en el registro de bienes de inversión.");
+        if (cmd.Anio < b.AnioInicio || cmd.Anio > b.AnioInicio + b.Anios - 1)
+            throw new ReglaContableException($"El año debe estar en el periodo de regularización del bien ({b.AnioInicio}–{b.AnioInicio + b.Anios - 1}).");
+        if (await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+                SELECT EXISTS (SELECT 1 FROM inmov.bien_inversion_regularizacion WHERE bien_inversion_id = @id AND (anio >= @anio OR @anio = @inicio))
+                """, new { id = b.Id, anio = (short)cmd.Anio, inicio = b.AnioInicio }, tx, cancellationToken: ct)))
+            throw new ReglaContableException("Ese año (o uno posterior) ya tiene la regularización contabilizada: anúlala antes de cambiar el porcentaje.");
+        if (cmd.Porcentaje is { } pct)
+            await cn.ExecuteAsync(new CommandDefinition("""
+                INSERT INTO inmov.bien_inversion_porcentaje (bien_inversion_id, anio, porcentaje) VALUES (@id, @anio, @pct)
+                ON CONFLICT (bien_inversion_id, anio) DO UPDATE SET porcentaje = EXCLUDED.porcentaje
+                """, new { id = b.Id, anio = (short)cmd.Anio, pct = (short)pct }, tx, cancellationToken: ct));
+        else
+            await cn.ExecuteAsync(new CommandDefinition("DELETE FROM inmov.bien_inversion_porcentaje WHERE bien_inversion_id = @id AND anio = @anio",
+                new { id = b.Id, anio = (short)cmd.Anio }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
+    }
+
     public async Task QuitarAsync(long empresaId, long inmovilizadoId, CancellationToken ct)
     {
         await using var cn = await conexiones.AbrirAsync(ct);
@@ -249,6 +299,7 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
         if (await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
                 "SELECT EXISTS (SELECT 1 FROM inmov.bien_inversion_regularizacion WHERE bien_inversion_id = @id)", new { id }, tx, cancellationToken: ct)))
             throw new ReglaContableException("El bien ya tiene regularizaciones contabilizadas: anúlalas antes de quitarlo del registro.");
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM inmov.bien_inversion_porcentaje WHERE bien_inversion_id = @id", new { id }, tx, cancellationToken: ct));
         await cn.ExecuteAsync(new CommandDefinition("DELETE FROM inmov.bien_inversion WHERE id = @id", new { id }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
     }
@@ -273,19 +324,24 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
                 Id = f.Id, InmovilizadoId = f.InmovilizadoId, Codigo = f.Codigo, Descripcion = f.Descripcion, EsInmueble = f.EsInmueble,
                 AnioInicio = b.AnioInicio, Anios = b.Anios, UltimoAnio = b.UltimoAnio, CuotaSoportada = b.CuotaSoportada,
                 ProrrataInicial = b.ProrrataInicial, DeduccionInicial = b.DeduccionInicial, SectorDiferenciado = f.SectorDiferenciado,
-                TransmisionExenta = f.TransmisionExenta, Estado = f.Estado, FechaBaja = f.FechaBaja
+                TransmisionExenta = f.TransmisionExenta, Estado = f.Estado, FechaBaja = f.FechaBaja,
+                Porcentajes = datos.Porcentajes.Where(x => x.Key.BienId == f.Id).OrderBy(x => x.Key.Anio)
+                    .Select(x => new PorcentajeBienInversionCmd { Anio = x.Key.Anio, Porcentaje = x.Value }).ToList()
             };
             dto.Cuadro.Add(new AnioBienInversionDto
             {
                 Anio = b.AnioInicio, Tipo = "INICIO", Prorrata = b.ProrrataInicial, Importe = 0,
-                Nota = datos.Definitiva(b.AnioInicio, f.SectorDiferenciado) is null && b.ProrrataInicial != 100
+                Nota = datos.Fijado(f.Id, b.AnioInicio) is not null ? "Porcentaje de deducción fijado para el bien (afectación)."
+                    : datos.Definitiva(b.AnioInicio, f.SectorDiferenciado) is null && b.ProrrataInicial != 100 && datos.Definitivas.Keys.Any(k => k.Anio == b.AnioInicio)
                     ? "Prorrata del año de inicio aún provisional: el cálculo cambiará con la definitiva." : null
             });
             for (var y = b.AnioInicio; y <= b.UltimoAnio; y++)
             {
                 var hecha = hechas[f.Id].FirstOrDefault(h => h.Anio == y);
                 RegularizacionBien? r = Equals(b.FechaTransmision?.Year, y) ? RegularizacionBienesInversion.Transmision(b)
-                    : RegularizacionBienesInversion.Anual(b, y, datos.Definitiva(y, f.SectorDiferenciado));
+                    : RegularizacionBienesInversion.Anual(b, y, datos.PorcentajeAnio(f, y));
+                if (r is not null && r.Tipo == "ANUAL" && datos.Fijado(f.Id, y) is not null)
+                    r = r with { Nota = (r.Nota is null ? "" : r.Nota + " ") + "Porcentaje de deducción fijado para el bien (cambio de afectación)." };
                 if (hecha is not null)
                 {
                     dto.Cuadro.Add(new AnioBienInversionDto
