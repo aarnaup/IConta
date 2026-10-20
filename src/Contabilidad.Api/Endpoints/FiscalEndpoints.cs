@@ -1,6 +1,7 @@
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Fiscal;
+using Contabilidad.Domain.Fiscal.Presentacion;
 using Contabilidad.Domain.Seguridad;
 using Contabilidad.Infrastructure.Repositorios;
 
@@ -60,6 +61,14 @@ public static class FiscalEndpoints
         {
             var (contenido, nombre) = await r.FormatoAeatAsync(empresaId, anio, periodo, ct);
             return Results.File(contenido, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", nombre);
+        }).Requiere(Nivel.Lectura, Modulo.Fiscal);
+
+        // Fichero con el diseño de registro de la AEAT, para importarlo en el formulario de la Sede o presentarlo por fichero
+        f.MapPost("/declaraciones/{id:long}/fichero", async (long empresaId, long id, FicheroAeatCmd cmd, IPresentacionAeatRepositorio r,
+            IConfiguration cfg, CancellationToken ct) =>
+        {
+            var (contenido, nombre) = await r.FicheroAsync(empresaId, id, cmd, cfg["Aeat:NifDesarrollador"], ct);
+            return Results.File(contenido, "text/plain; charset=iso-8859-1", nombre);
         }).Requiere(Nivel.Lectura, Modulo.Fiscal);
 
         f.MapPost("/declaraciones/{id:long}/presentar", async (long empresaId, long id, PresentarDeclaracionCmd cmd, HttpContext http,

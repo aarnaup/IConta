@@ -238,12 +238,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         decimal pendiente = 0;
         if (!anual)
         {
-            var claveCompensada = igic ? "COMP" : "68";
+            // Casilla de lo compensado en cada periodo: [78] (las declaraciones guardadas antes de 2026 lo llevan en la [68])
+            var claveCompensada = igic ? "COMP" : "78";
             var mid = await ModeloIdAsync(cn, tx, modelo, ct);
             pendiente = Math.Max(0m, await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
                 SELECT COALESCE(SUM(d.a_compensar), 0) - COALESCE(SUM(c.importe), 0)
                 FROM fiscal.declaracion d
-                LEFT JOIN fiscal.declaracion_casilla c ON c.declaracion_id = d.id AND c.casilla = @clave
+                LEFT JOIN fiscal.declaracion_casilla c ON c.declaracion_id = d.id
+                     AND (c.casilla = @clave OR (@clave = '78' AND c.casilla = '68'
+                          AND NOT EXISTS (SELECT 1 FROM fiscal.declaracion_casilla c2 WHERE c2.declaracion_id = d.id AND c2.casilla = '78')))
                 WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.estado = 'PRESENTADA'
                   AND d.fecha_fin < @inicio AND d.fecha_fin >= (@inicio::date - interval '4 years')::date
                   AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
@@ -258,7 +261,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         {
             // El resumen anual es informativo: no genera ingreso, devolución ni compensación
             d.AIngresar = d.ADevolver = d.ACompensar = 0;
-            d.Casillas.RemoveAll(c => c.Clave is "110" or "68" or "87" or "69" or "71" or "COMP" or "PEND_ANT" or "PEND_SIG" or "LIQ");
+            d.Casillas.RemoveAll(c => c.Clave is "77" or "110" or "78" or "87" or "69" or "70" or "71" or "COMP" or "PEND_ANT" or "PEND_SIG" or "LIQ");
             var baseModelo = igic ? ModelosFiscales.Obtener("420") : ModelosFiscales.Obtener("303");
             var midBase = await ModeloIdAsync(cn, tx, baseModelo, ct);
             var claveAntes = igic ? "RES" : "64";

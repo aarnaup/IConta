@@ -506,6 +506,19 @@
             <tbody id="mfRectBody"></tbody></table>
           </div>
         </div>
+        <details class="nuevo" id="mfFichero" hidden><summary>Fichero para la Agencia Tributaria</summary>
+          <p class="ayuda">Fichero con el diseño de registro oficial, para importarlo en el formulario de la Sede electrónica («Importar») o
+            presentarlo por fichero. Revísalo en el formulario antes de presentar.</p>
+          <div class="cab2">
+            <label id="mfFDomL">Pago <select id="mfFDom"><option value="false">Ingreso (NRC del banco)</option><option value="true">Domiciliación</option></select></label>
+            <label id="mfFIbanL">IBAN (domiciliación o devolución) <input id="mfFIban" maxlength="34" placeholder="ES00 0000 0000 0000 0000 0000"></label>
+            <label id="mfFTelL">Teléfono de contacto <input id="mfFTel" maxlength="15"></label>
+            <label id="mfFConL">Persona de contacto <input id="mfFCon" maxlength="40"></label>
+            <label id="mfFExoL">Exonerado del 390 <select id="mfFExo"><option value="false">No (presento el 390)</option><option value="true">Sí (página 4)</option></select></label>
+            <label>&nbsp;<button class="btn primario" id="mfFDescargar" type="button">Descargar fichero</button></label>
+          </div>
+          <p id="mfFMsg" class="ayuda" role="status"></p>
+        </details>
       </div>
 
       <div class="panel" id="mfPresentarPanel" hidden>

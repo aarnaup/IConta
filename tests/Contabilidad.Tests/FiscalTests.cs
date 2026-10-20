@@ -107,7 +107,7 @@ public class CalculadorImpuestoIndirectoTests
         Assert.Equal(-21m, d["44"]);
         Assert.Equal(0m, d["45"]);                        // 21 − 21
         Assert.Equal(1050m, d["46"]);
-        Assert.Equal(425m, d["68"]);
+        Assert.Equal(425m, d["78"]);
         Assert.Equal(625m, d["69"]);
         Assert.Equal(625m, d.AIngresar);
         Assert.Equal(0m, d.ACompensar);
@@ -119,7 +119,7 @@ public class CalculadorImpuestoIndirectoTests
     {
         var d = Nueva();
         CalculadorImpuestoIndirecto.Calcular(false, new([G("EMITIDAS", 21, 100, 21)], 0, 500m, false, false), d);
-        Assert.Equal(21m, d["68"]);
+        Assert.Equal(21m, d["78"]);
         Assert.Equal(0m, d.AIngresar);
         Assert.Equal(479m, d["87"]);                      // lo que sobra sigue pendiente
     }

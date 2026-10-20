@@ -28,7 +28,15 @@ public static class Calculador130
             new("04", "20 % del rendimiento neto (si es positivo)", veinte),
             new("05", "Pagos fraccionados de trimestres anteriores", R(e.PagosAnteriores)),
             new("06", "Retenciones e ingresos a cuenta soportados (acumulado)", R(e.Retenciones)),
-            new("07", "Resultado (04 − 05 − 06)", resultado),
+            new("07", "Pago fraccionado previo (04 − 05 − 06)", resultado),
+            new("12", "Suma de pagos fraccionados previos del trimestre (07 + 11)", resultado),
+            new("13", "A deducir: minoración por rendimientos netos bajos (art. 110.3.c RIRPF)", 0m),
+            new("14", "Diferencia (12 − 13)", resultado),
+            new("15", "A deducir: resultados negativos de trimestres anteriores", 0m),
+            new("16", "A deducir: pagos por préstamos para la vivienda habitual", 0m),
+            new("17", "Total (14 − 15 − 16)", resultado),
+            new("18", "A deducir: resultado a ingresar de la autoliquidación anterior (solo complementarias)", 0m),
+            new("19", "Resultado de la autoliquidación (17 − 18)", resultado),
         ]);
         d.Resultado = resultado;
         d.AIngresar = Math.Max(resultado, 0m);

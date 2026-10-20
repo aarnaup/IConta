@@ -1120,8 +1120,45 @@ function muestraDeclaracion(v) {
   $('#mfRectificaciones').hidden = !(rect && rect.length);
   $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
       <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
+  // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
+  const conFichero = !!v.id && ['303', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
+  $('#mfFichero').hidden = !conFichero;
+  if (conFichero) {
+    const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
+    $('#mfFDomL').hidden = !autoliq || v.resultado <= 0;
+    $('#mfFIbanL').hidden = !autoliq;
+    $('#mfFTelL').hidden = $('#mfFConL').hidden = autoliq;
+    $('#mfFExoL').hidden = !(v.modelo === '303' && ['4T', '12'].includes(v.periodo));
+    msg($('#mfFMsg'), '', 'ayuda');
+  }
   $('#mfResultado').hidden = false;
 }
+
+async function descargaPost(url, cuerpo, porDefecto) {
+  const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + S.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cuerpo) });
+  if (!r.ok) {
+    let m = r.statusText;
+    try { const j = await r.json(); m = (j.error || m) + (j.detalle ? ' (' + j.detalle + ')' : ''); } catch { /* sin cuerpo */ }
+    throw new Error(m);
+  }
+  const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || porDefecto).replace(/"/g, '');
+  const enlace = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement('a'), { href: enlace, download: nombre });
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(enlace);
+  return nombre;
+}
+
+$('#mfFDescargar').onclick = async () => {
+  const v = MF.actual; if (!v || !v.id) return;
+  try {
+    const nombre = await descargaPost(urlE(`/fiscal/declaraciones/${v.id}/fichero`), {
+      domiciliar: $('#mfFDom').value === 'true' && !$('#mfFDomL').hidden, iban: $('#mfFIban').value || null,
+      telefono: $('#mfFTel').value || null, contacto: $('#mfFCon').value || null,
+      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden }, 'modelo.txt');
+    msg($('#mfFMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#mfFMsg'), e.message, 'ayuda err-texto'); }
+};
 
 $('#mfCalcular').onclick = async () => {
   try { muestraDeclaracion(await post(urlE('/fiscal/calcular'), peticionModelo())); msg($('#mfMsg'), '', 'ayuda'); $('#mfResultado').scrollIntoView({ behavior: 'smooth' }); }
