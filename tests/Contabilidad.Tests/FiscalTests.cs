@@ -180,6 +180,17 @@ public class CalculadorImpuestoIndirectoTests
     }
 
     [Fact]
+    public void No_sujetas_por_localizacion_en_las_casillas_120_y_123()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("EMITIDAS", 0, 900, 0, op: "NO_SUJETA_LOCAL"), G("EMITIDAS", 0, 250, 0, op: "NO_SUJETA_OSS"),
+            G("EMITIDAS", 0, 5000, 0, op: "NO_SUJETA"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
+        Assert.Equal((900m, 250m), (d["120"], d["123"]));
+        Assert.Equal(21m, d["46"]);                                  // informativas: no cambian el resultado
+    }
+
+    [Fact]
     public void Con_prorrata_la_autorrepercusion_deja_cuota_a_ingresar()
     {
         var d = Nueva();
@@ -198,6 +209,7 @@ public class CalculadorImpuestoIndirectoTests
             G("EMITIDAS", 0, 400, 0, op: "INVERSION_SUJETO_PASIVO"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
         Assert.Equal((800m, 168m, 5000m, 1050m), (d["32"], d["33"], d["34"], d["35"]));
         Assert.Equal((3000m, 700m, 400m), (d["59"], d["60"], d["122"]));
+        Assert.False(d.Casillas.Any(c => c.Clave is "120" or "123"));
         Assert.Equal(21m, d["27"]);
         Assert.Equal(21m - 1218m, d["46"]);
     }

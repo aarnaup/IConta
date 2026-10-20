@@ -57,6 +57,16 @@ public class SiiTests
     }
 
     [Fact]
+    public void No_sujeta_por_articulos_7_y_14_y_por_reglas_de_localizacion()
+    {
+        var doc = Sii.Mensaje("EMITIDAS", "B12345678", "Mi Empresa", "A0",
+            [F("EMITIDAS", "003", "A11111111", "ES", [L1("NO_SUJETA", 0, 300), L1("NO_SUJETA_LOCAL", 0, 800), L1("NO_SUJETA_OSS", 0, 50)])]);
+        var ns = doc.Descendants(I + "NoSujeta").Single();
+        Assert.Equal(["ImportePorArticulos7_14_Otros", "ImporteTAIReglasLocalizacion"], ns.Elements().Select(e => e.Name.LocalName));
+        Assert.Equal(["300.00", "850.00"], ns.Elements().Select(e => e.Value));
+    }
+
+    [Fact]
     public void Rectificativa_por_diferencias_con_la_factura_rectificada()
     {
         var doc = Sii.Mensaje("EMITIDAS", "B12345678", "Mi Empresa", "A0",

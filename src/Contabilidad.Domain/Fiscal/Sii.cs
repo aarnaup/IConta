@@ -187,9 +187,16 @@ public static class Sii
             }
             d.Add(sujeta);
         }
-        var noSujeta = lineas.Where(l => l.TipoOperacion == "NO_SUJETA").ToList();
-        if (noSujeta.Count > 0)
-            d.Add(new XElement(Inf + "NoSujeta", new XElement(Inf + "ImporteTAIReglasLocalizacion", Importe(noSujeta.Sum(l => l.Base)))));
+        // No sujeta: por los arts. 7 y 14 (y otros) o por las reglas de localización, en este orden
+        var art7 = lineas.Where(l => l.TipoOperacion == "NO_SUJETA").ToList();
+        var localizacion = lineas.Where(l => l.TipoOperacion is "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS").ToList();
+        if (art7.Count > 0 || localizacion.Count > 0)
+        {
+            var ns = new XElement(Inf + "NoSujeta");
+            if (art7.Count > 0) ns.Add(new XElement(Inf + "ImportePorArticulos7_14_Otros", Importe(art7.Sum(l => l.Base))));
+            if (localizacion.Count > 0) ns.Add(new XElement(Inf + "ImporteTAIReglasLocalizacion", Importe(localizacion.Sum(l => l.Base))));
+            d.Add(ns);
+        }
         return d;
     }
 
@@ -225,7 +232,7 @@ public static class Sii
                 isp.GroupBy(l => (l.Porcentaje, l.PorcentajeRecargo)).Select(g => Detalle(g, true))));
         if (resto.Count > 0)
             desglose.Add(new XElement(Inf + "DesgloseIVA",
-                resto.GroupBy(l => (l.TipoOperacion is "EXENTA" or "NO_SUJETA" ? -1m : l.Porcentaje, l.PorcentajeRecargo))
+                resto.GroupBy(l => (l.TipoOperacion is "EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS" ? -1m : l.Porcentaje, l.PorcentajeRecargo))
                     .Select(g => Detalle(g, g.Key.Item1 >= 0))));
         detalle.Add(desglose,
             new XElement(Inf + "Contraparte", new XElement(Inf + "NombreRazon", Corta(f.Nombre, 120)), ident),

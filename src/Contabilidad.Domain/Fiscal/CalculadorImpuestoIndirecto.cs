@@ -48,7 +48,7 @@ public static class CalculadorImpuestoIndirecto
         var emitidasRect = e.Grupos.Where(g => g.Libro == "EMITIDAS" && g.Rectificativa && g.TipoOperacion == "INTERIOR").ToList();
         // Deducible: todo lo recibido con cuota (interior, importación y autorrepercutido); las rectificativas van aparte
         var soportado = recibidas.Where(g => !g.Rectificativa).ToList();
-        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA")).ToList();
+        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS")).ToList();
 
         void Add(string clave, string desc, decimal importe) => d.Casillas.Add(new Casilla(clave, desc, importe));
 
@@ -171,7 +171,7 @@ public static class CalculadorImpuestoIndirecto
         foreach (var (es, nombre, iva, ig) in grupos)
         {
             var k = igic ? ig : iva;
-            var corr = soportado.Where(x => es(x) && !x.EsBienInversion && x.TipoOperacion != "EXENTA" && x.TipoOperacion != "NO_SUJETA").ToList();
+            var corr = soportado.Where(x => es(x) && !x.EsBienInversion && x.TipoOperacion != "EXENTA" && !Facturacion.OperacionesIva.NoSujeta(x.TipoOperacion)).ToList();
             var inv = soportado.Where(x => es(x) && x.EsBienInversion).ToList();
             if (corr.Count > 0)
             {
@@ -212,7 +212,9 @@ public static class CalculadorImpuestoIndirecto
         foreach (var (tipo, iva, ig, txt) in new[] {
             ("INTRACOM_ENTREGA", "59", "", "Entregas intracomunitarias de bienes y servicios"),
             ("EXPORTACION", "60", "EXP", "Exportaciones y operaciones asimiladas"),
-            ("INVERSION_SUJETO_PASIVO", "122", "ISPE", "Operaciones sujetas con inversión del sujeto pasivo (emitidas)") })
+            ("INVERSION_SUJETO_PASIVO", "122", "ISPE", "Operaciones sujetas con inversión del sujeto pasivo (emitidas)"),
+            ("NO_SUJETA_LOCAL", "120", "NSL", "Operaciones no sujetas por reglas de localización (excepto las de la casilla 123)"),
+            ("NO_SUJETA_OSS", "123", "NSO", "Operaciones no sujetas por reglas de localización acogidas a la ventanilla única") })
         {
             var g = e.Grupos.Where(x => x.Libro == "EMITIDAS" && x.TipoOperacion == tipo).ToList();
             if (g.Count > 0) Add(igic ? ig : iva, txt, g.Sum(x => x.Base));

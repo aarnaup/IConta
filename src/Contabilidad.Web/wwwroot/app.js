@@ -326,7 +326,8 @@ const fst = { tipos: [], rets: [], terceros: [], formas: [], lineas: [] };
 const nuevaFL = () => ({ tipoIvaId: null, base: '', regla: 'TOTAL', pct: '', op: '', inv: false });
 // Operaciones por libro ('' = interior, o exenta si el tipo es exento). En el IGIC no hay intracomunitarias.
 const OPS_FACTURA = {
-  EMITIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ENTREGA', 'Entrega intracomunitaria (exenta)'],
+  EMITIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta (arts. 7 y 14)'], ['NO_SUJETA_LOCAL', 'No sujeta por localización'],
+             ['NO_SUJETA_OSS', 'No sujeta: ventanilla única (OSS)'], ['INTRACOM_ENTREGA', 'Entrega intracomunitaria (exenta)'],
              ['EXPORTACION', 'Exportación (exenta)'], ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo']],
   RECIBIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ADQUISICION', 'Adquisición intracomunitaria'],
               ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo'], ['IMPORTACION', 'Importación (DUA)']]
@@ -1186,7 +1187,7 @@ const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#l
 $('#lrVer').onclick = async () => {
   try {
     const d = await api(urlE(consultaLibro()));
-    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta', INTRACOM_ENTREGA: 'Entrega intracom.', INTRACOM_ADQUISICION: 'Adquisición intracom.', EXPORTACION: 'Exportación', IMPORTACION: 'Importación', INVERSION_SUJETO_PASIVO: 'Inv. sujeto pasivo' };
+    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta', NO_SUJETA_LOCAL: 'No sujeta (localización)', NO_SUJETA_OSS: 'No sujeta (OSS)', INTRACOM_ENTREGA: 'Entrega intracom.', INTRACOM_ADQUISICION: 'Adquisición intracom.', EXPORTACION: 'Exportación', IMPORTACION: 'Importación', INVERSION_SUJETO_PASIVO: 'Inv. sujeto pasivo' };
     $('#lrResumen').textContent = `${rec ? 'Facturas recibidas' : 'Facturas expedidas'} · ${imp} · del ${fechaES(d.desde)} al ${fechaES(d.hasta)} · ${d.facturas} factura(s). `
       + `Base ${fmt(d.totalBase)}, cuota ${fmt(d.totalCuota)}${d.totalRecargo ? ', recargo ' + fmt(d.totalRecargo) : ''}${rec ? ', deducible ' + fmt(d.totalCuotaDeducible) : ''}, total ${fmt(d.totalFacturas)}.`;
     $('#lrAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');

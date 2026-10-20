@@ -734,9 +734,10 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             JOIN conta.tercero t ON t.id = f.tercero_id
             JOIN core.nif n ON n.id = t.nif_id
             WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
-              -- No van al 347 las operaciones del 349 (intracomunitarias), las importaciones ni las exportaciones
+              -- No van al 347 las operaciones del 349 (intracomunitarias), las importaciones, las exportaciones ni las no sujetas
+              -- por las reglas de localización (se realizan fuera del territorio)
               AND NOT EXISTS (SELECT 1 FROM fiscal.factura_iva x WHERE x.factura_id = f.id
-                              AND x.tipo_operacion IN ('INTRACOM_ENTREGA','INTRACOM_ADQUISICION','IMPORTACION','EXPORTACION'))
+                              AND x.tipo_operacion IN ('INTRACOM_ENTREGA','INTRACOM_ADQUISICION','IMPORTACION','EXPORTACION','NO_SUJETA_LOCAL','NO_SUJETA_OSS'))
             GROUP BY 1, 2, 3, 4, 5
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
         Calculador347.Calcular(filas.Select(f => new Operacion347(f.TerceroId, f.Nif, f.Nombre, f.Clave, f.Trimestre, f.Importe)).ToList(), d);

@@ -90,6 +90,8 @@ public static class ImpresoFactura
         if (ops.Contains("EXPORTACION")) m.Add("Exportación exenta (art. 21 de la Ley 37/1992).");
         if (ops.Contains("EXENTA")) m.Add("Operación exenta (art. 20 de la Ley 37/1992).");
         if (ops.Contains("NO_SUJETA")) m.Add("Operación no sujeta al impuesto.");
+        if (ops.Contains("NO_SUJETA_LOCAL") || ops.Contains("NO_SUJETA_OSS"))
+            m.Add("Operación no sujeta al IVA español por las reglas de localización (arts. 68 a 70 de la Ley 37/1992).");
         return m;
     }
 
@@ -173,6 +175,8 @@ public static class ImpresoFactura
     {
         "EXENTA" => "exenta",
         "NO_SUJETA" => "no sujeta",
+        "NO_SUJETA_LOCAL" => "no sujeta por localización",
+        "NO_SUJETA_OSS" => "no sujeta (ventanilla única)",
         "INTRACOM_ENTREGA" => "entrega intracomunitaria",
         "EXPORTACION" => "exportación",
         "INVERSION_SUJETO_PASIVO" => "inversión del sujeto pasivo",

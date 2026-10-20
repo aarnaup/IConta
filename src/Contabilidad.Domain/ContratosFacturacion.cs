@@ -6,7 +6,7 @@ public sealed class FacturaLineaCmd
 {
     public long TipoIvaId { get; set; }
     public decimal Base { get; set; }
-    public string TipoOperacion { get; set; } = "INTERIOR";     // INTERIOR | EXENTA | NO_SUJETA
+    public string TipoOperacion { get; set; } = "INTERIOR";     // INTERIOR | EXENTA | NO_SUJETA | NO_SUJETA_LOCAL | NO_SUJETA_OSS | INTRACOM_* | EXPORTACION | IMPORTACION | INVERSION_SUJETO_PASIVO
     public string ReglaDeduccion { get; set; } = "TOTAL";        // TOTAL | NINGUNA | PRORRATA | PORCENTAJE_AFECTACION
     public decimal? PorcentajeDeduccion { get; set; }
     public bool EsBienInversion { get; set; }

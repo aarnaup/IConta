@@ -98,7 +98,7 @@ public static class LibrosRegistro
     {
         "ORDINARIA" => "Ordinaria", "SIMPLIFICADA" => "Simplificada", "RECTIFICATIVA" => "Rectificativa", "AUTOFACTURA" => "Autofactura",
         "INTRACOMUNITARIA" => "Intracomunitaria", "IMPORTACION" => "Importación",
-        "INTERIOR" => "Interior", "EXENTA" => "Exenta", "NO_SUJETA" => "No sujeta", "INTRACOM_ADQUISICION" => "Adquisición intracomunitaria",
+        "INTERIOR" => "Interior", "EXENTA" => "Exenta", "NO_SUJETA" => "No sujeta", "NO_SUJETA_LOCAL" => "No sujeta por localización", "NO_SUJETA_OSS" => "No sujeta (ventanilla única)", "INTRACOM_ADQUISICION" => "Adquisición intracomunitaria",
         "INTRACOM_ENTREGA" => "Entrega intracomunitaria", "EXPORTACION" => "Exportación", "INVERSION_SUJETO_PASIVO" => "Inversión del sujeto pasivo",
         _ => clave
     };

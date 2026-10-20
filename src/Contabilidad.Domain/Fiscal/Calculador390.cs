@@ -111,7 +111,7 @@ public static class Calculador390
         Suma("47", I("34") + Recargos.Values.Sum(k => I(k.C)) + I("44"));
 
         // ---------------------------------------------------------------- 5. IVA deducible
-        var soportado = recibidas.Where(g => !g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA")).ToList();
+        var soportado = recibidas.Where(g => !g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS")).ToList();
         string BloqueDeducible(GrupoIva g) => g.TipoOperacion switch
         {
             "IMPORTACION" => g.EsBienInversion ? "IMPORTACION_INVERSION" : "IMPORTACION_CORRIENTE",
@@ -130,7 +130,7 @@ public static class Calculador390
             Suma(k.B, g.Sum(x => x.Base)); Suma(k.C, g.Sum(x => x.CuotaDeducible));
             Suma(tb, g.Sum(x => x.Base)); Suma(tc, g.Sum(x => x.CuotaDeducible));
         }
-        var rectRecibidas = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA")).ToList();
+        var rectRecibidas = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS")).ToList();
         Suma("639", rectRecibidas.Sum(g => g.Base)); Suma("62", rectRecibidas.Sum(g => g.CuotaDeducible));
         Suma("63", e.RegularizacionBienesInversion);
         Suma("522", e.RegularizacionProrrata);
@@ -162,14 +162,15 @@ public static class Calculador390
         Suma("103", emitidas.Where(g => g.TipoOperacion == "INTRACOM_ENTREGA").Sum(g => g.Base));
         Suma("104", emitidas.Where(g => g.TipoOperacion == "EXPORTACION").Sum(g => g.Base));
         Suma("105", emitidas.Where(g => g.TipoOperacion == "EXENTA").Sum(g => g.Base));
-        Suma("110", emitidas.Where(g => g.TipoOperacion == "NO_SUJETA").Sum(g => g.Base));
+        // Las no sujetas por los arts. 7 y 14 no forman parte del volumen de operaciones
+        Suma("110", emitidas.Where(g => g.TipoOperacion is "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS").Sum(g => g.Base));
         Suma("125", emitidas.Where(g => g.TipoOperacion == "INVERSION_SUJETO_PASIVO").Sum(g => g.Base));
         Suma("107", emitidas.Where(g => g.EsBienInversion).Sum(g => g.Base));
         Suma("108", I("99") + I("653") + I("103") + I("104") + I("105") + I("110") + I("125") + I("102") - I("106") - I("107"));
 
         // ---------------------------------------------------------------- 11. Operaciones específicas
         Suma("230", recibidas.Where(g => g.TipoOperacion == "EXENTA").Sum(g => g.Base));
-        Suma("232", recibidas.Where(g => g.TipoOperacion is not ("EXENTA" or "NO_SUJETA") && g.Cuota != 0 && g.CuotaDeducible == 0).Sum(g => g.Base));
+        Suma("232", recibidas.Where(g => g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS") && g.Cuota != 0 && g.CuotaDeducible == 0).Sum(g => g.Base));
         if (e.Caja is { } cj)
         {
             Suma("654", cj.BaseEntregas); Suma("655", cj.CuotaEntregas);
