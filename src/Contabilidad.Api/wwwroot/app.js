@@ -1070,12 +1070,13 @@ function pintaPeriodos() {
 }
 $('#mfModelo').onchange = pintaPeriodos;
 
-const peticionModelo = () => ({ modelo: $('#mfModelo').value, anio: +$('#mfAnio').value, periodo: $('#mfPeriodo').value, solicitaDevolucion: $('#mfDevolucion').value === '1' });
+const peticionModelo = () => ({ modelo: $('#mfModelo').value, anio: +$('#mfAnio').value, periodo: $('#mfPeriodo').value, solicitaDevolucion: $('#mfDevolucion').value === '1',
+  tipoDeclaracion: $('#mfTipo').value });
 
 function muestraDeclaracion(v) {
   MF.actual = v;
   const caja = (n, x, cls) => `<div><span>${n}</span><strong class="${cls || ''}">${fmt(x)}</strong></div>`;
-  $('#mfTitulo').textContent = `Modelo ${v.modelo} · ${v.anio} · ${periodoTxt(v.periodo)}`;
+  $('#mfTitulo').textContent = `Modelo ${v.modelo} · ${v.anio} · ${periodoTxt(v.periodo)}` + (v.tipoDeclaracion && v.tipoDeclaracion !== 'ORDINARIA' ? ` · ${v.tipoDeclaracion.toLowerCase()}` : '');
   $('#mfSub').textContent = `${v.nombre}. Estado: ${estadoDecl[v.estado] || v.estado}. Plazo orientativo de presentación: ${fechaES(v.plazoDesde)} – ${fechaES(v.plazoHasta)}.`;
   $('#mfTotales').innerHTML = caja('Resultado', v.resultado, v.resultado < 0 ? 'estado-mal' : '')
     + (v.aIngresar ? caja('A ingresar', v.aIngresar) : '') + (v.aDevolver ? caja('A devolver', v.aDevolver) : '') + (v.aCompensar ? caja('A compensar', v.aCompensar) : '');
@@ -1128,7 +1129,7 @@ $('#mfGuardar').onclick = async () => {
 async function cargaDeclaraciones() {
   const filas = await api(urlE('/fiscal/declaraciones?anio=' + ($('#mfAnio').value || new Date().getFullYear())));
   const directo = permitido('FISCAL_DIRECTO'), abierto = S.ejercicio.estado === 'ABIERTO';
-  $('#mfLista').innerHTML = filas.length ? filas.map(d => `<tr><td>${esc(d.modelo)} <small>${esc(d.nombre)}</small></td><td>${d.anio}</td><td>${esc(periodoTxt(d.periodo))}</td>
+  $('#mfLista').innerHTML = filas.length ? filas.map(d => `<tr><td>${esc(d.modelo)} <small>${esc(d.nombre)}</small></td><td>${d.anio}</td><td>${esc(periodoTxt(d.periodo))}${d.numeroPresentacion > 1 ? ` <small>nº ${d.numeroPresentacion} · ${esc((d.tipoDeclaracion || '').toLowerCase())}</small>` : ''}</td>
     <td>${estadoDecl[d.estado] || esc(d.estado)}</td><td class="num">${d.resultado == null ? '' : fmt(d.resultado)}</td>
     <td>${d.fechaPresentacion ? fechaES(d.fechaPresentacion) + (d.justificante ? ' · ' + esc(d.justificante) : '') : ''}</td>
     <td>${d.asientoNumero ? 'nº ' + d.asientoNumero : ''}</td>

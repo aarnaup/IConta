@@ -332,3 +332,43 @@ public class Calculador347Tests
         Assert.Contains(d.Avisos, a => a.Contains("NIF"));
     }
 }
+
+public class ComplementariaTests
+{
+    private static DeclaracionCalculada D303(decimal resultado)
+    {
+        var d = new DeclaracionCalculada { Modelo = "303" };
+        d.Casillas.Add(new Casilla("69", "Resultado", resultado)); d.Casillas.Add(new Casilla("71", "Resultado de la liquidación", resultado));
+        d.Resultado = resultado; d.AIngresar = Math.Max(0, resultado); d.ACompensar = Math.Max(0, -resultado);
+        return d;
+    }
+
+    [Fact]
+    public void Complementaria_descuenta_lo_ingresado()
+    {
+        var d = D303(800);
+        Complementaria.Aplicar("303", "COMPLEMENTARIA", new PresentacionAnterior(1, 500, 500), d);
+        Assert.Equal((500m, 300m, 300m), (d["70"], d["71"], d.AIngresar));
+    }
+
+    [Fact]
+    public void Complementaria_que_pasa_de_compensar_a_ingresar()
+    {
+        var d = D303(50);
+        Complementaria.Aplicar("303", "COMPLEMENTARIA", new PresentacionAnterior(1, -100, 0), d);
+        Assert.Equal(50m, d.AIngresar);
+    }
+
+    [Fact]
+    public void Complementaria_que_baja_el_resultado_no_se_admite()
+        => Assert.Throws<ReglaContableException>(() => Complementaria.Aplicar("111", "COMPLEMENTARIA", new PresentacionAnterior(1, 500, 500), D303(400)));
+
+    [Fact]
+    public void Sustitutiva_no_descuenta_y_avisa_del_ingreso_indebido()
+    {
+        var d = D303(300);
+        Complementaria.Aplicar("303", "SUSTITUTIVA", new PresentacionAnterior(1, 500, 500), d);
+        Assert.Equal(300m, d.AIngresar);
+        Assert.Contains(d.Avisos, a => a.Contains("ingresos indebidos"));
+    }
+}

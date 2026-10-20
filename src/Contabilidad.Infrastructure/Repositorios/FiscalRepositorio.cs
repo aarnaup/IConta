@@ -62,6 +62,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public DateOnly FechaInicio { get; set; }
         public DateOnly FechaFin { get; set; }
         public short NumeroPresentacion { get; set; }
+        public string TipoDeclaracion { get; set; } = "ORDINARIA";
         public string Estado { get; set; } = "";
         public decimal? Resultado { get; set; }
         public decimal? AIngresar { get; set; }
@@ -71,7 +72,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public string? Opciones { get; set; }
     }
     private sealed class TotalesFila { public decimal Ingresos { get; set; } public decimal Gastos { get; set; } }
-    private sealed class ExistenteFila { public long Id { get; set; } public string Estado { get; set; } = ""; }
+    private sealed class ExistenteFila { public long Id { get; set; } public string Estado { get; set; } = ""; public short NumeroPresentacion { get; set; } }
+    private sealed class AnteriorFila { public short Numero { get; set; } public decimal Resultado { get; set; } public decimal Ingresado { get; set; } }
     private sealed class CasillaFila { public string Casilla { get; set; } = ""; public string? Texto { get; set; } public decimal? Importe { get; set; } }
 
     // =====================================================================
@@ -140,6 +142,25 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             case "INTRACOM":
                 await Calcular349Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
+        }
+
+        var tipo = (cmd.TipoDeclaracion ?? "ORDINARIA").Trim().ToUpperInvariant();
+        if (!Complementaria.Tipos.Contains(tipo)) throw new ReglaContableException("Tipo de declaración no válido: ORDINARIA, COMPLEMENTARIA o SUSTITUTIVA.");
+        if (tipo != "ORDINARIA")
+        {
+            var mid = await ModeloIdAsync(cn, tx, modelo, ct);
+            var ant = await cn.QuerySingleOrDefaultAsync<AnteriorFila>(new CommandDefinition("""
+                SELECT d.numero_presentacion AS numero, COALESCE(d.resultado, 0) AS resultado,
+                       (SELECT COALESCE(SUM(x.a_ingresar), 0) FROM fiscal.declaracion x
+                        WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo
+                          AND x.estado = 'PRESENTADA') AS ingresado
+                FROM fiscal.declaracion d
+                WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.anio = @anio AND d.periodo = @periodo AND d.estado = 'PRESENTADA'
+                ORDER BY d.numero_presentacion DESC LIMIT 1
+                """, new { empresaId, mid, anio = (short)p.Anio, periodo = p.Codigo }, tx, cancellationToken: ct))
+                ?? throw new ReglaContableException($"No hay un modelo {modelo.Codigo} {p.Anio} {p.Codigo} presentado que complementar o sustituir.");
+            // La sustitutiva no descuenta lo ingresado: queda la suma de lo pagado para la devolución de ingresos indebidos
+            Complementaria.Aplicar(modelo.Codigo, tipo, new PresentacionAnterior(ant.Numero, ant.Resultado, ant.Ingresado), d);
         }
         return d;
     }
@@ -294,7 +315,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
 
         var mid = await ModeloIdAsync(cn, tx, modelo, ct);
         var anteriores = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-            SELECT COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d
+            -- Pagos de trimestres anteriores: el resultado positivo de la última presentación de cada uno (también complementarias)
+            SELECT COALESCE(SUM(GREATEST(d.resultado, 0)), 0) FROM fiscal.declaracion d
             WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.anio = @anio AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                     WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
@@ -502,21 +524,48 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             new { clave = $"declaracion|{empresaId}|{modelo.Codigo}|{p.Anio}|{p.Codigo}" }, tx, cancellationToken: ct));
 
         var existente = await cn.QuerySingleOrDefaultAsync<ExistenteFila>(new CommandDefinition("""
-            SELECT id, estado FROM fiscal.declaracion
-            WHERE empresa_id = @empresaId AND modelo_id = @mid AND anio = @anio AND periodo = @periodo
+            SELECT id, estado, numero_presentacion FROM fiscal.declaracion
+            WHERE empresa_id = @empresaId AND modelo_id = @mid AND anio = @anio AND periodo = @periodo AND estado <> 'ANULADA'
             ORDER BY numero_presentacion DESC LIMIT 1
             """, new { empresaId, mid, anio = (short)p.Anio, periodo = p.Codigo }, tx, cancellationToken: ct));
-        if (existente is { Estado: "PRESENTADA" })
+        var tipo = (cmd.TipoDeclaracion ?? "ORDINARIA").Trim().ToUpperInvariant();
+        cmd.TipoDeclaracion = tipo;
+        if (existente is { Estado: "PRESENTADA" } && tipo == "ORDINARIA")
             throw new ReglaContableException($"El modelo {modelo.Codigo} {p.Anio} {p.Codigo} ya está presentado.",
-                "Las declaraciones complementarias y sustitutivas todavía no están soportadas.");
+                "Para corregirlo guarda una declaración complementaria o sustitutiva.");
+        var hayPresentada = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.declaracion WHERE empresa_id = @empresaId AND modelo_id = @mid AND anio = @anio
+                           AND periodo = @periodo AND estado = 'PRESENTADA')
+            """, new { empresaId, mid, anio = (short)p.Anio, periodo = p.Codigo }, tx, cancellationToken: ct));
+        if (tipo != "ORDINARIA" && !hayPresentada)
+            throw new ReglaContableException("Solo se puede complementar o sustituir una declaración presentada.");
+        if (tipo == "ORDINARIA" && hayPresentada)
+            throw new ReglaContableException("El periodo ya tiene una declaración presentada: guarda una complementaria o sustitutiva.");
 
         var d = await CalcularInternoAsync(cn, tx, empresaId, cmd, ct);
         var datos = JsonSerializer.Serialize(new { avisos = d.Avisos, detalle = d.Detalle }, Json);
         var opciones = JsonSerializer.Serialize(new { cmd.SolicitaDevolucion }, Json);
 
         long id;
-        if (existente is not null)
+        short numero = 1;
+        if (existente is { Estado: "PRESENTADA" })
         {
+            numero = (short)(existente.NumeroPresentacion + 1);
+            id = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
+                INSERT INTO fiscal.declaracion (empresa_id, modelo_id, anio, periodo, fecha_inicio, fecha_fin, numero_presentacion, tipo_declaracion,
+                                                estado, resultado, a_ingresar, a_devolver, a_compensar, datos, opciones, calculada_en, creado_por)
+                VALUES (@empresaId, @mid, @anio, @periodo, @inicio, @fin, @numero, @tipo, 'CALCULADA', @resultado, @aIngresar, @aDevolver, @aCompensar,
+                        @datos::jsonb, @opciones::jsonb, now(), @usuarioId)
+                RETURNING id
+                """, new { empresaId, mid, anio = (short)p.Anio, periodo = p.Codigo, inicio = d.FechaInicio, fin = d.FechaFin, numero, tipo,
+                    resultado = d.Resultado, aIngresar = d.AIngresar, aDevolver = d.ADevolver, aCompensar = d.ACompensar, datos, opciones, usuarioId },
+                tx, cancellationToken: ct));
+        }
+        else if (existente is not null)
+        {
+            numero = existente.NumeroPresentacion;
+            await cn.ExecuteAsync(new CommandDefinition("UPDATE fiscal.declaracion SET tipo_declaracion = @tipo WHERE id = @id",
+                new { tipo, id = existente.Id }, tx, cancellationToken: ct));
             id = existente.Id;
             await cn.ExecuteAsync(new CommandDefinition("""
                 UPDATE fiscal.declaracion SET estado = 'CALCULADA', fecha_inicio = @inicio, fecha_fin = @fin, resultado = @resultado,
@@ -545,14 +594,14 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             tx, cancellationToken: ct));
 
         await tx.CommitAsync(ct);
-        return VistaDe(id, modelo, "CALCULADA", d);
+        return VistaDe(id, modelo, "CALCULADA", d) with { NumeroPresentacion = numero, TipoDeclaracion = tipo };
     }
 
     public async Task<IReadOnlyList<DeclaracionResumenDto>> ListarAsync(long empresaId, int? anio, CancellationToken ct)
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         return (await cn.QueryAsync<DeclaracionResumenDto>(new CommandDefinition("""
-            SELECT d.id, m.codigo AS modelo, m.nombre, d.anio, d.periodo, d.numero_presentacion, d.estado, d.resultado,
+            SELECT d.id, m.codigo AS modelo, m.nombre, d.anio, d.periodo, d.numero_presentacion, d.tipo_declaracion, d.estado, d.resultado,
                    d.a_ingresar, d.a_devolver, d.a_compensar, d.fecha_presentacion, d.justificante,
                    s.id AS asiento_id, s.numero AS asiento_numero
             FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
@@ -564,7 +613,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
 
     private static async Task<DeclaracionFila> CargarAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long declaracionId, bool bloquear, CancellationToken ct)
         => await cn.QuerySingleOrDefaultAsync<DeclaracionFila>(new CommandDefinition($"""
-               SELECT d.id, m.codigo, m.administracion, m.nombre, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.numero_presentacion, d.estado,
+               SELECT d.id, m.codigo, m.administracion, m.nombre, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.numero_presentacion,
+                      d.tipo_declaracion, d.estado,
                       d.resultado, d.a_ingresar, d.a_devolver, d.a_compensar, d.datos::text AS datos, d.opciones::text AS opciones
                FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
                WHERE d.id = @declaracionId AND d.empresa_id = @empresaId {(bloquear ? "FOR UPDATE OF d" : "")}
@@ -591,7 +641,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var p = PeriodoFiscal.Resolver(f.Anio, f.Periodo);
         var (pd, ph) = PlazoPresentacion.Calcular(f.Codigo, p);
         return new DeclaracionVista(f.Id, f.Codigo, f.Nombre, f.Estado, f.Anio, f.Periodo, f.FechaInicio, f.FechaFin, casillas,
-            f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph);
+            f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph, f.NumeroPresentacion, f.TipoDeclaracion);
     }
 
     public async Task<DeclaracionVista> PresentarAsync(long empresaId, long declaracionId, PresentarDeclaracionCmd cmd, CancellationToken ct)
@@ -615,7 +665,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 solicita = doc.RootElement.TryGetProperty("solicitaDevolucion", out var s) && s.ValueKind == JsonValueKind.True;
             }
             var actual = await CalcularInternoAsync(cn, tx, empresaId,
-                new CalcularModeloCmd { Modelo = f.Codigo, Anio = f.Anio, Periodo = f.Periodo, SolicitaDevolucion = solicita }, ct);
+                new CalcularModeloCmd { Modelo = f.Codigo, Anio = f.Anio, Periodo = f.Periodo, SolicitaDevolucion = solicita,
+                                        TipoDeclaracion = f.TipoDeclaracion }, ct);
             if (actual.Resultado != (f.Resultado ?? 0) || actual.AIngresar != (f.AIngresar ?? 0) || actual.ADevolver != (f.ADevolver ?? 0))
                 throw new ReglaContableException("Los datos contables han cambiado desde que se calculó la declaración.",
                     $"Guardada: {f.Resultado:N2}; ahora: {actual.Resultado:N2}. Vuelve a calcularla y revísala.");

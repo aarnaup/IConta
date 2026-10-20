@@ -41,6 +41,8 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         public long? AsientoEjercicioId { get; set; }
         public decimal ResultadoAntes { get; set; }
         public decimal Compensacion { get; set; }
+        public string TipoDeclaracion { get; set; } = "ORDINARIA";
+        public decimal ResultadoAnterior { get; set; }
         public decimal RegularizacionProrrata { get; set; }
         public decimal ProrrataContabilizada { get; set; }
         public decimal RegularizacionBienes { get; set; }
@@ -109,7 +111,12 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
 
     private static async Task<DeclaracionFila> CargarAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long declaracionId, CancellationToken ct)
         => await cn.QuerySingleOrDefaultAsync<DeclaracionFila>(new CommandDefinition($"""
-               SELECT d.id, m.codigo AS modelo, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.estado,
+               SELECT d.id, m.codigo AS modelo, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.estado, d.tipo_declaracion,
+                      COALESCE((SELECT c.importe FROM fiscal.declaracion p JOIN fiscal.declaracion_casilla c ON c.declaracion_id = p.id
+                                AND c.casilla = CASE m.codigo WHEN '420' THEN 'RES' ELSE '64' END
+                                WHERE p.empresa_id = d.empresa_id AND p.modelo_id = d.modelo_id AND p.anio = d.anio AND p.periodo = d.periodo
+                                  AND p.estado = 'PRESENTADA' AND p.numero_presentacion < d.numero_presentacion
+                                ORDER BY p.numero_presentacion DESC LIMIT 1), 0) AS resultado_anterior,
                       d.asiento_id, s.estado AS asiento_estado, s.numero AS asiento_numero, s.ejercicio_id AS asiento_ejercicio_id,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'RES' ELSE '64' END), 0) AS resultado_antes,
@@ -220,6 +227,8 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         // Contraste con la declaración: la regularización de prorrata no está en la contabilidad
         // La de bienes de inversión sí, si se ha contabilizado su asiento (472 contra 6342/6392) dentro del periodo
         var esperado = d.ResultadoAntes + d.RegularizacionProrrata - d.ProrrataContabilizada + d.RegularizacionBienes - d.BienesContabilizado;
+        // Complementaria: la presentación anterior ya se liquidó; en la contabilidad queda solo la diferencia
+        if (d.TipoDeclaracion == "COMPLEMENTARIA") esperado -= d.ResultadoAnterior;
         if (d.RegularizacionBienes != d.BienesContabilizado)
             avisos.Add($"La declaración regulariza {d.RegularizacionBienes:N2} por bienes de inversión y hay contabilizados {d.BienesContabilizado:N2} en el periodo: " +
                        "contabiliza la regularización (Inmovilizado → Bienes de inversión) antes de la liquidación.");
