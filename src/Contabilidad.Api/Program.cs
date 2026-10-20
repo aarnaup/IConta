@@ -154,6 +154,7 @@ try
     app.MapRemesas();
     app.MapBienesInversion();
     app.MapCriterioCaja();
+    app.MapAnalitica();
 
     app.Run();
 }

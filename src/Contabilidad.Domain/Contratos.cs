@@ -54,6 +54,8 @@ public sealed class ApunteCmd
     public decimal Debe { get; set; }
     public decimal Haber { get; set; }
     public string? Concepto { get; set; }
+    /// <summary>Reparto analítico del apunte; si no se indica, se aplica el reparto por defecto de la cuenta.</summary>
+    public List<ImputacionCmd>? Analitica { get; set; }
 }
 
 public sealed class CrearAsientoCmd

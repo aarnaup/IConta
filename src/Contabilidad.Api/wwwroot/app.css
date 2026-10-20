@@ -109,3 +109,10 @@
   .grid2{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px}
   @media (max-width:980px){ .grid2{grid-template-columns:1fr} }
   tr.elegida td{background:color-mix(in srgb, var(--accent) 12%, transparent)}
+
+  /* Presupuestos: rejilla de meses */
+  table.presupuesto td input{min-width:84px}
+  table.presupuesto td.cta input{min-width:90px}
+  table.presupuesto td input[data-f=total]{min-width:110px}
+  table.presupuesto tfoot td{font-weight:650}
+  .desf{color:var(--bad)} .fav{color:var(--good)}

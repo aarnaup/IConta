@@ -140,6 +140,8 @@ function permitido(req) {
   if (req === 'FISCAL_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.FISCAL] >= ORDEN.ESCRITURA;
   if (req === 'INMOVILIZADO_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.INMOVILIZADO] >= ORDEN.ESCRITURA;
   if (req === 'BALANCES') return ['BALANCES', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
+  if (req === 'ANALITICA') return ['ANALITICA', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
+  if (req === 'PRESUPUESTOS') return ['PRESUPUESTOS', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
   if (req === 'CONTABILIDAD_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.CONTABILIDAD] >= ORDEN.ESCRITURA;
   if (req === 'REVISOR')
     return S.acceso.puedeContabilizarDirecto && ['CONTABILIDAD', 'FACTURACION'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.ESCRITURA);
@@ -170,8 +172,10 @@ async function entrarEmpresa(empresa, ejercicio) {
   $('#dl-cuentas').innerHTML = S.cuentas.map(c => `<option value="${esc(c.codigo)}">${esc(c.nombre)}</option>`).join('');
   $('#diario').innerHTML = S.diarios.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
   $('#mayorCanal').innerHTML = '<option value="">Todos los canales</option>' + baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  await cargaDimensiones().catch(() => { ANA.dims = []; });
   S.lineas = [nuevaLinea(), nuevaLinea()];
   fst.lineas = [];
+  PR.actual = null; $('#ppPanel').hidden = true; ANA.informe = null; $('#anBody').innerHTML = ''; $('#anDesde').value = ''; $('#anCanal').innerHTML = '';
   MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
   $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
@@ -194,15 +198,16 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
   const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
-                  inmovilizado: cargaInmovilizado, balances: cargaBalances, cierre: cargaCierre }[nombre];
+                  inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
+                  cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
 }
 $('#navApp').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTab(b.dataset.tab); });
 
 // ------------------------------------------------------------ nuevo asiento
-const nuevaLinea = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', canalId: null, debe: '', haber: '' });
+const nuevaLinea = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', canalId: null, debe: '', haber: '', analitica: '' });
 const canalOpts = sel => S.canales.map(c => `<option value="${c.id}" ${String(sel) === String(c.id) ? 'selected' : ''}>${esc(c.codigo)}</option>`).join('');
 
 function pintaLineas() {
@@ -213,6 +218,7 @@ function pintaLineas() {
       <td><input data-f="cuenta" list="dl-cuentas" value="${esc(l.cuenta)}" aria-label="Cuenta apunte ${i + 1}"></td>
       <td class="nombre">${esc(l.nombre) || '<span style="opacity:.6">—</span>'}</td>
       <td><select data-f="canalId" aria-label="Canal apunte ${i + 1}">${canalOpts(l.canalId)}</select></td>
+      ${$('#thAnalitica').hidden ? '' : `<td><input data-f="analitica" value="${esc(l.analitica)}" placeholder="por defecto" aria-label="Analítica apunte ${i + 1}"></td>`}
       <td><input data-f="debe" class="num" inputmode="decimal" value="${esc(l.debe)}" aria-label="Debe apunte ${i + 1}"></td>
       <td><input data-f="haber" class="num" inputmode="decimal" value="${esc(l.haber)}" aria-label="Haber apunte ${i + 1}"></td>
       <td><button class="x" type="button" data-del="${i}" aria-label="Quitar apunte ${i + 1}">×</button></td>
@@ -270,8 +276,12 @@ async function guardarAsiento(borrador) {
   const lineas = S.lineas.filter(l => l.cuentaId && (num(l.debe) || num(l.haber)));
   if (S.lineas.some(l => (l.cuenta.trim() || num(l.debe) || num(l.haber)) && !l.cuentaId))
     return msg($('#msg'), 'Hay una cuenta que no existe en el plan de la empresa. Elige una de la lista.', 'err');
-  const cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
-    apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto || null })) };
+  let cmd;
+  try {
+    cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
+      apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto || null,
+                                  analitica: parseAnalitica(l.analitica) })) };
+  } catch (e) { return msg($('#msg'), e.message, 'err'); }
   try {
     const r = await post(urlX('/asientos'), cmd);
     msg($('#msg'), r.estado === 'CONTABILIZADO' ? `Asiento ${r.numero} contabilizado.`
@@ -1563,6 +1573,342 @@ $('#baBody').addEventListener('click', e => {
   const abierta = tr.classList.toggle('abierta');
   $$(`#baBody tr[data-de="${CSS.escape(tr.dataset.abre)}"]`).forEach(d => d.hidden = !abierta);
 });
+
+// ------------------------------------------------------------ analítica
+const ANA = { dims: [], informe: null, sin: [] };
+const elemsAna = () => ANA.dims.flatMap(d => d.elementos.map(e => ({ ...e, dim: d.codigo })));
+
+async function cargaDimensiones() {
+  ANA.dims = permitido('ANALITICA') || permitido('PRESUPUESTOS') ? await api(urlE('/analitica/dimensiones')) : [];
+  const hay = elemsAna().length > 0;
+  $('#thAnalitica').hidden = !hay; $('#ayudaAnalitica').hidden = !hay;
+  $('#pieLineas').colSpan = hay ? 4 : 3;
+}
+
+// «T1», «T1:60 T2:40», «CC/T1:50»: sin porcentaje, lo que falte hasta 100 en su dimensión a partes iguales
+function parseAnalitica(texto) {
+  const t = String(texto || '').trim();
+  if (!t) return null;
+  const els = elemsAna().filter(e => e.activo), filas = [];
+  for (const tok of t.split(/[\s,;]+/).filter(Boolean)) {
+    const [ref, pct] = tok.split(':');
+    const [a, b] = ref.toUpperCase().split('/');
+    const c = b ? els.filter(e => e.dim === a && e.codigo === b) : els.filter(e => e.codigo === a);
+    if (!c.length) throw new Error(`El elemento analítico «${ref}» no existe o está de baja.`);
+    if (c.length > 1) throw new Error(`«${ref}» está en varias dimensiones: escribe DIMENSIÓN/${a}.`);
+    filas.push({ elementoId: c[0].id, dim: c[0].dimensionId, porcentaje: pct === undefined ? null : num(pct) });
+  }
+  for (const dim of new Set(filas.map(f => f.dim))) {
+    const g = filas.filter(f => f.dim === dim), sin = g.filter(f => f.porcentaje === null);
+    if (!sin.length) continue;
+    const resto = 100 - g.reduce((s, f) => s + (f.porcentaje || 0), 0);
+    const cuota = Math.round(resto / sin.length * 10000) / 10000;
+    sin.forEach((f, i) => f.porcentaje = i === sin.length - 1 ? Math.round((resto - cuota * (sin.length - 1)) * 10000) / 10000 : cuota);
+  }
+  return filas.map(f => ({ elementoId: f.elementoId, porcentaje: f.porcentaje }));
+}
+function textoAnalitica(imps) {
+  const els = elemsAna();
+  return (imps || []).map(i => {
+    const repetido = els.filter(e => e.codigo === i.elemento).length > 1;
+    return (repetido ? i.dimension + '/' : '') + i.elemento + (+i.porcentaje === 100 ? '' : ':' + String(+i.porcentaje).replace('.', ','));
+  }).join(' ');
+}
+
+async function cargaAnalitica() {
+  await cargaDimensiones();
+  const dims = ANA.dims.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
+  const sel = $('#anDim').value;
+  $('#anDim').innerHTML = dims || '<option value="">(no hay dimensiones)</option>';
+  if (sel && ANA.dims.some(d => String(d.id) === sel)) $('#anDim').value = sel;
+  $('#anNeDim').innerHTML = dims;
+  if (!$('#anCanal').options.length) $('#anCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  if (!$('#anDesde').value) { $('#anDesde').value = S.ejercicio.fechaInicio; $('#anHasta').value = S.ejercicio.fechaFin; }
+  pintaPadres(); pintaDimensiones();
+  await cargaRepartos();
+  if (ANA.dims.length) await verInforme();
+}
+
+function pintaPadres() {
+  const d = ANA.dims.find(x => String(x.id) === $('#anNeDim').value);
+  $('#anNePadre').innerHTML = '<option value="">(ninguno)</option>' +
+    (d ? d.elementos.map(e => `<option value="${e.id}">${esc(e.codigo)} · ${esc(e.nombre)}</option>`).join('') : '');
+}
+$('#anNeDim').onchange = pintaPadres;
+
+function pintaDimensiones() {
+  const escribe = permitido('ANALITICA:ESCRITURA');
+  if (!ANA.dims.length) { $('#anDims').innerHTML = '<tr><td colspan="4" class="vacio">Todavía no hay dimensiones.</td></tr>'; return; }
+  const filas = [];
+  for (const d of ANA.dims) {
+    filas.push(`<tr class="asiento-cab"><td>${esc(d.codigo)}</td><td>${esc(d.nombre)}</td><td></td>
+      <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-dimdel="${d.id}" type="button">Borrar</button></div>` : ''}</td></tr>`);
+    const hijos = p => d.elementos.filter(e => (e.padreId || null) === p);
+    const recorre = (p, n) => hijos(p).forEach(e => {
+      filas.push(`<tr><td style="padding-left:${12 + n * 18}px">${esc(e.codigo)}</td><td>${esc(e.nombre)}</td>
+        <td>${e.activo ? 'Activo' : '<span class="estado-cerrado">De baja</span>'}</td>
+        <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-elact="${e.id}" type="button">${e.activo ? 'Dar de baja' : 'Reactivar'}</button>
+          <button class="btn" data-eldel="${e.id}" type="button">Borrar</button></div>` : ''}</td></tr>`);
+      recorre(e.id, n + 1);
+    });
+    recorre(null, 0);
+  }
+  $('#anDims').innerHTML = filas.join('');
+}
+
+$('#anDims').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.dimdel) {
+      if (!confirm('¿Borrar la dimensión y sus elementos?')) return;
+      await api(urlE('/analitica/dimensiones/' + b.dataset.dimdel), { method: 'DELETE' });
+    } else if (b.dataset.eldel) {
+      await api(urlE('/analitica/elementos/' + b.dataset.eldel), { method: 'DELETE' });
+    } else if (b.dataset.elact) {
+      const el = elemsAna().find(x => String(x.id) === b.dataset.elact);
+      await put(urlE('/analitica/elementos/' + el.id), { codigo: el.codigo, nombre: el.nombre, padreId: el.padreId, activo: !el.activo });
+    } else return;
+    msg($('#anDimMsg'), 'Hecho.', 'ayuda ok-texto');
+    await cargaAnalitica();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#anNdCrear').onclick = async () => {
+  try {
+    await post(urlE('/analitica/dimensiones'), { codigo: $('#anNdCodigo').value, nombre: $('#anNdNombre').value });
+    $('#anNdCodigo').value = $('#anNdNombre').value = '';
+    msg($('#anDimMsg'), 'Dimensión creada.', 'ayuda ok-texto'); await cargaAnalitica();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+};
+$('#anNeCrear').onclick = async () => {
+  try {
+    const dim = $('#anNeDim').value;
+    await post(urlE(`/analitica/dimensiones/${dim}/elementos`),
+      { codigo: $('#anNeCodigo').value, nombre: $('#anNeNombre').value, padreId: $('#anNePadre').value ? +$('#anNePadre').value : null });
+    $('#anNeCodigo').value = $('#anNeNombre').value = '';
+    msg($('#anDimMsg'), 'Elemento creado.', 'ayuda ok-texto'); await cargaAnalitica(); $('#anNeDim').value = dim; pintaPadres();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function cargaRepartos() {
+  const rs = await api(urlE('/analitica/repartos'));
+  const escribe = permitido('ANALITICA:ESCRITURA');
+  $('#anRepartos').innerHTML = rs.length ? rs.map(r => `<tr><td>${esc(r.cuenta)}</td><td class="nombre">${esc(r.cuentaNombre)}</td>
+    <td>${r.requiereAnalitica ? 'Sí' : ''}</td><td>${esc(textoAnalitica(r.reparto)) || '—'}</td>
+    <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-rpedit="${esc(r.cuenta)}" type="button">Editar</button>
+      <button class="btn" data-rpdel="${esc(r.cuenta)}" type="button">Quitar</button></div>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="vacio">Ninguna cuenta tiene reparto por defecto.</td></tr>';
+  ANA.repartos = rs;
+}
+$('#anRepartos').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.rpedit) {
+    const r = ANA.repartos.find(x => x.cuenta === b.dataset.rpedit);
+    $('#anRpCuenta').value = r.cuenta; $('#anRpReparto').value = textoAnalitica(r.reparto); $('#anRpExige').value = String(r.requiereAnalitica);
+    $('#anRpCuenta').focus();
+  } else if (b.dataset.rpdel) {
+    try { await put(urlE('/analitica/repartos'), { cuenta: b.dataset.rpdel, requiereAnalitica: false, reparto: [] }); await cargaRepartos(); }
+    catch (err) { msg($('#anRpMsg'), err.message, 'ayuda err-texto'); }
+  }
+});
+$('#anRpGuardar').onclick = async () => {
+  try {
+    await put(urlE('/analitica/repartos'), { cuenta: $('#anRpCuenta').value.trim(), requiereAnalitica: $('#anRpExige').value === 'true',
+      reparto: parseAnalitica($('#anRpReparto').value) || [] });
+    msg($('#anRpMsg'), 'Reparto guardado.', 'ayuda ok-texto');
+    $('#anRpCuenta').value = $('#anRpReparto').value = ''; $('#anRpExige').value = 'false';
+    await cargaRepartos();
+  } catch (err) { msg($('#anRpMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function verInforme() {
+  if (!$('#anDim').value) return;
+  try {
+    const q = new URLSearchParams({ dimensionId: $('#anDim').value, canalId: $('#anCanal').value, desde: $('#anDesde').value,
+      hasta: $('#anHasta').value, detalle: $('#anDetalle').value });
+    const r = ANA.informe = await api(urlX('/analitica/informe?' + q));
+    $('#anSub').textContent = `${r.dimension} · canal ${r.canal} · del ${fechaES(r.desde)} al ${fechaES(r.hasta)}`;
+    $('#anAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    const fila = (f, cls) => `<tr class="${cls}"><td style="padding-left:${6 + f.nivel * 18}px">${esc(f.codigo)} ${esc(f.nombre)}</td>
+      <td class="num">${fmt(f.ingresos)}</td><td class="num">${fmt(f.gastos)}</td><td class="num">${fmt(f.resultado)}</td><td class="num">${f.otros ? fmt(f.otros) : ''}</td></tr>`;
+    $('#anBody').innerHTML = r.filas.map(f => fila(f, f.esCuenta ? 'detalle' : 'partida')).join('')
+      + fila(r.sinAsignar, 'partida') + fila(r.total, 'total');
+    msg($('#anMsg'), '', 'ayuda');
+  } catch (err) { msg($('#anMsg'), err.message, 'ayuda err-texto'); }
+}
+$('#anVer').onclick = verInforme;
+$('#anImprimir').onclick = () => window.print();
+
+$('#anSinVer').onclick = async () => {
+  msg($('#anSinMsg'), '', 'ayuda');
+  await buscaSinImputar();
+};
+async function buscaSinImputar() {
+  try {
+    const q = new URLSearchParams({ dimensionId: $('#anDim').value, desde: $('#anDesde').value, hasta: $('#anHasta').value });
+    ANA.sin = await api(urlX('/analitica/sin-imputar?' + q));
+    const escribe = permitido('ANALITICA:ESCRITURA') || permitido('CONTABILIDAD:ESCRITURA');
+    $('#anSinBody').innerHTML = ANA.sin.length ? ANA.sin.map(a => `<tr data-ap="${a.apunteId}"><td>${fechaES(a.fecha)}</td><td>${a.numero}</td>
+      <td>${esc(a.cuenta)}</td><td class="nombre">${esc(a.concepto)}</td><td class="num">${fmt(a.debe || -a.haber)}</td>
+      <td>${esc(textoAnalitica(a.imputaciones)) || '—'}</td>
+      <td>${escribe ? `<input data-rep value="${esc(textoAnalitica(a.imputaciones))}" aria-label="Nuevo reparto">` : ''}</td>
+      <td>${escribe ? '<button class="btn" data-imputa type="button">Guardar</button>' : ''}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="vacio">Todo está imputado en esta dimensión.</td></tr>';
+    if (ANA.sin.length === 500) msg($('#anSinMsg'), 'Se muestran los 500 primeros.', 'ayuda');
+  } catch (err) { msg($('#anSinMsg'), err.message, 'ayuda err-texto'); }
+}
+$('#anSinBody').addEventListener('click', async e => {
+  if (!e.target.matches('[data-imputa]')) return;
+  const tr = e.target.closest('tr');
+  try {
+    await put(urlE('/analitica/apuntes/' + tr.dataset.ap), parseAnalitica(tr.querySelector('[data-rep]').value) || []);
+    msg($('#anSinMsg'), 'Analítica del apunte guardada.', 'ayuda ok-texto');
+    await buscaSinImputar(); verInforme();
+  } catch (err) { msg($('#anSinMsg'), err.message, 'ayuda err-texto'); }
+});
+
+// ------------------------------------------------------------ presupuestos
+const PR = { lista: [], actual: null };
+
+async function cargaPresupuestos() {
+  await cargaDimensiones();
+  $('#ppNCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  $('#ppGEj').innerHTML = (S.listaEjercicios || []).filter(x => x.id !== S.ejercicio.id)
+    .map(x => `<option value="${x.id}">${esc(x.codigo)}</option>`).join('');
+  $('#ppGDim').innerHTML = '<option value="">(sin analítica)</option>' + ANA.dims.map(d => `<option value="${d.id}">${esc(d.codigo)}</option>`).join('');
+  PR.lista = await api(urlX('/presupuestos'));
+  $('#ppLista').innerHTML = PR.lista.length ? PR.lista.map(p => `<tr><td>${esc(p.codigo)}</td><td>${p.version}</td><td>${esc(p.nombre)}</td>
+    <td>${esc(p.canal || '')}</td><td>${esc(p.estado)}</td><td class="num">${fmt(p.ingresos)}</td><td class="num">${fmt(p.gastos)}</td>
+    <td class="num">${fmt(p.ingresos - p.gastos)}</td><td><button class="btn" data-pr="${p.id}" type="button">Abrir</button></td></tr>`).join('')
+    : '<tr><td colspan="9" class="vacio">No hay presupuestos en este ejercicio.</td></tr>';
+  if (PR.actual && !PR.lista.some(p => p.id === PR.actual.id)) { PR.actual = null; $('#ppPanel').hidden = true; }
+}
+$('#ppLista').addEventListener('click', e => { const b = e.target.closest('[data-pr]'); if (b) abrePresupuesto(+b.dataset.pr).catch(err => alert(err.message)); });
+
+$('#ppNCrear').onclick = async () => {
+  try {
+    const r = await post(urlX('/presupuestos'), { codigo: $('#ppNCodigo').value, nombre: $('#ppNNombre').value, canalId: +$('#ppNCanal').value });
+    $('#ppNCodigo').value = $('#ppNNombre').value = '';
+    msg($('#ppMsg'), 'Presupuesto creado.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await abrePresupuesto(r.id);
+  } catch (err) { msg($('#ppMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function abrePresupuesto(id) {
+  pintaPresupuesto(await api(urlE('/presupuestos/' + id)));
+  $('#ppComp').innerHTML = ''; $('#ppTotales').innerHTML = ''; $('#ppAvisos').innerHTML = '';
+  msg($('#ppMsg2'), '', 'ayuda');
+  await comparaPresupuesto();
+}
+
+function pintaPresupuesto(p) {
+  PR.actual = p;
+  const borrador = p.estado === 'BORRADOR', escribe = permitido('PRESUPUESTOS:ESCRITURA') && borrador;
+  $('#ppPanel').hidden = false;
+  $('#ppTitulo').textContent = `${p.codigo} v${p.version} · ${p.nombre} · canal ${p.canal || ''} · ${p.estado.toLowerCase()}`;
+  $('#ppGuardar').hidden = $('#ppAnadir').hidden = $('#ppEliminar').hidden = $('#ppAprobar').hidden = !borrador;
+  $('#ppABorrador').hidden = $('#ppCerrar').hidden = p.estado !== 'APROBADO';
+  $('#ppHead').innerHTML = `<tr><th>Cuenta</th><th>Elemento</th>${p.periodos.map(x => `<th class="num">${esc(x)}</th>`).join('')}<th class="num">Total</th><th></th></tr>`;
+  $('#ppHasta').innerHTML = p.periodos.map((x, i) => `<option value="${i + 1}" ${i === p.periodos.length - 1 ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  PR.filas = p.lineas.map(l => ({ cuenta: l.cuentaPatron, nombre: l.cuentaNombre, elemento: l.elemento ? l.elemento.split('/')[1] : '',
+    elementoTxt: l.elemento || '', importes: l.importes.map(String) }));
+  pintaFilasPresupuesto(escribe);
+}
+
+function pintaFilasPresupuesto(escribe = PR.actual.estado === 'BORRADOR' && permitido('PRESUPUESTOS:ESCRITURA')) {
+  const n = PR.actual.periodos.length;
+  const ro = escribe ? '' : 'readonly';
+  $('#ppLineas').innerHTML = PR.filas.map((f, i) => `<tr data-i="${i}">
+    <td class="cta"><input data-f="cuenta" value="${esc(f.cuenta)}" ${ro} aria-label="Cuenta" title="${esc(f.nombre || '')}"></td>
+    <td class="cta"><input data-f="elemento" value="${esc(f.elementoTxt)}" ${ro} aria-label="Elemento"></td>
+    ${f.importes.map((x, j) => `<td><input class="num" data-m="${j}" inputmode="decimal" value="${num(x) ? fmt(num(x)) : ''}" ${ro} aria-label="Mes ${j + 1}"></td>`).join('')}
+    <td><input class="num" data-f="total" inputmode="decimal" value="${fmt(f.importes.reduce((s, x) => s + num(x), 0))}" ${ro} aria-label="Total"></td>
+    <td>${escribe ? `<button class="x" type="button" data-del="${i}" aria-label="Quitar línea">×</button>` : ''}</td></tr>`).join('')
+    || `<tr><td colspan="${n + 4}" class="vacio">Sin líneas.</td></tr>`;
+  pintaPiePresupuesto();
+}
+function pintaPiePresupuesto() {
+  const n = PR.actual.periodos.length, tot = Array(n).fill(0);
+  const signo = c => c.startsWith('7') ? 1 : c.startsWith('6') ? -1 : 0;
+  PR.filas.forEach(f => f.importes.forEach((x, j) => tot[j] += signo(f.cuenta) * num(x)));
+  $('#ppPie').innerHTML = `<tr><td colspan="2">Resultado (7 − 6)</td>${tot.map(x => `<td class="num">${fmt(x)}</td>`).join('')}
+    <td class="num">${fmt(tot.reduce((s, x) => s + x, 0))}</td><td></td></tr>`;
+}
+const repartoLineal = (total, n) => {
+  const c = Math.round(total / n * 100) / 100, r = Array(n).fill(c);
+  r[n - 1] = Math.round((total - c * (n - 1)) * 100) / 100; return r.map(String);
+};
+$('#ppLineas').addEventListener('change', e => {
+  const tr = e.target.closest('tr'); if (!tr || !PR.filas[+tr.dataset.i]) return;
+  const f = PR.filas[+tr.dataset.i];
+  if (e.target.dataset.m !== undefined) { f.importes[+e.target.dataset.m] = String(num(e.target.value)); pintaFilasPresupuesto(); }
+  else if (e.target.dataset.f === 'total') { f.importes = repartoLineal(num(e.target.value), PR.actual.periodos.length); pintaFilasPresupuesto(); }
+  else if (e.target.dataset.f === 'cuenta') { f.cuenta = e.target.value.trim(); pintaPiePresupuesto(); }
+  else if (e.target.dataset.f === 'elemento') f.elementoTxt = e.target.value.trim();
+});
+$('#ppLineas').addEventListener('click', e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  PR.filas.splice(+d, 1); pintaFilasPresupuesto();
+});
+$('#ppAnadir').onclick = () => {
+  PR.filas.push({ cuenta: '', elementoTxt: '', importes: Array(PR.actual.periodos.length).fill('0') });
+  pintaFilasPresupuesto();
+  $$('#ppLineas tr').at(-1).querySelector('input').focus();
+};
+$('#ppGuardar').onclick = async () => {
+  try {
+    const lineas = PR.filas.filter(f => f.cuenta).map(f => {
+      const a = parseAnalitica(f.elementoTxt);
+      if (a && a.length > 1) throw new Error(`La línea ${f.cuenta} lleva más de un elemento: crea una línea por elemento.`);
+      return { cuentaPatron: f.cuenta, elementoId: a ? a[0].elementoId : null, importes: f.importes.map(num) };
+    });
+    pintaPresupuesto(await put(urlE(`/presupuestos/${PR.actual.id}/lineas`), { lineas }));
+    msg($('#ppMsg2'), 'Líneas guardadas.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await comparaPresupuesto();
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+$('#ppGenerar').onclick = async () => {
+  if (PR.filas.length && !confirm('Se sustituyen las líneas actuales. ¿Seguir?')) return;
+  try {
+    pintaPresupuesto(await post(urlE(`/presupuestos/${PR.actual.id}/desde-real`), { ejercicioOrigenId: +$('#ppGEj').value,
+      incrementoPorcentaje: num($('#ppGInc').value), digitos: +$('#ppGDig').value, dimensionId: $('#ppGDim').value ? +$('#ppGDim').value : null }));
+    msg($('#ppMsg2'), 'Líneas generadas: revísalas y guarda si cambias algo.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await comparaPresupuesto();
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+async function estadoPresupuesto(estado) {
+  try {
+    await post(urlE(`/presupuestos/${PR.actual.id}/estado`), { estado });
+    await cargaPresupuestos(); await abrePresupuesto(PR.actual.id);
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+}
+$('#ppAprobar').onclick = () => estadoPresupuesto('APROBADO');
+$('#ppABorrador').onclick = () => estadoPresupuesto('BORRADOR');
+$('#ppCerrar').onclick = () => estadoPresupuesto('CERRADO');
+$('#ppVersion').onclick = async () => {
+  try { const r = await post(urlE(`/presupuestos/${PR.actual.id}/nueva-version`)); await cargaPresupuestos(); await abrePresupuesto(r.id); }
+  catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+$('#ppEliminar').onclick = async () => {
+  if (!confirm('¿Eliminar este presupuesto?')) return;
+  try { await api(urlE('/presupuestos/' + PR.actual.id), { method: 'DELETE' }); PR.actual = null; $('#ppPanel').hidden = true; await cargaPresupuestos(); }
+  catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+
+async function comparaPresupuesto() {
+  if (!PR.actual) return;
+  const c = await api(urlE(`/presupuestos/${PR.actual.id}/comparativa?hastaPeriodo=${$('#ppHasta').value || ''}`));
+  const caja = (t, v) => `<div><span>${t}</span><strong>${fmt(v)}</strong></div>`;
+  $('#ppTotales').innerHTML = caja('Ingresos presupuestados', c.ingresosPresupuesto) + caja('Ingresos reales', c.ingresosReal)
+    + caja('Gastos presupuestados', c.gastosPresupuesto) + caja('Gastos reales', c.gastosReal)
+    + caja('Resultado presupuestado', c.resultadoPresupuesto) + caja('Resultado real', c.resultadoReal);
+  $('#ppAvisos').innerHTML = c.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#ppComp').innerHTML = c.filas.map(f => `<tr><td>${esc(f.cuentaPatron)}</td><td class="nombre">${esc(f.cuentaNombre || '')}</td><td>${esc(f.elemento || '')}</td>
+    <td class="num">${fmt(f.presupuesto)}</td><td class="num">${fmt(f.real)}</td>
+    <td class="num ${f.desviacion ? (f.favorable ? 'fav' : 'desf') : ''}">${fmt(f.desviacion)}</td>
+    <td class="num">${f.ejecucion === null ? '—' : fmt(f.ejecucion) + ' %'}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">Sin líneas.</td></tr>';
+}
+$('#ppComparar').onclick = () => comparaPresupuesto().catch(err => msg($('#ppMsg2'), err.message, 'ayuda err-texto'));
 
 // ------------------------------------------------------------ cierre del ejercicio
 async function cargaCierre() {

@@ -130,6 +130,7 @@ public sealed class AsientoRepositorio(
 
         // 5) Apuntes + reparto materializado por canal base
         short linea = 0;
+        var apunteIds = new long[cmd.Apuntes.Count];
         for (var i = 0; i < cmd.Apuntes.Count; i++)
         {
             var a = cmd.Apuntes[i];
@@ -143,6 +144,7 @@ public sealed class AsientoRepositorio(
                 empresaId, asientoId, linea, cuentaId = a.CuentaId, terceroId = a.TerceroId, actividadId = a.ActividadId,
                 canalId = a.CanalId, debe = a.Debe, haber = a.Haber, concepto = a.Concepto
             }, tx, cancellationToken: ct));
+            apunteIds[i] = apunteId;
 
             await cn.ExecuteAsync(new CommandDefinition("""
                 INSERT INTO conta.apunte_canal (apunte_id, canal_base_id, canal_version_id, debe, haber)
@@ -153,7 +155,13 @@ public sealed class AsientoRepositorio(
             }), tx, cancellationToken: ct));
         }
 
-        // 6) Un asiento contabilizado debe cuadrar en CADA canal base
+        // 6) Analítica: la indicada en cada apunte o el reparto por defecto de la cuenta (no en los asientos de fin de ejercicio)
+        if (tipoPeriodo == "NORMAL" && origen is not ("APERTURA" or "REGULARIZACION" or "CIERRE"))
+            await ImputadorAnalitico.ImputarAsync(cn, tx, empresaId,
+                cmd.Apuntes.Select((a, i) => new ApunteAImputar(apunteIds[i], a.CuentaId, a.Debe, a.Haber, a.Analitica)).ToList(),
+                exigir: origen is "MANUAL" or "PLANTILLA", ct);
+
+        // 7) Un asiento contabilizado debe cuadrar en CADA canal base
         if (!cmd.Borrador) await ValidarCuadreAsync(cn, tx, asientoId, ct);
 
         return new AsientoCreado(asientoId, numero, estado);

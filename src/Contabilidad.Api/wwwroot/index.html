@@ -164,6 +164,8 @@
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
     <button data-tab="inmovilizado" data-req="INMOVILIZADO:LECTURA" aria-pressed="false">Inmovilizado</button>
     <button data-tab="balances" data-req="BALANCES" aria-pressed="false">Balances</button>
+    <button data-tab="analitica" data-req="ANALITICA" aria-pressed="false">Analítica</button>
+    <button data-tab="presupuestos" data-req="PRESUPUESTOS" aria-pressed="false">Presupuestos</button>
     <button data-tab="cierre" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Cierre</button>
   </nav>
 
@@ -179,11 +181,12 @@
         <table>
           <thead><tr>
             <th style="width:130px">Cuenta</th><th>Descripción</th><th style="width:90px">Canal</th>
+            <th id="thAnalitica" style="width:150px" hidden>Analítica</th>
             <th class="num" style="width:110px">Debe</th><th class="num" style="width:110px">Haber</th><th style="width:28px"></th>
           </tr></thead>
           <tbody id="lineas"></tbody>
           <tfoot><tr>
-            <td colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
+            <td id="pieLineas" colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
             <td class="num" id="totDebe" style="border:0;font-weight:600">0,00</td>
             <td class="num" id="totHaber" style="border:0;font-weight:600">0,00</td><td style="border:0"></td>
           </tr></tfoot>
@@ -194,7 +197,8 @@
           <button class="btn" id="borrador" data-guarda type="button">Guardar borrador</button>
           <span id="msg" role="status" aria-live="polite"></span>
         </div>
-        <p class="ayuda">Importes con coma decimal (1234,56). Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
+        <p class="ayuda">Importes con coma decimal (1234,56). <span id="ayudaAnalitica" hidden>Analítica: código del elemento (T1) o reparto
+          (T1:60 T2:40; DIM/T1 si el código se repite en otra dimensión); en blanco se aplica el reparto por defecto de la cuenta.</span> Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
       </div>
       <aside class="panel" aria-label="Reparto por canal">
         <h2>Reparto por canal</h2>
@@ -823,6 +827,136 @@
       <div id="baTabla"><table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table></div>
       <div id="baExtra"></div>
       <p class="ayuda solo-pantalla" id="baPista"></p>
+    </div>
+  </section>
+
+  <section id="tab-analitica" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Informe analítico</h2>
+        <div class="cab2 solo-pantalla">
+          <label>Dimensión <select id="anDim"></select></label>
+          <label>Canal <select id="anCanal"></select></label>
+          <label>Desde <input type="date" id="anDesde"></label>
+          <label>Hasta <input type="date" id="anHasta"></label>
+          <label>Detalle <select id="anDetalle"><option value="false">Solo elementos</option><option value="true">Con las cuentas</option></select></label>
+        </div>
+        <div class="fila-acciones solo-pantalla">
+          <button class="btn primario" id="anVer" type="button">Ver</button>
+          <button class="btn" id="anImprimir" type="button">Imprimir</button>
+        </div>
+        <p id="anMsg" class="ayuda" role="status"></p>
+        <p id="anSub" class="ayuda"></p>
+        <ul id="anAvisos" class="avisos"></ul>
+        <table class="balance"><thead><tr><th>Elemento</th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Resultado</th>
+          <th class="num">Otros</th></tr></thead><tbody id="anBody"></tbody></table>
+        <p class="ayuda">Los padres suman a sus hijos. «Sin asignar» es lo que falta por imputar de los grupos 6 y 7, así que el total es el resultado
+          antes de regularizar. «Otros»: lo imputado a cuentas de otros grupos (debe − haber).</p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Apuntes sin imputar</h2>
+        <p class="ayuda">Gastos e ingresos del periodo sin repartir del todo en la dimensión del informe. El reparto nuevo sustituye la analítica del
+          apunte en todas las dimensiones (T1, o T1:60 T2:40 P1); no cambia el asiento.</p>
+        <div class="fila-acciones"><button class="btn" id="anSinVer" type="button">Buscar</button></div>
+        <table><thead><tr><th>Fecha</th><th>Asiento</th><th>Cuenta</th><th>Concepto</th><th class="num">Importe</th><th>Analítica</th>
+          <th style="width:180px">Nuevo reparto</th><th></th></tr></thead><tbody id="anSinBody"></tbody></table>
+        <p id="anSinMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Dimensiones y elementos</h2>
+        <p class="ayuda">Cada dimensión es un reparto independiente (centros de coste, proyectos, departamentos…): un gasto puede ir a la vez a un
+          centro y a un proyecto. Los elementos pueden colgar de otro para agruparlos en el informe.</p>
+        <table><thead><tr><th>Código</th><th>Nombre</th><th>Estado</th><th></th></tr></thead><tbody id="anDims"></tbody></table>
+        <details class="nuevo" data-req="ANALITICA:ESCRITURA"><summary>Nueva dimensión</summary>
+          <div class="cab2">
+            <label>Código <input id="anNdCodigo" maxlength="10" placeholder="CC"></label>
+            <label>Nombre <input id="anNdNombre" maxlength="100" placeholder="Centros de coste"></label>
+            <label>&nbsp;<button class="btn primario" id="anNdCrear" type="button">Crear dimensión</button></label>
+          </div>
+        </details>
+        <details class="nuevo" data-req="ANALITICA:ESCRITURA"><summary>Nuevo elemento</summary>
+          <div class="cab2">
+            <label>Dimensión <select id="anNeDim"></select></label>
+            <label>Código <input id="anNeCodigo" maxlength="20" placeholder="T1"></label>
+            <label>Nombre <input id="anNeNombre" maxlength="150" placeholder="Tienda centro"></label>
+            <label>Cuelga de <select id="anNePadre"></select></label>
+            <label>&nbsp;<button class="btn primario" id="anNeCrear" type="button">Crear elemento</button></label>
+          </div>
+        </details>
+        <p id="anDimMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Reparto por defecto de las cuentas</h2>
+        <p class="ayuda">Se aplica a los apuntes sin analítica, también a los automáticos (facturas, amortizaciones…). Vale el de la cuenta más concreta
+          en cada dimensión: el de la 621 manda sobre el de la 62. «Exige analítica»: los asientos tecleados no se graban sin reparto.</p>
+        <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Exige</th><th>Reparto</th><th></th></tr></thead><tbody id="anRepartos"></tbody></table>
+        <div class="cab2" data-req="ANALITICA:ESCRITURA">
+          <label>Cuenta <input id="anRpCuenta" list="dl-cuentas" placeholder="62"></label>
+          <label>Reparto <input id="anRpReparto" placeholder="T1:50 T2:50"></label>
+          <label>Exige analítica <select id="anRpExige"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <label>&nbsp;<button class="btn primario" id="anRpGuardar" type="button">Guardar reparto</button></label>
+        </div>
+        <p id="anRpMsg" class="ayuda" role="status"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-presupuestos" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Presupuestos del ejercicio</h2>
+        <table><thead><tr><th>Código</th><th>Versión</th><th>Nombre</th><th>Canal</th><th>Estado</th><th class="num">Ingresos</th>
+          <th class="num">Gastos</th><th class="num">Resultado</th><th></th></tr></thead><tbody id="ppLista"></tbody></table>
+        <details class="nuevo" data-req="PRESUPUESTOS:ESCRITURA"><summary>Nuevo presupuesto</summary>
+          <div class="cab2">
+            <label>Código <input id="ppNCodigo" maxlength="20" placeholder="P2026"></label>
+            <label>Nombre <input id="ppNNombre" maxlength="150" placeholder="Presupuesto anual"></label>
+            <label>Canal <select id="ppNCanal"></select></label>
+            <label>&nbsp;<button class="btn primario" id="ppNCrear" type="button">Crear</button></label>
+          </div>
+        </details>
+        <p id="ppMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="ppPanel" hidden>
+        <h2 id="ppTitulo"></h2>
+        <div class="fila-acciones" data-req="PRESUPUESTOS:ESCRITURA">
+          <button class="btn primario" id="ppGuardar" type="button">Guardar líneas</button>
+          <button class="btn" id="ppAnadir" type="button">Añadir línea</button>
+          <button class="btn" id="ppAprobar" type="button">Aprobar</button>
+          <button class="btn" id="ppABorrador" type="button">Volver a borrador</button>
+          <button class="btn" id="ppCerrar" type="button">Cerrar</button>
+          <button class="btn" id="ppVersion" type="button">Nueva versión</button>
+          <button class="btn" id="ppEliminar" type="button">Eliminar</button>
+        </div>
+        <div style="overflow-x:auto;margin-top:12px"><table class="presupuesto"><thead id="ppHead"></thead><tbody id="ppLineas"></tbody>
+          <tfoot id="ppPie"></tfoot></table></div>
+        <p class="ayuda">Cuenta o prefijo (62 = todas las 62x); los ingresos (grupo 7) y los gastos se escriben en positivo. Elemento analítico opcional
+          (T1 o CC/T1). Al cambiar el total se reparte a partes iguales entre los meses.</p>
+        <details class="nuevo" data-req="PRESUPUESTOS:ESCRITURA"><summary>Generar desde lo real de otro ejercicio</summary>
+          <div class="cab2">
+            <label>Ejercicio <select id="ppGEj"></select></label>
+            <label>Incremento % <input id="ppGInc" inputmode="decimal" value="0"></label>
+            <label>Agrupar por dígitos <select id="ppGDig"><option>2</option><option selected>3</option><option>4</option><option value="15">Cuenta completa</option></select></label>
+            <label>Por elementos de <select id="ppGDim"></select></label>
+            <label>&nbsp;<button class="btn" id="ppGenerar" type="button">Generar (sustituye las líneas)</button></label>
+          </div>
+        </details>
+        <p id="ppMsg2" class="ayuda" role="status"></p>
+
+        <h3>Presupuesto frente a real</h3>
+        <div class="cab2">
+          <label>Hasta <select id="ppHasta"></select></label>
+          <label>&nbsp;<button class="btn primario" id="ppComparar" type="button">Comparar</button></label>
+        </div>
+        <div class="totales" id="ppTotales"></div>
+        <ul id="ppAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Elemento</th><th class="num">Presupuesto</th><th class="num">Real</th>
+          <th class="num">Desviación</th><th class="num">Ejecución</th></tr></thead><tbody id="ppComp"></tbody></table>
+      </div>
     </div>
   </section>
 
