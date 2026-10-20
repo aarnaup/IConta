@@ -18,6 +18,10 @@ public interface ITesoreriaRepositorio
     Task<IReadOnlyList<PrevisionDto>> PrevisionAsync(long empresaId, DateOnly hoy, int meses, CancellationToken ct);
     Task AnularVencimientoAsync(long empresaId, long vencimientoId, CancellationToken ct);
     Task<LiquidacionCreada> LiquidarAsync(long empresaId, long ejercicioId, long usuarioId, long vencimientoId, LiquidarVencimientoCmd cmd, CancellationToken ct);
+
+    /// <summary>Como LiquidarAsync, dentro de una transacción existente (p. ej. al cobrar desde una línea del extracto y conciliarla).</summary>
+    Task<LiquidacionCreada> LiquidarEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId, long usuarioId,
+        long vencimientoId, LiquidarVencimientoCmd cmd, CancellationToken ct);
 }
 
 public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRepositorio asientos) : ITesoreriaRepositorio
@@ -205,7 +209,14 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
+        var r = await LiquidarEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId, vencimientoId, cmd, ct);
+        await tx.CommitAsync(ct);
+        return r;
+    }
 
+    public async Task<LiquidacionCreada> LiquidarEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId,
+        long usuarioId, long vencimientoId, LiquidarVencimientoCmd cmd, CancellationToken ct)
+    {
         // Bloqueo de la fila: dos cobros simultáneos del mismo vencimiento no pueden pasarse del importe
         var v = await cn.QuerySingleOrDefaultAsync<VencFila>(new CommandDefinition("""
             SELECT v.tipo, v.tercero_id, v.factura_id, v.importe, v.importe_pendiente, v.estado,
@@ -274,7 +285,6 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
             "UPDATE tes.vencimiento SET importe_pendiente = @pendiente, estado = @estado, cuenta_bancaria_id = @cuentaBancariaId WHERE id = @vencimientoId",
             new { pendiente, estado, cuentaBancariaId = cmd.CuentaBancariaId, vencimientoId }, tx, cancellationToken: ct));
 
-        await tx.CommitAsync(ct);
         return new LiquidacionCreada(cobroPagoId, a.Id, a.Numero, estado, pendiente);
     }
 }

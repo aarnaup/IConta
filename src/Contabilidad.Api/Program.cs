@@ -144,6 +144,7 @@ try
     app.MapCierre();
     app.MapBalances();
     app.MapInmovilizado();
+    app.MapConciliacion();
 
     app.Run();
 }
