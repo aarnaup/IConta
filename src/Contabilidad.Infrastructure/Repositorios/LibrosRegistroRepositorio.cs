@@ -1,0 +1,68 @@
+using Contabilidad.Domain;
+using Contabilidad.Domain.Fiscal;
+using Dapper;
+
+namespace Contabilidad.Infrastructure.Repositorios;
+
+public interface ILibrosRegistroRepositorio
+{
+    Task<LibroRegistroDto> ObtenerAsync(long empresaId, string libro, int anio, string periodo, CancellationToken ct);
+}
+
+/// <summary>
+/// Libros registro de IVA/IGIC (RD 1624/1992, arts. 63 y 64): una línea por factura contabilizada y tipo impositivo.
+/// El periodo se selecciona por fecha contable, igual que el 303/420, para que los totales se puedan contrastar con la declaración.
+/// </summary>
+public sealed class LibrosRegistroRepositorio(IConexionFactory conexiones) : ILibrosRegistroRepositorio
+{
+    public async Task<LibroRegistroDto> ObtenerAsync(long empresaId, string libro, int anio, string periodo, CancellationToken ct)
+    {
+        libro = (libro ?? "").Trim().ToUpperInvariant();
+        if (!LibrosRegistro.Libros.Contains(libro)) throw new ReglaContableException("Libro no válido: EMITIDAS o RECIBIDAS.");
+        if (anio is < 2000 or > 2100) throw new ReglaContableException("El año no es válido.");
+        var p = PeriodoFiscal.Resolver(anio, (periodo ?? "").Trim().ToUpperInvariant());
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var impuesto = await cn.ExecuteScalarAsync<string?>(new CommandDefinition(
+            "SELECT impuesto_indirecto FROM core.empresa WHERE id = @empresaId", new { empresaId }, cancellationToken: ct))
+            ?? throw new ReglaContableException("La empresa no existe.");
+
+        var lineas = (await cn.QueryAsync<LineaLibroDto>(new CommandDefinition("""
+            SELECT f.id AS factura_id, f.numero_registro, f.fecha_expedicion, f.fecha_operacion, f.fecha_contable, f.serie, f.numero,
+                   f.tipo_factura, n.numero AS nif, t.nombre, fi.tipo_operacion, fi.base, fi.porcentaje, fi.cuota, fi.porcentaje_recargo,
+                   fi.cuota_recargo, fi.cuota_deducible, fi.es_bien_inversion AS bien_inversion,
+                   CASE WHEN row_number() OVER w = 1 THEN f.retencion_total END AS retencion,
+                   CASE WHEN row_number() OVER w = 1 THEN f.total END AS total_factura,
+                   (row_number() OVER w = 1) AS primera_linea,
+                   NULLIF(COALESCE(r.serie, '') || COALESCE(r.numero, ''), '') AS factura_rectificada,
+                   s.numero AS asiento_numero, f.descripcion
+            FROM fiscal.factura f
+            JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+            JOIN conta.tercero t ON t.id = f.tercero_id
+            JOIN core.nif n ON n.id = t.nif_id
+            LEFT JOIN fiscal.factura r ON r.id = f.factura_rectificada_id
+            LEFT JOIN conta.asiento s ON s.id = f.asiento_id
+            WHERE f.empresa_id = @empresaId AND f.libro = @libro AND f.estado = 'CONTABILIZADA'
+              AND f.fecha_contable BETWEEN @desde AND @hasta
+            WINDOW w AS (PARTITION BY f.id ORDER BY fi.porcentaje DESC, fi.id)
+            ORDER BY CASE WHEN @libro = 'RECIBIDAS' THEN f.anio_registro END, CASE WHEN @libro = 'RECIBIDAS' THEN f.numero_registro END,
+                     f.fecha_expedicion, COALESCE(f.serie, ''), f.numero, f.id, fi.porcentaje DESC, fi.id
+            """, new { empresaId, libro, desde = p.Inicio, hasta = p.Fin }, cancellationToken: ct))).AsList();
+
+        var avisos = new List<string>();
+        var borradores = await cn.ExecuteScalarAsync<int>(new CommandDefinition("""
+            SELECT count(*) FROM fiscal.factura
+            WHERE empresa_id = @empresaId AND libro = @libro AND estado = 'BORRADOR' AND fecha_contable BETWEEN @desde AND @hasta
+            """, new { empresaId, libro, desde = p.Inicio, hasta = p.Fin }, cancellationToken: ct));
+        if (borradores > 0)
+            avisos.Add($"Hay {borradores} factura(s) en borrador con fecha contable en el periodo: no aparecen en el libro hasta que se aprueben.");
+        var otros = lineas.Where(l => l.TipoOperacion != "INTERIOR").Select(l => LibrosRegistro.Texto(l.TipoOperacion)).Distinct().ToList();
+        if (otros.Count > 0)
+            avisos.Add($"Incluye operaciones {string.Join(", ", otros).ToLowerInvariant()}: revisa que el tipo de operación de cada línea es el correcto.");
+
+        var facturas = lineas.Where(l => l.PrimeraLinea).ToList();
+        return new LibroRegistroDto(libro, impuesto, p.Anio, p.Codigo, p.Inicio, p.Fin, facturas.Count, lineas, LibrosRegistro.Totales(lineas),
+            lineas.Sum(l => l.Base), lineas.Sum(l => l.Cuota), lineas.Sum(l => l.CuotaRecargo), lineas.Sum(l => l.CuotaDeducible),
+            facturas.Sum(l => l.Retencion ?? 0), facturas.Sum(l => l.TotalFactura ?? 0), avisos);
+    }
+}

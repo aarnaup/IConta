@@ -73,7 +73,11 @@ try
 
     app.UseSerilogRequestLogging();
 
-    app.UseExceptionHandler(h => h.Run(async ctx =>
+    // Las reglas de negocio incumplidas y las peticiones mal formadas son respuestas 400 normales: no se registran como errores
+    app.UseExceptionHandler(new ExceptionHandlerOptions
+    {
+        SuppressDiagnosticsCallback = c => c.Exception is ReglaContableException or BadHttpRequestException,
+        ExceptionHandler = async ctx =>
     {
         var ex = ctx.Features.Get<IExceptionHandlerFeature>()?.Error;
         switch (ex)
@@ -95,7 +99,8 @@ try
                 await ctx.Response.WriteAsJsonAsync(new { error = "Error interno del servidor." });
                 break;
         }
-    }));
+    }
+    });
 
     if (!app.Environment.IsDevelopment()) app.UseHsts();
 
@@ -138,6 +143,7 @@ try
     app.MapFiscal();
     app.MapCierre();
     app.MapBalances();
+    app.MapInmovilizado();
 
     app.Run();
 }

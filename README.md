@@ -1,7 +1,7 @@
 # Contabilidad (.NET 10 · Dapper · Autofac · Serilog · PostgreSQL)
 
 ## Estructura (`Contabilidad.slnx`)
-- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES).
+- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES), `08_aplicacion_resultado.sql` (origen de asiento para la aplicación del resultado), `09_inmovilizado.sql` (amortización por fechas, categorías por defecto y diario de amortizaciones), `10_libros_registro.sql` (número de registro de las facturas recibidas).
 - `src/Contabilidad.Domain` → reglas puras: canales (`RepartidorCanales`, evaluador de fórmulas) y facturación (`FacturaCalculadora`, `ResolutorCuentas`, `GeneradorAsientoFactura`).
 - `src/Contabilidad.Infrastructure` → Dapper + Npgsql, repositorios y módulo Autofac.
 - `src/Contabilidad.Api` → API minimal + Serilog + UI estática (`wwwroot/index.html`).
@@ -17,6 +17,9 @@ psql contabilidad -f database/04_seguridad.sql
 psql contabilidad -f database/05_tesoreria.sql
 psql contabilidad -f database/06_fiscal.sql
 psql contabilidad -f database/07_pgc.sql
+psql contabilidad -f database/08_aplicacion_resultado.sql
+psql contabilidad -f database/09_inmovilizado.sql
+psql contabilidad -f database/10_libros_registro.sql
 
 # clave de firma JWT (mín. 32 caracteres; en Development ya hay una de pruebas)
 export Jwt__Key="<cadena-aleatoria-larga>"
@@ -83,6 +86,16 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - **Numeración de casillas**: el 303 usa la del formulario (01–09, 16–24, 27, 28–31, 44–46, 64–71…); el IGIC y los resúmenes usan claves descriptivas. **Contrástala con el formulario del año antes de presentar**: esta aplicación calcula y registra, pero no genera el fichero oficial ni envía nada a la Agencia Tributaria.
 - Un tipo de IVA sin casilla (p. ej. 7 % en el 303) o una operación intracomunitaria/importación **detiene el cálculo** con un error en vez de omitirse en silencio.
 
+## Libros registro de IVA/IGIC
+`GET /api/empresas/{id}/fiscal/libros/{emitidas|recibidas}?anio=2026&periodo=4T` (periodos 1T–4T, 01–12 o 0A) y `.../csv` para descargarlo. En la web, dentro de «Modelos fiscales».
+
+- Una línea por factura contabilizada y tipo impositivo: fechas, serie y número, NIF y nombre, tipo de factura y de operación, base, tipo, cuota, recargo, retención, total, factura rectificada y asiento. Las recibidas añaden cuota deducible y bien de inversión.
+- El periodo va por **fecha contable**, como el 303/420: los totales por tipo se pueden contrastar con la declaración.
+- Las facturas recibidas llevan **número de registro** correlativo por año (orden de recepción, art. 64 RD 1624/1992). Lo asigna la base de datos al contabilizarlas, también al aprobar un borrador, y no cambia aunque luego entren facturas con fechas anteriores.
+- El CSV usa separador «;», coma decimal y UTF-8 con BOM, para abrirlo directamente en Excel.
+- Avisa de facturas en borrador del periodo (no salen en el libro) y de operaciones que no son interiores.
+- No genera el formato oficial de la AEAT para libros de IRPF/IVA ni el SII.
+
 ## Liquidación del IVA/IGIC
 `POST /api/empresas/{id}/ejercicios/{ej}/fiscal/declaraciones/{d}/asiento` contabiliza la liquidación de un 303 o 420 **presentado** (`.../asiento/previsualizar` la calcula sin guardar; `DELETE .../asiento` la anula).
 
@@ -101,6 +114,25 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - Deshacer anula los tres asientos (si el ejercicio siguiente sigue abierto) y reabre el ejercicio.
 - En la web: botón «Contabilizar liquidación» en Modelos fiscales y pestaña «Cierre».
 
+## Aplicación del resultado
+`GET /api/empresas/{id}/ejercicios/{ej}/aplicacion-resultado` muestra, por canal, el resultado pendiente de aplicar (saldo de la 129, que llega con la apertura), el capital, la reserva legal y la **reserva legal mínima** (10 % del beneficio hasta llegar al 20 % del capital, art. 274 LSC). `POST .../previsualizar` calcula el asiento; `POST .../aplicacion-resultado` lo contabiliza; `DELETE .../aplicacion-resultado/{asiento}` lo anula. En la web, dentro de la pestaña «Cierre».
+
+- Destinos: reserva legal (112), reservas voluntarias (113), remanente (120), compensar pérdidas anteriores (121), dividendos, otra cuenta del grupo 1 y, si hay pérdida, resultados negativos (121) o compensación con reservas.
+- Cada destino va por importe, por porcentaje o «el resto»; lo repartido debe coincidir con el resultado.
+- Dividendos: lo ya repartido a cuenta (557) se cancela primero y el resto queda a pagar (526).
+- Avisa (sin bloquear) si la reserva legal queda por debajo del mínimo o si se reparten dividendos con pérdidas anteriores sin compensar (art. 273 LSC).
+- Canal a canal: se puede aplicar un canal concreto o todos a la vez (mejor con porcentajes). No deja aplicar dos veces el mismo resultado.
+
+## Inmovilizado
+Fichas en `/api/empresas/{id}/inmovilizado` (categorías, listado, ficha con cuadro) y operaciones con asiento en `/api/empresas/{id}/ejercicios/{ej}/inmovilizado` (alta, amortización, bajas). En la web, pestaña «Inmovilizado».
+
+- **Categorías** con sus cuentas (21x/20x, 28x, 68x), método y vida útil por defecto. Cada empresa recibe 12 habituales (construcciones, maquinaria, mobiliario, equipos informáticos, transporte, aplicaciones…) con vidas útiles dentro de la tabla fiscal; las subcuentas que falten se crean desde el PGC.
+- **Alta**: valor, residual, fecha de inicio, vida útil, canal, factura y proveedor opcionales, y **amortización previa** para traspasos desde otro programa. Si se indica contrapartida, contabiliza la compra (21x contra 523/572…); si no, se entiende que ya está con su factura.
+- **Amortización lineal por días**: lo acumulado a una fecha es la base por la fracción de vida transcurrida; las cuotas son diferencias de acumulados, así que no hay deriva de redondeo y al final se llega exacto. `POST .../amortizacion` contabiliza todo lo pendiente hasta la fecha en un asiento (diario de amortizaciones, cada elemento en su canal). Se puede ejecutar cada mes, trimestre o año; si quedó algo atrasado, se incluye con aviso. Anular solo la última de cada elemento.
+- **Baja o venta**: amortiza hasta la fecha y en el mismo asiento salda la 28x y la 21x, carga el cobro y lleva la diferencia a 671/771 (670/770 intangible, 672/772 inversiones inmobiliarias). Se puede anular. El IVA de la venta no se genera: emite la factura aparte.
+- **Ficha**: cuadro por ejercicios de la empresa (también partidos) y amortización ya contabilizada.
+- El **cierre** avisa si queda amortización pendiente hasta fin de ejercicio.
+
 ## Balances
 `GET /api/empresas/{id}/ejercicios/{ej}/balances/...` (permiso de lectura en Balances o Contabilidad). En la web, pestaña «Balances», con opción de imprimir.
 
@@ -117,7 +149,7 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - **Contrasta la asignación de cuentas y la numeración con el modelo oficial antes de depositar las cuentas.** No hay todavía modelo normal completo, estado de cambios en el patrimonio neto, estado de flujos de efectivo ni memoria.
 
 ## Pendiente
-Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; aplicación del resultado (de la 129 a reservas o dividendos); modelo normal de cuentas anuales, estado de cambios en el patrimonio neto, flujos de efectivo y memoria; analítica y presupuestos; gestión de catálogos e impresos en la UI de administración.
+Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; formato oficial AEAT de los libros registro y SII; libro registro de bienes de inversión; bienes de inversión (regularización del IVA durante 5/10 años), amortización degresiva y por tablas, diferencias entre amortización contable y fiscal; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; modelo normal de cuentas anuales, estado de cambios en el patrimonio neto, flujos de efectivo y memoria; analítica y presupuestos; gestión de catálogos e impresos en la UI de administración.
 
 ## Estado de verificación
-Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 149 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→07 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web. Y los balances de sumas y saldos, situación y pérdidas y ganancias de esos dos ejercicios, con comparativo, por canal y en pantalla e impresión.
+Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 182 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→10 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web. Y los balances de sumas y saldos, situación y pérdidas y ganancias de esos dos ejercicios, con comparativo, por canal y en pantalla e impresión, y la aplicación del resultado de 2026/27 en 2027/28 (reserva legal, dividendos, voluntarias y remanente; anular y repetir). Y el inmovilizado: altas con y sin asiento, amortización por días en varias ejecuciones, anular, venta con pérdida, aviso en el cierre, en la API y en la web. Y los libros registro: numeración de recibidas al contabilizar y al aprobar borradores, facturas con dos tipos y rectificativas, totales que cuadran con el 420 y descarga del CSV desde la web.

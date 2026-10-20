@@ -43,3 +43,9 @@ public sealed record DeclaracionVista(
     long? Id, string Modelo, string Nombre, string Estado, int Anio, string Periodo, DateOnly FechaInicio, DateOnly FechaFin,
     IReadOnlyList<Casilla> Casillas, decimal Resultado, decimal AIngresar, decimal ADevolver, decimal ACompensar,
     IReadOnlyList<string> Avisos, object? Detalle, DateOnly PlazoDesde, DateOnly PlazoHasta);
+
+/// <summary>Libro registro de facturas expedidas o recibidas de un periodo (por fecha contable, como las autoliquidaciones).</summary>
+public sealed record LibroRegistroDto(
+    string Libro, string Impuesto, int Anio, string Periodo, DateOnly Desde, DateOnly Hasta, int Facturas,
+    IReadOnlyList<LineaLibroDto> Lineas, IReadOnlyList<TotalLibro> Totales, decimal TotalBase, decimal TotalCuota, decimal TotalRecargo,
+    decimal TotalCuotaDeducible, decimal TotalRetencion, decimal TotalFacturas, IReadOnlyList<string> Avisos);
