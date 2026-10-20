@@ -1,0 +1,92 @@
+
+  :root{
+    --bg:#edf0f2; --surface:#ffffff; --ink:#16202a; --muted:#5b6875; --line:#cfd6dc;
+    --accent:#0e5a6b; --accent-ink:#ffffff; --bad:#b3261e; --good:#1d6b3a;
+    --c1:#0e5a6b; --c2:#8a5a00; --c3:#5b3e96;
+    --font: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#12181e; --surface:#1b232b; --ink:#e6ebef; --muted:#93a1ad; --line:#2f3b46;
+           --accent:#4fb3c9; --accent-ink:#06222a; --bad:#ff8a80; --good:#7fd69a;
+           --c1:#4fb3c9; --c2:#e3b04b; --c3:#b79cf2; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{font:15px/1.45 var(--font); color:var(--ink); background:var(--bg)}
+  .num{font-variant-numeric:tabular-nums; text-align:right}
+  header{display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:12px 24px; background:var(--surface); border-bottom:1px solid var(--line)}
+  header h1{font-size:18px; margin:0; font-weight:650; letter-spacing:.2px}
+  header label{display:flex; gap:8px; align-items:center; color:var(--muted)}
+  nav{display:flex; gap:4px; flex-wrap:wrap; margin:0 0 16px}
+  nav button{border:0; background:none; font:inherit; padding:8px 14px; border-radius:6px; color:var(--muted); cursor:pointer}
+  nav button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink)}
+  main{padding:20px 24px; max-width:1280px; margin:0 auto}
+  select,input,button.btn{font:inherit; color:var(--ink)}
+  select,input{border:1px solid var(--line); background:var(--surface); border-radius:6px; padding:7px 9px; min-width:0}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .grid{display:grid; grid-template-columns:minmax(0,1fr) 330px; gap:20px; align-items:start}
+  @media (max-width:980px){ .grid{grid-template-columns:1fr} }
+  .panel{background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:16px}
+  .panel h2{font-size:15px; margin:0 0 12px}
+  .cab{display:grid; grid-template-columns:150px 170px 1fr; gap:12px; margin-bottom:16px}
+  @media (max-width:700px){ .cab{grid-template-columns:1fr} }
+  .cab label{display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:13px}
+  .cab input,.cab select{color:var(--ink)}
+  table{width:100%; border-collapse:collapse}
+  th{font-weight:600; font-size:13px; color:var(--muted); text-align:left; padding:6px 6px; border-bottom:1px solid var(--line)}
+  th.num{text-align:right}
+  td{padding:5px 4px; border-bottom:1px solid var(--line); vertical-align:middle}
+  td input,td select{width:100%}
+  td.nombre{font-size:12px; color:var(--muted); padding-left:8px}
+  .acciones{display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap}
+  button.btn{border:1px solid var(--line); background:var(--surface); padding:8px 14px; border-radius:6px; cursor:pointer}
+  button.primario{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600}
+  button.btn:disabled{opacity:.5; cursor:not-allowed}
+  .x{border:0; background:none; color:var(--muted); cursor:pointer; font-size:16px}
+  #msg{min-height:22px; font-size:14px}
+  #msg.err{color:var(--bad)} #msg.ok{color:var(--good)}
+  .canal-row td:first-child{border-left:4px solid var(--c1); padding-left:8px; font-weight:600}
+  .canal-row[data-i="1"] td:first-child{border-left-color:var(--c2)}
+  .canal-row[data-i="2"] td:first-child{border-left-color:var(--c3)}
+  .estado-ok{color:var(--good)} .estado-mal{color:var(--bad)}
+  .ayuda{color:var(--muted); font-size:13px; margin:10px 0 0}
+  .asiento-cab td{background:var(--bg); font-weight:600}
+  .vacio{color:var(--muted); padding:24px 0}
+  .cab2{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:16px}
+  @media (max-width:700px){ .cab2{grid-template-columns:1fr} }
+  .cab2 label,.nuevo label{display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:13px}
+  .stack{display:grid; gap:20px}
+  .totales{display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin:0 0 14px}
+  .totales div{border:1px solid var(--line); border-radius:6px; padding:8px 10px}
+  .totales span{display:block; color:var(--muted); font-size:12px}
+  .totales strong{font-variant-numeric:tabular-nums; font-size:16px}
+  details.nuevo summary{cursor:pointer; font-weight:600}
+  details.nuevo .cab2{margin-top:12px}
+  [hidden]{display:none!important}
+
+  header .der{margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  #contexto{color:var(--muted); font-weight:600}
+  #usuarioNombre{color:var(--muted)}
+  .centrado{max-width:420px; margin:8vh auto 0}
+  .campo{display:flex; flex-direction:column; gap:4px; margin-bottom:12px; color:var(--muted); font-size:13px}
+  .campo input,.campo select{color:var(--ink)}
+  .aviso{border:1px solid var(--line); border-left:4px solid var(--c2); background:var(--surface); border-radius:6px; padding:10px 12px; margin-bottom:14px; font-size:14px}
+  .aviso.info{border-left-color:var(--accent)}
+  .lista-sel{display:grid; gap:8px}
+  .lista-sel button{display:flex; justify-content:space-between; gap:12px; text-align:left; padding:12px 14px; border:1px solid var(--line); border-radius:8px; background:var(--surface); font:inherit; color:var(--ink); cursor:pointer}
+  .lista-sel button:hover{border-color:var(--accent)}
+  .lista-sel small{color:var(--muted)}
+  .pie-sel{display:flex; gap:10px; margin-top:16px; flex-wrap:wrap}
+  .perm-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px; margin:12px 0}
+  .perm-grid label{display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted)}
+  .fila-acciones{display:flex; gap:6px; flex-wrap:wrap}
+  .fila-acciones button{padding:4px 10px}
+  .estado-cerrado{color:var(--bad)}
+  .ok-texto{color:var(--good)} .err-texto{color:var(--bad)}
+
+  .avisos{margin:8px 0 14px; padding-left:20px; color:var(--muted)}
+  .avisos li{margin:4px 0}
+  .totales{display:flex; flex-wrap:wrap; gap:12px; margin:10px 0 14px}
+  .totales div{border:1px solid var(--line, #d9dde3); border-radius:8px; padding:8px 14px; min-width:140px}
+  .totales span{display:block; font-size:.8rem; color:var(--muted)}
+  .totales strong{font-size:1.15rem; font-variant-numeric:tabular-nums}

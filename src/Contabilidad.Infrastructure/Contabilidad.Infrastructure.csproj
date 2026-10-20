@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Autofac" Version="8.*" />
+    <PackageReference Include="Dapper" Version="2.1.*" />
+    <PackageReference Include="Npgsql" Version="9.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Contabilidad.Domain\Contabilidad.Domain.csproj" />
+  </ItemGroup>
+</Project>

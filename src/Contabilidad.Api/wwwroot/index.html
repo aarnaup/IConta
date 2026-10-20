@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contabilidad</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header id="cabecera" hidden>
+  <h1>Contabilidad</h1>
+  <span id="contexto"></span>
+  <div class="der">
+    <span id="usuarioNombre"></span>
+    <button class="btn" id="btnCambiar" type="button" hidden>Cambiar empresa</button>
+    <button class="btn" id="btnSalir" type="button">Salir</button>
+  </div>
+</header>
+
+<main>
+<!-- ===================== LOGIN ===================== -->
+<section id="vista-login" class="centrado" hidden>
+  <div class="panel">
+    <h2>Entrar</h2>
+    <form id="formLogin" autocomplete="on">
+      <label class="campo">Email <input id="loginEmail" type="email" autocomplete="username" required></label>
+      <label class="campo">Contraseña <input id="loginPassword" type="password" autocomplete="current-password" required></label>
+      <button class="btn primario" type="submit">Entrar</button>
+      <p id="loginMsg" class="ayuda err-texto" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ===================== CAMBIO DE CONTRASEÑA ===================== -->
+<section id="vista-cambio" class="centrado" hidden>
+  <div class="panel">
+    <h2>Cambia tu contraseña</h2>
+    <p class="ayuda">Tu contraseña es temporal. Elige una nueva (mínimo 12 caracteres) para continuar.</p>
+    <form id="formCambio">
+      <label class="campo">Contraseña actual <input id="cpActual" type="password" autocomplete="current-password" required></label>
+      <label class="campo">Contraseña nueva <input id="cpNueva" type="password" autocomplete="new-password" required minlength="12"></label>
+      <button class="btn primario" type="submit">Guardar contraseña</button>
+      <p id="cambioMsg" class="ayuda err-texto" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<!-- ===================== SELECTOR EMPRESA / EJERCICIO ===================== -->
+<section id="vista-empresas" hidden>
+  <div class="panel" style="max-width:640px; margin:4vh auto 0">
+    <div id="paso-empresa">
+      <h2>¿En qué empresa vas a trabajar?</h2>
+      <div id="listaEmpresas" class="lista-sel"></div>
+      <div class="pie-sel"><button class="btn" id="btnAdmin" type="button" hidden>Ir a administración</button></div>
+    </div>
+    <div id="paso-ejercicio" hidden>
+      <h2 id="tituloEjercicio">Ejercicio</h2>
+      <div id="listaEjercicios" class="lista-sel"></div>
+      <div class="pie-sel"><button class="btn" id="btnVolverEmpresas" type="button">Volver a las empresas</button></div>
+    </div>
+    <p id="selMsg" class="ayuda err-texto" role="alert"></p>
+  </div>
+</section>
+
+<!-- ===================== ADMINISTRACIÓN ===================== -->
+<section id="vista-admin" hidden>
+  <nav aria-label="Administración" id="navAdmin">
+    <button data-tab="usuarios" aria-pressed="true">Usuarios</button>
+    <button data-tab="empresas" aria-pressed="false">Empresas</button>
+  </nav>
+
+  <div id="adm-usuarios" class="stack">
+    <div class="panel">
+      <h2>Usuarios</h2>
+      <table><thead><tr><th>Nombre</th><th>Email</th><th>Tipo</th><th>Estado</th><th class="num">Empresas</th><th>Último acceso</th><th></th></tr></thead>
+      <tbody id="admUsuariosBody"></tbody></table>
+    </div>
+
+    <div class="panel" id="admAsignaciones" hidden>
+      <h2 id="admAsigTitulo">Empresas del usuario</h2>
+      <table><thead><tr><th>Empresa</th><th>Rol</th><th>Sin revisión</th><th>Permisos</th><th></th></tr></thead>
+      <tbody id="admAsigBody"></tbody></table>
+      <h2 style="margin-top:18px">Asignar o modificar</h2>
+      <div class="cab2">
+        <label>Empresa <select id="asEmpresa"></select></label>
+        <label>Rol <select id="asRol"><option value="LECTURA">Lectura</option><option value="CONTABLE">Contable</option><option value="ADMIN">Administrador</option></select></label>
+        <label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0">
+          <input type="checkbox" id="asSalta"> Contabiliza sin revisión</label>
+      </div>
+      <div class="perm-grid" id="asPermisos"></div>
+      <p class="ayuda">«Según el rol»: administrador y contable escriben, lectura solo consulta. Un usuario sin la marca «sin revisión» guarda borradores que aprueba un revisor.</p>
+      <div class="acciones"><button class="btn primario" id="asGuardar" type="button">Guardar asignación</button><span id="asMsg" role="status"></span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Nuevo usuario</h2>
+      <div class="cab2">
+        <label>Email <input id="nuEmail" type="email"></label>
+        <label>Nombre <input id="nuNombre"></label>
+        <label>Tipo <select id="nuTipo"><option value="EMPRESA">Usuario de empresa</option><option value="GESTOR">Gestor</option></select></label>
+        <label>Contraseña temporal <input id="nuPassword" type="text" autocomplete="off" placeholder="mínimo 12 caracteres"></label>
+      </div>
+      <div class="acciones"><button class="btn" id="nuCrear" type="button">Crear usuario</button><span id="nuMsg" role="status"></span></div>
+      <p class="ayuda">El usuario deberá cambiar esta contraseña al entrar por primera vez.</p>
+    </div>
+  </div>
+
+  <div id="adm-empresas" class="stack" hidden>
+    <div class="panel">
+      <h2>Empresas</h2>
+      <table><thead><tr><th>Código</th><th>Nombre</th><th>NIF</th><th>Forma</th><th>Plan</th><th>Impuesto</th></tr></thead>
+      <tbody id="admEmpresasBody"></tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Nueva empresa</h2>
+      <div class="cab2">
+        <label>NIF / CIF <input id="neNif"></label>
+        <label>Nombre <input id="neNombre"></label>
+        <label>Código (máx. 10) <input id="neCodigo" maxlength="10"></label>
+        <label>Forma jurídica <select id="neForma">
+          <option value="SL">S.L.</option><option value="SA">S.A.</option><option value="SLU">S.L.U.</option><option value="AUTONOMO">Autónomo</option>
+          <option value="COMUNIDAD_BIENES">Comunidad de bienes</option><option value="SOCIEDAD_CIVIL">Sociedad civil</option>
+          <option value="COOPERATIVA">Cooperativa</option><option value="ASOCIACION">Asociación</option><option value="OTRA">Otra</option></select></label>
+        <label>Plan contable <select id="nePlan"></select></label>
+        <label>Impuesto indirecto <select id="neImpuesto"><option value="IVA">IVA</option><option value="IGIC">IGIC (Canarias)</option><option value="IPSI">IPSI</option><option value="EXENTO">Exento</option></select></label>
+        <label>Dígitos de cuenta <input id="neDigitos" type="number" min="6" max="12" value="8"></label>
+        <label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" id="neIs"> Tributa por Impuesto de Sociedades</label>
+      </div>
+      <h2 style="margin-top:6px">Primer ejercicio (opcional)</h2>
+      <div class="cab2">
+        <label>Código <input id="neEjCodigo" placeholder="2026/27" maxlength="10"></label>
+        <label>Inicio (día 1) <input id="neEjInicio" type="date"></label>
+        <label>Fin (último día del mes) <input id="neEjFin" type="date"></label>
+      </div>
+      <div class="acciones"><button class="btn primario" id="neCrear" type="button">Crear empresa</button><span id="neMsg" role="status"></span></div>
+    </div>
+    <div class="panel">
+      <h2>Nuevo ejercicio de una empresa</h2>
+      <div class="cab2">
+        <label>Empresa <select id="ejEmpresa"></select></label>
+        <label>Código <input id="ejCodigo" placeholder="2027" maxlength="10"></label>
+        <span></span>
+        <label>Inicio (día 1) <input id="ejInicio" type="date"></label>
+        <label>Fin (último día del mes) <input id="ejFin" type="date"></label>
+      </div>
+      <div class="acciones"><button class="btn" id="ejCrear" type="button">Crear ejercicio</button><span id="ejMsg" role="status"></span></div>
+      <p class="ayuda">Un ejercicio partido va, por ejemplo, del 01/07/2026 al 30/06/2027. No puede solaparse con otro de la misma empresa.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PORTAL DE EMPRESA ===================== -->
+<section id="vista-app" hidden>
+  <div id="avisoEjercicio" class="aviso" hidden>Este ejercicio está cerrado: solo puedes consultarlo.</div>
+  <div id="avisoBorrador" class="aviso info" hidden>Tus asientos y facturas se guardan como borrador hasta que los apruebe un revisor.</div>
+
+  <nav aria-label="Secciones" id="navApp">
+    <button data-tab="asiento" data-req="CONTABILIDAD:ESCRITURA" aria-pressed="false">Nuevo asiento</button>
+    <button data-tab="factura" data-req="FACTURACION:LECTURA" aria-pressed="false">Facturas</button>
+    <button data-tab="diario" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Diario</button>
+    <button data-tab="mayor" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Mayor</button>
+    <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
+    <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
+    <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
+  </nav>
+
+  <section id="tab-asiento" hidden>
+    <div class="grid">
+      <div class="panel">
+        <h2>Asiento</h2>
+        <div class="cab">
+          <label>Fecha <input type="date" id="fecha"></label>
+          <label>Diario <select id="diario"></select></label>
+          <label>Concepto <input id="concepto" placeholder="Ej. Compra material de oficina"></label>
+        </div>
+        <table>
+          <thead><tr>
+            <th style="width:130px">Cuenta</th><th>Descripción</th><th style="width:90px">Canal</th>
+            <th class="num" style="width:110px">Debe</th><th class="num" style="width:110px">Haber</th><th style="width:28px"></th>
+          </tr></thead>
+          <tbody id="lineas"></tbody>
+          <tfoot><tr>
+            <td colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
+            <td class="num" id="totDebe" style="border:0;font-weight:600">0,00</td>
+            <td class="num" id="totHaber" style="border:0;font-weight:600">0,00</td><td style="border:0"></td>
+          </tr></tfoot>
+        </table>
+        <datalist id="dl-cuentas"></datalist>
+        <div class="acciones">
+          <button class="btn primario" id="guardar" data-guarda type="button">Contabilizar asiento</button>
+          <button class="btn" id="borrador" data-guarda type="button">Guardar borrador</button>
+          <span id="msg" role="status" aria-live="polite"></span>
+        </div>
+        <p class="ayuda">Importes con coma decimal (1234,56). Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
+      </div>
+      <aside class="panel" aria-label="Reparto por canal">
+        <h2>Reparto por canal</h2>
+        <table>
+          <thead><tr><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th><th>Cuadre</th></tr></thead>
+          <tbody id="reparto"></tbody>
+        </table>
+        <p class="ayuda">El asiento solo se contabiliza si cuadra en cada canal.</p>
+      </aside>
+    </div>
+  </section>
+
+  <section id="tab-factura" hidden>
+    <div class="stack">
+      <div class="panel" data-req="FACTURACION:ESCRITURA">
+        <h2>Nueva factura</h2>
+        <div class="cab2">
+          <label>Libro <select id="fLibro"><option value="EMITIDAS">Emitidas (ventas)</option><option value="RECIBIDAS">Recibidas (compras)</option></select></label>
+          <label>Tercero <select id="fTercero"></select></label>
+          <label>Número de factura <input id="fNumero"></label>
+          <label>Fecha <input type="date" id="fFecha"></label>
+          <label>Canal <select id="fCanal"></select></label>
+          <label>Retención IRPF <select id="fRet"></select></label>
+          <label>Forma de pago <select id="fForma"></select></label>
+        </div>
+        <table>
+          <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th>
+            <th id="thDed" style="width:230px">Deducción</th><th style="width:28px"></th></tr></thead>
+          <tbody id="fLineas"></tbody>
+        </table>
+        <div class="acciones">
+          <button class="btn" id="fAdd" type="button">Añadir tipo</button>
+          <button class="btn" id="fPrev" type="button">Calcular y previsualizar</button>
+          <button class="btn primario" id="fGuardar" data-guarda type="button">Contabilizar factura</button>
+          <button class="btn" id="fBorrador" data-guarda type="button">Guardar borrador</button>
+          <span id="fMsg" role="status" aria-live="polite"></span>
+        </div>
+        <p class="ayuda">El % de impuesto se toma de la fecha de la factura. El asiento sale de la plantilla de compras o ventas; con prorrata, la regla «Prorrata» usa el % del año natural.</p>
+      </div>
+
+      <div class="panel" id="fPreview" hidden>
+        <h2>Cálculo y asiento previsto</h2>
+        <div class="totales" id="fTotales"></div>
+        <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
+        <tbody id="fAsiento"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Facturas del ejercicio</h2>
+        <table><thead><tr><th>Libro</th><th>Número</th><th>Fecha</th><th>Tercero</th><th class="num">Base</th><th class="num">Cuota</th><th class="num">Retención</th><th class="num">Total</th><th>Estado</th></tr></thead>
+        <tbody id="fLista"></tbody></table>
+      </div>
+
+      <div class="panel" data-req="FACTURACION:ESCRITURA">
+        <details class="nuevo">
+          <summary>Nuevo cliente o proveedor</summary>
+          <div class="cab2">
+            <label>NIF / CIF <input id="tNif"></label>
+            <label>Nombre <input id="tNombre"></label>
+            <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option></select></label>
+          </div>
+          <div class="acciones"><button class="btn" id="tCrear" type="button">Crear tercero</button><span id="tMsg" role="status"></span></div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-diario" hidden>
+    <div class="panel">
+      <h2>Últimos asientos del ejercicio</h2>
+      <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
+      <tbody id="diarioBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-mayor" hidden>
+    <div class="panel">
+      <h2>Mayor de una cuenta</h2>
+      <div class="acciones" style="margin:0 0 14px">
+        <input id="mayorCuenta" list="dl-cuentas" placeholder="Código de cuenta" aria-label="Cuenta">
+        <select id="mayorCanal" aria-label="Canal"></select>
+        <button class="btn primario" id="mayorBtn" type="button">Consultar</button>
+        <span id="msgMayor" class="ayuda" role="status"></span>
+      </div>
+      <table><thead><tr><th>Fecha</th><th>Nº</th><th>Concepto</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo</th></tr></thead>
+      <tbody id="mayorBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-tesoreria" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Previsión de cobros y pagos</h2>
+        <table><thead><tr><th>Periodo</th><th class="num">Cobros</th><th class="num">Pagos</th><th class="num">Neto</th></tr></thead>
+        <tbody id="prevBody"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Vencimientos</h2>
+        <div class="cab2">
+          <label>Tipo <select id="vTipo"><option value="">Cobros y pagos</option><option value="COBRO">Cobros</option><option value="PAGO">Pagos</option></select></label>
+          <label>Estado <select id="vEstado"><option value="ABIERTOS">Pendientes de cobro/pago</option><option value="LIQUIDADO">Liquidados</option><option value="ANULADO">Anulados</option><option value="">Todos</option></select></label>
+        </div>
+        <table><thead><tr><th>Vence</th><th>Tipo</th><th>Tercero</th><th>Factura</th><th>Plazo</th><th class="num">Importe</th><th class="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="vBody"></tbody></table>
+        <p id="vMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="liqPanel" hidden>
+        <h2 id="liqTitulo">Registrar cobro</h2>
+        <div class="cab2">
+          <label>Fecha <input type="date" id="liqFecha"></label>
+          <label>Importe <input id="liqImporte" class="num" inputmode="decimal"></label>
+          <label>Cuenta bancaria <select id="liqBanco"></select></label>
+        </div>
+        <div class="fila-acciones">
+          <button class="btn primario" id="liqGuardar" data-guarda type="button">Contabilizar</button>
+          <button class="btn" id="liqCancelar" type="button">Cancelar</button>
+        </div>
+        <p id="liqMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Cuentas bancarias</h2>
+        <table><thead><tr><th>Alias</th><th>IBAN</th><th>Banco</th><th>Cuenta contable</th><th class="num">Saldo según movimientos</th></tr></thead>
+        <tbody id="bBody"></tbody></table>
+        <div data-req="TESORERIA_DIRECTO">
+          <h3>Nueva cuenta bancaria</h3>
+          <div class="cab2">
+            <label>Alias <input id="bAlias"></label>
+            <label>IBAN <input id="bIban" autocomplete="off"></label>
+            <label>Cuenta contable (572…) <input id="bCuenta" list="dl-cuentas"></label>
+          </div>
+          <button class="btn primario" id="bCrear" type="button">Crear cuenta bancaria</button>
+          <p id="bMsg" class="ayuda" role="status"></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-fiscal" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Calcular un modelo</h2>
+        <div class="cab2">
+          <label>Modelo <select id="mfModelo"></select></label>
+          <label>Año <input id="mfAnio" type="number" min="2000" max="2100"></label>
+          <label>Periodo <select id="mfPeriodo"></select></label>
+          <label id="mfDevolucionLabel"><span>Resultado a favor</span>
+            <select id="mfDevolucion"><option value="0">Compensar en periodos siguientes</option><option value="1">Solicitar devolución (último periodo)</option></select></label>
+        </div>
+        <div class="fila-acciones">
+          <button class="btn primario" id="mfCalcular" type="button">Calcular</button>
+          <button class="btn" id="mfGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar la declaración</button>
+        </div>
+        <p id="mfMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="mfResultado" hidden>
+        <h2 id="mfTitulo"></h2>
+        <p id="mfSub" class="ayuda"></p>
+        <div class="totales" id="mfTotales"></div>
+        <ul id="mfAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Casilla</th><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody id="mfCasillas"></tbody></table>
+        <div id="mfDetalle" hidden>
+          <h3>Terceros declarados</h3>
+          <table><thead><tr><th>NIF</th><th>Nombre</th><th>Clave</th><th class="num">Total</th><th class="num">1T</th><th class="num">2T</th><th class="num">3T</th><th class="num">4T</th></tr></thead>
+          <tbody id="mfDetalleBody"></tbody></table>
+        </div>
+      </div>
+
+      <div class="panel" id="mfPresentarPanel" hidden>
+        <h2 id="mfPresentarTitulo">Marcar como presentada</h2>
+        <p class="ayuda">La aplicación no envía nada a la Agencia Tributaria: registra que ya presentaste la declaración y fija sus cifras.</p>
+        <div class="cab2">
+          <label>Fecha de presentación <input type="date" id="mfFecha"></label>
+          <label>Justificante <input id="mfJustificante" maxlength="30" placeholder="Opcional"></label>
+        </div>
+        <div class="fila-acciones">
+          <button class="btn primario" id="mfPresentar" type="button">Marcar como presentada</button>
+          <button class="btn" id="mfPresentarCancelar" type="button">Cancelar</button>
+        </div>
+        <p id="mfPresentarMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Declaraciones guardadas</h2>
+        <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th></th></tr></thead>
+        <tbody id="mfLista"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-pendientes" hidden>
+    <div class="panel">
+      <h2>Borradores pendientes de revisión</h2>
+      <table><thead><tr><th>Tipo</th><th>Referencia</th><th>Fecha</th><th>Descripción</th><th class="num">Importe</th><th>Creado por</th><th></th></tr></thead>
+      <tbody id="pendBody"></tbody></table>
+      <p id="pendMsg" class="ayuda" role="status"></p>
+    </div>
+  </section>
+</section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

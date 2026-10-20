@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="src/Contabilidad.Api/Contabilidad.Api.csproj" />
+  <Project Path="src/Contabilidad.Domain/Contabilidad.Domain.csproj" />
+  <Project Path="src/Contabilidad.Infrastructure/Contabilidad.Infrastructure.csproj" />
+</Solution>

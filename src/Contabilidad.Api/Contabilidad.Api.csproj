@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="10.*" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.*" />
+    <PackageReference Include="Serilog.AspNetCore" Version="9.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Contabilidad.Domain\Contabilidad.Domain.csproj" />
+    <ProjectReference Include="..\Contabilidad.Infrastructure\Contabilidad.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
