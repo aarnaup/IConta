@@ -53,3 +53,12 @@ ON CONFLICT (pais_id, codigo) DO NOTHING;
 UPDATE core.nif n SET provincia_id = pr.id
 FROM cat.provincia pr JOIN cat.pais p ON p.id = pr.pais_id AND p.iso2 = 'ES'
 WHERE n.provincia_id IS NULL AND n.pais_id = p.id AND pr.codigo = left(n.codigo_postal, 2);
+
+-- Amortización fiscal distinta de la contable (diferencias temporarias): si metodo_fiscal es NULL, la fiscal es la contable
+ALTER TABLE inmov.inmovilizado ADD COLUMN IF NOT EXISTS metodo_fiscal varchar(20)
+  CHECK (metodo_fiscal IN ('LINEAL','DEGRESIVO','COEFICIENTE_TABLA','LIBRE'));
+ALTER TABLE inmov.inmovilizado ADD COLUMN IF NOT EXISTS vida_util_meses_fiscal integer;
+ALTER TABLE inmov.inmovilizado ADD COLUMN IF NOT EXISTS coeficiente_fiscal numeric(7,4);
+-- 'COEFICIENTE_TABLA' (17 caracteres) no cabía en varchar(15)
+ALTER TABLE inmov.inmovilizado ALTER COLUMN metodo TYPE varchar(20);
+ALTER TABLE inmov.categoria ALTER COLUMN metodo_defecto TYPE varchar(20);

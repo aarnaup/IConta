@@ -1245,7 +1245,7 @@ $('#inEstado').onchange = () => listaInmovilizado().catch(e => msg($('#inMsg'), 
 $('#inLista').addEventListener('click', e => { const b = e.target.closest('button[data-ver]'); if (b) verFicha(b.dataset.ver).catch(err => msg($('#inMsg'), err.message, 'ayuda err-texto')); });
 
 $('#inNuevoBtn').onclick = () => {
-  ['#inDesc', '#inCodigo', '#inValor', '#inMeses', '#inContra', '#inFIni'].forEach(i => $(i).value = '');
+  ['#inDesc', '#inCodigo', '#inValor', '#inMeses', '#inContra', '#inFIni', '#inCoef'].forEach(i => $(i).value = ''); $('#inMetodo').value = '';
   $('#inResidual').value = '0'; $('#inPrevia').value = '0'; $('#inFAdq').value = dentroEj(hoy());
   msg($('#inNuevoMsg'), '', 'ayuda'); $('#inNuevo').hidden = false; $('#inNuevo').scrollIntoView({ behavior: 'smooth' });
 };
@@ -1258,6 +1258,7 @@ $('#inGuardar').onclick = async () => {
       descripcion: $('#inDesc').value, categoriaId: +$('#inCat').value, canalId: +$('#inCanal').value, codigo: $('#inCodigo').value || null,
       fechaAdquisicion: $('#inFAdq').value, fechaInicioAmortizacion: $('#inFIni').value || null, valorAdquisicion: num($('#inValor').value),
       valorResidual: num($('#inResidual').value), vidaUtilMeses: $('#inMeses').value ? parseInt($('#inMeses').value, 10) : null,
+      metodo: $('#inMetodo').value || null, coeficiente: $('#inCoef').value.trim() ? num($('#inCoef').value) : null,
       amortizacionPrevia: num($('#inPrevia').value), cuentaContrapartidaId: contra ? cuentaPorCodigo(contra) : null
     });
     $('#inNuevo').hidden = true;
@@ -1271,7 +1272,8 @@ function pintaFicha(f) {
   IN.ficha = f; const e = f.elemento;
   $('#inFichaTitulo').textContent = `${e.codigo} · ${e.descripcion}`;
   $('#inFichaSub').textContent = `${e.categoria} · canal ${e.canal} · adquirido el ${fechaES(e.fechaAdquisicion)} por ${fmt(e.valorAdquisicion)}`
-    + (e.metodo === 'LINEAL' ? ` · amortización lineal en ${e.vidaUtilMeses} meses desde el ${fechaES(e.fechaInicioAmortizacion)} hasta el ${fechaES(f.finAmortizacion)}` : ' · no se amortiza')
+    + (e.metodo === 'NO_AMORTIZA' || !f.finAmortizacion ? ' · no se amortiza'
+       : ` · amortización ${metodoTxt[e.metodo] || e.metodo}${e.vidaUtilMeses ? ' en ' + e.vidaUtilMeses + ' meses' : ''}${e.coeficiente ? ' al ' + fmt(e.coeficiente) + ' %' : ''} desde el ${fechaES(e.fechaInicioAmortizacion)} hasta el ${fechaES(f.finAmortizacion)}`)
     + (e.valorResidual ? ` · valor residual ${fmt(e.valorResidual)}` : '') + (e.amortizacionPrevia ? ` · amortización previa ${fmt(e.amortizacionPrevia)}` : '')
     + ` · ${estadoInm[e.estado]}${e.fechaBaja ? ' el ' + fechaES(e.fechaBaja) : ''}.`;
   $('#inCuadro').innerHTML = f.cuadro.map(t => `<tr><td>${fechaES(t.desde)}</td><td>${fechaES(t.hasta)}</td><td class="num">${fmt(t.cuota)}</td>
@@ -1280,6 +1282,10 @@ function pintaFicha(f) {
       <td class="num">${fmt(m.acumulada)}</td><td>${m.asientoNumero ? 'nº ' + m.asientoNumero + ' (' + esc(m.ejercicio) + ')' : ''}</td></tr>`).join('')
     || '<tr><td colspan="4" class="vacio">Todavía no se ha contabilizado amortización.</td></tr>';
   pintaBienInversion(e).catch(err => msg($('#inFichaMsg'), err.message, 'ayuda err-texto'));
+  $('#inFiscalResumen').textContent = e.metodoFiscal
+    ? `Fiscal: ${metodoTxt[e.metodoFiscal] || e.metodoFiscal}${e.vidaUtilMesesFiscal ? ' en ' + e.vidaUtilMesesFiscal + ' meses' : ''}${e.coeficienteFiscal ? ' al ' + fmt(e.coeficienteFiscal) + ' %' : ''}. La diferencia con la contable es un ajuste en el Impuesto sobre Sociedades.`
+    : 'La amortización fiscal es igual que la contable.';
+  $('#inFMetodo').value = e.metodoFiscal || ''; $('#inFMeses').value = e.vidaUtilMesesFiscal || ''; $('#inFCoef').value = e.coeficienteFiscal ? String(e.coeficienteFiscal).replace('.', ',') : '';
   $('#inBFecha').value = dentroEj(hoy()); $('#inBTipo').value = 'BAJA'; $('#inBImporte').value = '0'; $('#inBCobro').value = '';
   $('#inBaja').hidden = e.estado !== 'ALTA'; $('#inAnularBaja').hidden = e.estado === 'ALTA';
   $$('#inBajaForm .cab2').forEach(x => x.hidden = e.estado !== 'ALTA');
@@ -1303,6 +1309,30 @@ $('#inAnularBaja').onclick = async () => {
   if (!IN.ficha || !confirm('¿Anular la baja? El elemento vuelve a estar en alta.')) return;
   try { await api(urlX(`/inmovilizado/${IN.ficha.elemento.id}/baja`), { method: 'DELETE' }); await verFicha(IN.ficha.elemento.id); await listaInmovilizado(); msg($('#inFichaMsg'), 'Baja anulada.', 'ayuda ok-texto'); }
   catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+
+const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
+$('#inFGuardar').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    const f = await api(urlE(`/inmovilizado/${IN.ficha.elemento.id}/amortizacion-fiscal`), { method: 'PUT', body: JSON.stringify({
+      metodo: $('#inFMetodo').value || null, vidaUtilMeses: $('#inFMeses').value ? parseInt($('#inFMeses').value, 10) : null,
+      coeficiente: $('#inFCoef').value.trim() ? num($('#inFCoef').value) : null }) });
+    pintaFicha(f); msg($('#inFichaMsg'), 'Amortización fiscal guardada.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#dfVer').onclick = async () => {
+  try {
+    const d = await api(urlX(`/inmovilizado/diferencias-fiscales?tipo=${num($('#dfTipo').value) || 25}`));
+    $('#dfAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    $('#dfLista').innerHTML = d.elementos.map(x => `<tr><td>${esc(x.codigo)}</td><td>${esc(x.descripcion)}</td>
+        <td>${esc(metodoTxt[x.metodoContable] || x.metodoContable)} / ${esc(metodoTxt[x.metodoFiscal] || x.metodoFiscal)}</td>
+        <td class="num">${fmt(x.contable)}</td><td class="num">${fmt(x.fiscal)}</td><td class="num">${fmt(x.ajuste)}</td><td class="num">${fmt(x.acumulada)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="vacio">Sin diferencias.</td></tr>';
+    const caja = (n, v) => `<div><span>${n}</span><strong>${fmt(v)}</strong></div>`;
+    $('#dfTotales').innerHTML = caja('Aumentos', d.aumentos) + caja('Disminuciones', d.disminuciones) + caja('Activo diferido (4740)', d.activoDiferido)
+      + caja('Pasivo diferido (479)', d.pasivoDiferido);
+  } catch (e) { msg($('#inMsg'), e.message, 'ayuda err-texto'); }
 };
 
 // ---- bienes de inversión (regularización del IVA/IGIC, arts. 107-110 LIVA)

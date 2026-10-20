@@ -20,6 +20,8 @@ public interface IInmovilizadoRepositorio
     Task<IReadOnlyList<EjecucionAmortizacionDto>> ListarEjecucionesAsync(long empresaId, long ejercicioId, CancellationToken ct);
     Task AnularAmortizacionAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
 
+    Task<FichaInmovilizadoDto> AmortizacionFiscalAsync(long empresaId, long inmovilizadoId, AmortizacionFiscalCmd cmd, CancellationToken ct);
+    Task<DiferenciasFiscalesDto> DiferenciasFiscalesAsync(long empresaId, long ejercicioId, decimal tipoGravamen, CancellationToken ct);
     Task<BajaRealizadaDto> BajaAsync(long empresaId, long ejercicioId, long usuarioId, long inmovilizadoId, BajaInmovilizadoCmd cmd, CancellationToken ct);
     Task AnularBajaAsync(long empresaId, long ejercicioId, long inmovilizadoId, CancellationToken ct);
 }
@@ -56,6 +58,7 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         public decimal ValorResidual { get; set; }
         public string Metodo { get; set; } = "";
         public int? VidaUtilMeses { get; set; }
+        public decimal? Coeficiente { get; set; }
         public decimal AmortizacionPrevia { get; set; }
         public decimal Registrado { get; set; }
         public DateOnly? UltimoHasta { get; set; }
@@ -64,13 +67,13 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         public long? CuentaAmortAcumuladaId { get; set; }
         public long? CuentaGastoAmortId { get; set; }
 
-        public FichaAmortizacion Ficha => new(ValorAdquisicion, ValorResidual, FechaInicioAmortizacion, VidaUtilMeses, Metodo, AmortizacionPrevia);
+        public FichaAmortizacion Ficha => new(ValorAdquisicion, ValorResidual, FechaInicioAmortizacion, VidaUtilMeses, Metodo, AmortizacionPrevia, Coeficiente);
         public decimal YaAmortizado => AmortizacionPrevia + Registrado;
     }
 
     private const string SelectElemento = """
         SELECT i.id, i.codigo, i.descripcion, i.estado, i.canal_id, k.codigo AS canal, c.tipo AS tipo_categoria,
-               i.fecha_inicio_amortizacion, i.valor_adquisicion, i.valor_residual, i.metodo, i.vida_util_meses, i.amortizacion_previa,
+               i.fecha_inicio_amortizacion, i.valor_adquisicion, i.valor_residual, i.metodo, i.vida_util_meses, i.coeficiente, i.amortizacion_previa,
                COALESCE((SELECT SUM(a.importe) FROM inmov.amortizacion a WHERE a.inmovilizado_id = i.id AND a.base_calculo = 'CONTABLE'), 0) AS registrado,
                (SELECT MAX(a.fecha_hasta) FROM inmov.amortizacion a WHERE a.inmovilizado_id = i.id AND a.base_calculo = 'CONTABLE') AS ultimo_hasta,
                i.asiento_baja_id, c.cuenta_inmovilizado_id, c.cuenta_amort_acumulada_id, c.cuenta_gasto_amort_id
@@ -103,7 +106,7 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         var nombre = (cmd.Nombre ?? "").Trim();
         if (nombre.Length is 0 or > 150) throw new ReglaContableException("El nombre es obligatorio (máximo 150 caracteres).");
         if (!Tipos.Contains(cmd.Tipo)) throw new ReglaContableException("Tipo no válido: MATERIAL, INTANGIBLE o INVERSION_INMOBILIARIA.");
-        if (!CalculadorAmortizacion.Metodos.Contains(cmd.MetodoDefecto)) throw new ReglaContableException("Método no válido: LINEAL o NO_AMORTIZA.");
+        if (cmd.MetodoDefecto is not ("LINEAL" or "NO_AMORTIZA")) throw new ReglaContableException("Método por defecto no válido: LINEAL o NO_AMORTIZA.");
         var amortiza = cmd.MetodoDefecto == "LINEAL";
         if (amortiza && (cmd.CuentaAmortAcumuladaId is null || cmd.CuentaGastoAmortId is null))
             throw new ReglaContableException("Una categoría que se amortiza necesita cuenta de amortización acumulada (28x) y de gasto (68x).");
@@ -138,7 +141,8 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
     // =====================================================================
     private const string SqlResumen = """
         SELECT i.id, i.codigo, i.descripcion, c.nombre AS categoria, k.codigo AS canal, i.fecha_adquisicion, i.fecha_inicio_amortizacion,
-               i.valor_adquisicion, i.valor_residual, i.metodo, i.vida_util_meses, i.amortizacion_previa, i.estado, i.fecha_baja,
+               i.valor_adquisicion, i.valor_residual, i.metodo, i.vida_util_meses, i.coeficiente, i.amortizacion_previa, i.estado, i.fecha_baja,
+               i.metodo_fiscal, i.vida_util_meses_fiscal, i.coeficiente_fiscal,
                i.amortizacion_previa + COALESCE((SELECT SUM(a.importe) FROM inmov.amortizacion a
                                                  WHERE a.inmovilizado_id = i.id AND a.base_calculo = 'CONTABLE'), 0) AS amortizado,
                (SELECT MAX(a.fecha_hasta) FROM inmov.amortizacion a WHERE a.inmovilizado_id = i.id AND a.base_calculo = 'CONTABLE') AS amortizado_hasta
@@ -172,7 +176,8 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         var mes = await cn.ExecuteScalarAsync<int?>(new CommandDefinition(
             "SELECT EXTRACT(MONTH FROM fecha_inicio)::int FROM core.ejercicio WHERE empresa_id = @empresaId ORDER BY fecha_inicio DESC LIMIT 1",
             new { empresaId }, cancellationToken: ct)) ?? 1;
-        var ficha = new FichaAmortizacion(r.ValorAdquisicion, r.ValorResidual, r.FechaInicioAmortizacion, r.VidaUtilMeses, r.Metodo, r.AmortizacionPrevia);
+        var ficha = new FichaAmortizacion(r.ValorAdquisicion, r.ValorResidual, r.FechaInicioAmortizacion, r.VidaUtilMeses, r.Metodo, r.AmortizacionPrevia,
+            r.Coeficiente);
 
         var movimientos = (await cn.QueryAsync<MovimientoAmortizacionDto>(new CommandDefinition("""
             SELECT a.fecha_desde AS desde, a.fecha_hasta AS hasta, a.importe, a.acumulada, a.asiento_id, s.numero AS asiento_numero, e.codigo AS ejercicio
@@ -203,15 +208,15 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
             ?? throw new ReglaContableException("La categoría no existe en la empresa.");
         if (cat.CuentaInmovilizadoId is null) throw new ReglaContableException("La categoría no tiene cuenta de inmovilizado.");
         var metodo = string.IsNullOrWhiteSpace(cmd.Metodo) ? cat.MetodoDefecto : cmd.Metodo.Trim().ToUpperInvariant();
-        if (!CalculadorAmortizacion.Metodos.Contains(metodo)) throw new ReglaContableException("Método no válido: LINEAL o NO_AMORTIZA.");
+        if (!CalculadorAmortizacion.Metodos.Contains(metodo))
+            throw new ReglaContableException("Método no válido: LINEAL, DEGRESIVO, COEFICIENTE_TABLA o NO_AMORTIZA.");
         var meses = cmd.VidaUtilMeses ?? cat.VidaUtilMesesDefecto;
-        if (metodo == "LINEAL")
-        {
-            if (meses is null or <= 0 or > 1200) throw new ReglaContableException("Indica la vida útil en meses (entre 1 y 1.200).");
-            if (cat.CuentaAmortAcumuladaId is null || cat.CuentaGastoAmortId is null)
-                throw new ReglaContableException("La categoría no tiene cuentas de amortización: complétala o elige «no se amortiza».");
-        }
-        var ficha = new FichaAmortizacion(cmd.ValorAdquisicion, cmd.ValorResidual, inicio, meses, metodo);
+        ValidarMetodo(metodo, meses, cmd.Coeficiente);
+        if (metodo != "NO_AMORTIZA" && (cat.CuentaAmortAcumuladaId is null || cat.CuentaGastoAmortId is null))
+            throw new ReglaContableException("La categoría no tiene cuentas de amortización: complétala o elige «no se amortiza».");
+        if (metodo == "DEGRESIVO" && cat.Tipo != "MATERIAL")
+            throw new ReglaContableException("El degresivo es para inmovilizado material (no para intangibles ni inmuebles).");
+        var ficha = new FichaAmortizacion(cmd.ValorAdquisicion, cmd.ValorResidual, inicio, meses, metodo, 0, cmd.Coeficiente);
         if (cmd.AmortizacionPrevia < 0 || cmd.AmortizacionPrevia > ficha.BaseAmortizable)
             throw new ReglaContableException("La amortización previa no puede superar la base amortizable.");
 
@@ -263,15 +268,16 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         {
             id = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
                 INSERT INTO inmov.inmovilizado (empresa_id, categoria_id, canal_id, codigo, descripcion, factura_id, proveedor_id, fecha_adquisicion,
-                    fecha_inicio_amortizacion, valor_adquisicion, valor_residual, metodo, vida_util_meses, amortizacion_previa, asiento_alta_id)
+                    fecha_inicio_amortizacion, valor_adquisicion, valor_residual, metodo, vida_util_meses, coeficiente, amortizacion_previa, asiento_alta_id)
                 VALUES (@empresaId, @categoriaId, @canalId, @codigo, @descripcion, @facturaId, @proveedorId, @adquisicion, @inicio, @valor, @residual,
-                        @metodo, @meses, @previa, @asientoAlta)
+                        @metodo, @meses, @coeficiente, @previa, @asientoAlta)
                 RETURNING id
                 """, new
             {
                 empresaId, categoriaId = cmd.CategoriaId, canalId = cmd.CanalId, codigo, descripcion, facturaId = cmd.FacturaId, proveedorId = cmd.ProveedorId,
                 adquisicion = cmd.FechaAdquisicion, inicio, valor = cmd.ValorAdquisicion, residual = cmd.ValorResidual, metodo,
-                meses = metodo == "LINEAL" ? meses : null, previa = cmd.AmortizacionPrevia, asientoAlta
+                meses = metodo is "LINEAL" or "DEGRESIVO" ? meses : null,
+                coeficiente = metodo is "COEFICIENTE_TABLA" or "DEGRESIVO" ? cmd.Coeficiente : null, previa = cmd.AmortizacionPrevia, asientoAlta
             }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
@@ -352,7 +358,7 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         DateOnly hasta, CancellationToken ct)
     {
         var filas = await cn.QueryAsync<ElementoFila>(new CommandDefinition(SelectElemento + """
-             WHERE i.empresa_id = @empresaId AND i.estado = 'ALTA' AND i.metodo = 'LINEAL' AND i.fecha_inicio_amortizacion <= @hasta
+             WHERE i.empresa_id = @empresaId AND i.estado = 'ALTA' AND i.metodo IN ('LINEAL', 'DEGRESIVO', 'COEFICIENTE_TABLA') AND i.fecha_inicio_amortizacion <= @hasta
             ORDER BY i.codigo
             """, new { empresaId, hasta }, tx, cancellationToken: ct));
         return filas.Select(e => (e, CalculadorAmortizacion.Pendiente(e.Ficha, hasta, e.YaAmortizado))).Where(x => x.Item2 > 0).ToList();
@@ -491,6 +497,77 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
             UPDATE inmov.inmovilizado SET estado = 'ALTA', fecha_baja = NULL, asiento_baja_id = NULL, importe_venta = NULL WHERE id = @id
             """, new { id = e.Id }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
+    }
+
+    // =====================================================================
+    // Amortización fiscal y diferencias temporarias
+    // =====================================================================
+    private static void ValidarMetodo(string metodo, int? meses, decimal? coeficiente)
+    {
+        if (metodo is "LINEAL" or "DEGRESIVO" && meses is null or <= 0 or > 1200)
+            throw new ReglaContableException("Indica la vida útil en meses (entre 1 y 1.200).");
+        if (metodo == "COEFICIENTE_TABLA" && coeficiente is null or <= 0 or > 100)
+            throw new ReglaContableException("Indica el coeficiente anual de las tablas (entre 0 y 100 %).");
+        if (metodo == "DEGRESIVO" && coeficiente is <= 0 or > 100)
+            throw new ReglaContableException("El porcentaje constante debe estar entre 0 y 100.");
+    }
+
+    public async Task<FichaInmovilizadoDto> AmortizacionFiscalAsync(long empresaId, long inmovilizadoId, AmortizacionFiscalCmd cmd, CancellationToken ct)
+    {
+        var metodo = string.IsNullOrWhiteSpace(cmd.Metodo) ? null : cmd.Metodo.Trim().ToUpperInvariant();
+        if (metodo is not null)
+        {
+            if (!CalculadorAmortizacion.MetodosFiscales.Contains(metodo))
+                throw new ReglaContableException("Método fiscal no válido: LINEAL, DEGRESIVO, COEFICIENTE_TABLA o LIBRE.");
+            ValidarMetodo(metodo, cmd.VidaUtilMeses, cmd.Coeficiente);
+        }
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var n = await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE inmov.inmovilizado SET metodo_fiscal = @metodo, vida_util_meses_fiscal = @meses, coeficiente_fiscal = @coeficiente
+            WHERE id = @inmovilizadoId AND empresa_id = @empresaId
+            """, new { metodo, meses = metodo is "LINEAL" or "DEGRESIVO" ? cmd.VidaUtilMeses : null,
+                       coeficiente = metodo is "COEFICIENTE_TABLA" or "DEGRESIVO" ? cmd.Coeficiente : null, inmovilizadoId, empresaId }, cancellationToken: ct));
+        if (n == 0) throw new ReglaContableException("El elemento de inmovilizado no existe.");
+        return await FichaAsync(cn, empresaId, inmovilizadoId, ct);
+    }
+
+    public async Task<DiferenciasFiscalesDto> DiferenciasFiscalesAsync(long empresaId, long ejercicioId, decimal tipoGravamen, CancellationToken ct)
+    {
+        if (tipoGravamen is < 0 or > 100) throw new ReglaContableException("El tipo de gravamen debe estar entre 0 y 100.");
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var ej = await EjercicioAsync(cn, null, empresaId, ejercicioId, ct);
+        var filas = await cn.QueryAsync<InmovilizadoResumenDto>(new CommandDefinition(SqlResumen + """
+             WHERE i.empresa_id = @empresaId AND i.fecha_inicio_amortizacion <= @fin AND (i.fecha_baja IS NULL OR i.fecha_baja >= @inicio)
+             ORDER BY i.codigo
+            """, new { empresaId, inicio = ej.FechaInicio, fin = ej.FechaFin }, cancellationToken: ct));
+        var lista = new List<DiferenciaFiscalDto>();
+        foreach (var r in filas)
+        {
+            if (r.MetodoFiscal is null) continue;
+            var contable = new FichaAmortizacion(r.ValorAdquisicion, r.ValorResidual, r.FechaInicioAmortizacion, r.VidaUtilMeses, r.Metodo, 0, r.Coeficiente);
+            var fiscal = new FichaAmortizacion(r.ValorAdquisicion, r.ValorResidual, r.FechaInicioAmortizacion, r.VidaUtilMesesFiscal, r.MetodoFiscal,
+                0, r.CoeficienteFiscal);
+            var hasta = r.FechaBaja is { } b && b < ej.FechaFin ? b : ej.FechaFin;
+            var antes = ej.FechaInicio.AddDays(-1);
+            decimal Del(FichaAmortizacion f) => CalculadorAmortizacion.AcumuladaA(f, hasta) - CalculadorAmortizacion.AcumuladaA(f, antes);
+            var c = Del(contable); var fi = Del(fiscal);
+            var acumulada = CalculadorAmortizacion.AcumuladaA(contable, hasta) - CalculadorAmortizacion.AcumuladaA(fiscal, hasta);
+            if (r.FechaBaja is { } baja && baja <= ej.FechaFin) acumulada = 0;     // con la baja revierte toda la diferencia
+            lista.Add(new DiferenciaFiscalDto
+            {
+                InmovilizadoId = r.Id, Codigo = r.Codigo, Descripcion = r.Descripcion, MetodoContable = r.Metodo, MetodoFiscal = r.MetodoFiscal,
+                Contable = c, Fiscal = fi, Ajuste = c - fi, Acumulada = acumulada
+            });
+        }
+        var avisos = new List<string>();
+        if (lista.Count == 0) avisos.Add("Ningún elemento tiene una amortización fiscal distinta de la contable.");
+        avisos.Add("La amortización contable es la teórica del método (no lo contabilizado). Los ajustes van en el modelo 200; " +
+                   "el impuesto diferido se contabiliza con el gasto por impuesto (6301 contra 4740 o 479).");
+        var tipo = tipoGravamen / 100m;
+        decimal Imp(decimal v) => Math.Round(v * tipo, 2, MidpointRounding.AwayFromZero);
+        return new DiferenciasFiscalesDto(ej.Codigo, tipoGravamen, lista, lista.Where(l => l.Ajuste > 0).Sum(l => l.Ajuste),
+            -lista.Where(l => l.Ajuste < 0).Sum(l => l.Ajuste), Imp(lista.Where(l => l.Acumulada > 0).Sum(l => l.Acumulada)),
+            Imp(-lista.Where(l => l.Acumulada < 0).Sum(l => l.Acumulada)), avisos);
     }
 
     // =====================================================================

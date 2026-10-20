@@ -125,3 +125,39 @@ public class GeneradorBajaTests
         Cuadra(apuntes);
     }
 }
+
+public class MetodosAmortizacionTests
+{
+    private static readonly DateOnly Ini = new(2026, 1, 1);
+
+    [Fact]
+    public void Coeficiente_de_tablas_es_lineal_al_porcentaje_anual()
+    {
+        var f = new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(10000, 0, Ini, null, "COEFICIENTE_TABLA", 0, 20);
+        Assert.Equal(new DateOnly(2030, 12, 30), f.Fin);                       // 1.825 días (20 % × días / 365): 2028 es bisiesto
+        Assert.Equal(2000m, Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, new DateOnly(2026, 12, 31)));
+        Assert.Equal(10000m, Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, new DateOnly(2031, 3, 1)));
+    }
+
+    [Fact]
+    public void Degresivo_porcentaje_constante_y_resto_el_ultimo_anio()
+    {
+        // 10 años: lineal 10 % × 2,5 = 25 % sobre el valor pendiente
+        var f = new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(10000, 0, Ini, 120, "DEGRESIVO");
+        Assert.Equal(25m, f.PorcentajeDegresivo);
+        var A = (DateOnly d) => Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, d);
+        Assert.Equal(2500m, A(new DateOnly(2026, 12, 31)));
+        Assert.Equal(4375m, A(new DateOnly(2027, 12, 31)));                     // 2.500 + 25 % de 7.500
+        Assert.Equal(10000m, A(new DateOnly(2035, 12, 31)));                    // el último año se amortiza lo que queda
+        Assert.True(A(new DateOnly(2035, 6, 30)) < 10000m);
+        Assert.Equal(1.5m * 100m / 4m, new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(1, 0, Ini, 48, "DEGRESIVO").PorcentajeDegresivo);
+        Assert.Equal(2m * 100m / 6m, new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(1, 0, Ini, 72, "DEGRESIVO").PorcentajeDegresivo, 3);
+    }
+
+    [Fact]
+    public void Libertad_de_amortizacion_todo_el_primer_dia()
+    {
+        var f = new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(3000, 0, Ini, null, "LIBRE");
+        Assert.Equal(3000m, Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, Ini));
+    }
+}

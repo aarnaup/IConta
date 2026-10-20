@@ -648,7 +648,11 @@
           <label>Código <input id="inCodigo" maxlength="20" placeholder="Automático"></label>
           <label>Valor de adquisición <input id="inValor" inputmode="decimal"></label>
           <label>Valor residual <input id="inResidual" inputmode="decimal" value="0"></label>
+          <label>Método <select id="inMetodo"><option value="">El de la categoría</option><option value="LINEAL">Lineal</option>
+            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
+            <option value="NO_AMORTIZA">No se amortiza</option></select></label>
           <label>Vida útil (meses) <input id="inMeses" inputmode="numeric"></label>
+          <label>Coeficiente anual (%) <input id="inCoef" inputmode="decimal" placeholder="Tablas; en degresivo, opcional"></label>
           <label>Amortización previa <input id="inPrevia" inputmode="decimal" value="0" title="Lo ya amortizado en otro programa"></label>
           <label>Contabilizar la compra contra <input id="inContra" list="dl-cuentas" placeholder="Vacío si ya está con su factura"></label>
         </div>
@@ -668,6 +672,18 @@
         <h3>Amortización contabilizada</h3>
         <table><thead><tr><th>Periodo</th><th class="num">Importe</th><th class="num">Acumulada</th><th>Asiento</th></tr></thead>
         <tbody id="inMovs"></tbody></table>
+        <div id="inFiscal">
+          <h3>Amortización fiscal</h3>
+          <p id="inFiscalResumen" class="ayuda"></p>
+          <div class="cab2" data-req="INMOVILIZADO:ESCRITURA">
+            <label>Método fiscal <select id="inFMetodo"><option value="">Igual que la contable</option><option value="LINEAL">Lineal</option>
+              <option value="DEGRESIVO">Degresivo</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
+              <option value="LIBRE">Libertad de amortización</option></select></label>
+            <label>Vida útil fiscal (meses) <input id="inFMeses" inputmode="numeric"></label>
+            <label>Coeficiente fiscal (%) <input id="inFCoef" inputmode="decimal"></label>
+          </div>
+          <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inFGuardar" type="button">Guardar amortización fiscal</button></div>
+        </div>
         <div id="inBI">
           <h3>Bien de inversión (IVA/IGIC)</h3>
           <p id="inBIResumen" class="ayuda"></p>
@@ -714,6 +730,20 @@
         <h3>Amortizaciones contabilizadas en este ejercicio</h3>
         <table><thead><tr><th>Asiento</th><th>Fecha</th><th class="num">Elementos</th><th class="num">Total</th><th></th></tr></thead>
         <tbody id="amHechas"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Diferencias entre amortización contable y fiscal</h2>
+        <p class="ayuda">Elementos con amortización fiscal distinta: ajuste del ejercicio en el Impuesto sobre Sociedades (positivo, aumento; negativo,
+          disminución) y el impuesto diferido acumulado.</p>
+        <div class="fila-acciones">
+          <label>Tipo de gravamen (%) <input id="dfTipo" inputmode="decimal" value="25" style="width:5em"></label>
+          <button class="btn" id="dfVer" type="button">Calcular</button>
+        </div>
+        <ul id="dfAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Código</th><th>Descripción</th><th>Contable / fiscal</th><th class="num">Amort. contable</th><th class="num">Amort. fiscal</th>
+          <th class="num">Ajuste</th><th class="num">Diferencia acumulada</th></tr></thead><tbody id="dfLista"></tbody></table>
+        <div class="totales" id="dfTotales"></div>
       </div>
 
       <div class="panel">

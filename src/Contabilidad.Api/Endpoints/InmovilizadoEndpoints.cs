@@ -34,6 +34,14 @@ public static class InmovilizadoEndpoints
             => Results.Ok(await r.FichaAsync(empresaId, inmovilizadoId, ct)))
             .Requiere(Nivel.Lectura, Modulo.Inmovilizado);
 
+        emp.MapPut("/{inmovilizadoId:long}/amortizacion-fiscal", async (long empresaId, long inmovilizadoId, AmortizacionFiscalCmd cmd, HttpContext http,
+            IInmovilizadoRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var f = await r.AmortizacionFiscalAsync(empresaId, inmovilizadoId, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "INMOVILIZADO_AMORTIZACION_FISCAL", "inmovilizado", inmovilizadoId, cmd, ct);
+            return Results.Ok(f);
+        }).Requiere(Nivel.Escritura, Modulo.Inmovilizado);
+
         // ---- Dentro del ejercicio ----
         var ej = app.MapGroup("/api/empresas/{empresaId:long}/ejercicios/{ejercicioId:long}/inmovilizado").RequireAuthorization();
 
@@ -48,6 +56,10 @@ public static class InmovilizadoEndpoints
                 new { f.Elemento.Codigo, f.Elemento.ValorAdquisicion }, ct);
             return Results.Created($"/api/empresas/{empresaId}/inmovilizado/{f.Elemento.Id}", f);
         }).Requiere(Nivel.Escritura, Modulo.Inmovilizado);
+
+        ej.MapGet("/diferencias-fiscales", async (long empresaId, long ejercicioId, decimal? tipo, IInmovilizadoRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.DiferenciasFiscalesAsync(empresaId, ejercicioId, tipo ?? 25, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Inmovilizado, Modulo.Fiscal);
 
         ej.MapGet("/amortizacion", (long empresaId, long ejercicioId, IInmovilizadoRepositorio r, CancellationToken ct)
             => r.ListarEjecucionesAsync(empresaId, ejercicioId, ct))
