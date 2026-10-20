@@ -25,10 +25,10 @@ public static class EmpresaEndpoints
         {
             var a = http.Acceso();
             return Results.Ok(new { rol = a.Rol, puedeContabilizarDirecto = a.PuedeContabilizarDirecto, permisos = a.Resumen() });
-        }).RequireAcceso();
+        }).RequiereAcceso();
 
         emp.MapGet("/ejercicios", (long empresaId, ICatalogoRepositorio c, CancellationToken ct)
-            => c.ListarEjerciciosAsync(empresaId, ct)).RequireAcceso();
+            => c.ListarEjerciciosAsync(empresaId, ct)).RequiereAcceso();
 
         // ---- Plan, diarios y canales ----
         emp.MapGet("/cuentas", (long empresaId, string? q, ICatalogoRepositorio c, CancellationToken ct)
