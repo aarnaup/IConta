@@ -30,5 +30,8 @@ public sealed class InfrastructureModule(string connectionString) : Autofac.Modu
         builder.RegisterType<TesoreriaRepositorio>().As<ITesoreriaRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<FiscalRepositorio>().As<IFiscalRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<AsientoRepositorio>().As<IAsientoRepositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<LiquidacionIvaRepositorio>().As<ILiquidacionIvaRepositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<CierreEjercicioRepositorio>().As<ICierreEjercicioRepositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<BalancesRepositorio>().As<IBalancesRepositorio>().InstancePerLifetimeScope();
     }
 }

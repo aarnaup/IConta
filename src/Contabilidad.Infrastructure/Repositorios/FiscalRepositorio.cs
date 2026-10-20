@@ -384,8 +384,10 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         await using var cn = await conexiones.AbrirAsync(ct);
         return (await cn.QueryAsync<DeclaracionResumenDto>(new CommandDefinition("""
             SELECT d.id, m.codigo AS modelo, m.nombre, d.anio, d.periodo, d.numero_presentacion, d.estado, d.resultado,
-                   d.a_ingresar, d.a_devolver, d.a_compensar, d.fecha_presentacion, d.justificante
+                   d.a_ingresar, d.a_devolver, d.a_compensar, d.fecha_presentacion, d.justificante,
+                   s.id AS asiento_id, s.numero AS asiento_numero
             FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
+            LEFT JOIN conta.asiento s ON s.id = d.asiento_id AND s.estado <> 'ANULADO'
             WHERE d.empresa_id = @empresaId AND d.estado <> 'ANULADA' AND (@anio::int IS NULL OR d.anio = @anio)
             ORDER BY d.anio DESC, d.fecha_fin DESC, m.codigo, d.numero_presentacion DESC
             """, new { empresaId, anio }, cancellationToken: ct))).AsList();

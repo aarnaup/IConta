@@ -90,3 +90,17 @@
   .totales div{border:1px solid var(--line, #d9dde3); border-radius:8px; padding:8px 14px; min-width:140px}
   .totales span{display:block; font-size:.8rem; color:var(--muted)}
   .totales strong{font-size:1.15rem; font-variant-numeric:tabular-nums}
+
+  /* Balances */
+  table.balance tr.total td{font-weight:650; border-top:1px solid var(--line)}
+  table.balance tr.partida[data-abre]{cursor:pointer}
+  table.balance tr.partida[data-abre] td:first-child::before{content:"▸ "; color:var(--muted)}
+  table.balance tr.partida.abierta td:first-child::before{content:"▾ "}
+  table.balance tr.detalle td{color:var(--muted); font-size:13px}
+  @media print{
+    header, nav, .solo-pantalla, #avisoEjercicio, #avisoBorrador{display:none !important}
+    body, .panel{background:#fff; color:#000; border:0}
+    main{padding:0; max-width:none}
+    table.balance tr.detalle{display:none}
+    table.balance tr.partida td:first-child::before{content:none !important}
+  }

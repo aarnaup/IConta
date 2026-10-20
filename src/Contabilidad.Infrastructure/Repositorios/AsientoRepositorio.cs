@@ -9,9 +9,13 @@ public interface IAsientoRepositorio
 {
     Task<AsientoCreado> CrearAsync(long empresaId, long ejercicioId, long usuarioId, CrearAsientoCmd cmd, CancellationToken ct);
 
-    /// <summary>Crea el asiento dentro de una transacción existente (p. ej. al contabilizar una factura).</summary>
+    /// <summary>
+    /// Crea el asiento dentro de una transacción existente (p. ej. al contabilizar una factura).
+    /// <paramref name="tipoPeriodo"/>: NORMAL para el trabajo diario; APERTURA, REGULARIZACION o CIERRE para los asientos de fin de ejercicio.
+    /// </summary>
     Task<AsientoCreado> CrearEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId,
-        long? usuarioId, CrearAsientoCmd cmd, string origen, long? plantillaId, string? documento, CancellationToken ct);
+        long? usuarioId, CrearAsientoCmd cmd, string origen, long? plantillaId, string? documento, CancellationToken ct,
+        string tipoPeriodo = "NORMAL", long? asientoOrigenId = null);
 
     Task<IReadOnlyList<FilaAsientoDto>> ListarAsync(long empresaId, long ejercicioId, int limite, CancellationToken ct);
     Task<IReadOnlyList<FilaMayorDto>> MayorAsync(long empresaId, long ejercicioId, string cuenta, long? canalBaseId, CancellationToken ct);
@@ -40,7 +44,8 @@ public sealed class AsientoRepositorio(
     }
 
     public async Task<AsientoCreado> CrearEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId,
-        long? usuarioId, CrearAsientoCmd cmd, string origen, long? plantillaId, string? documento, CancellationToken ct)
+        long? usuarioId, CrearAsientoCmd cmd, string origen, long? plantillaId, string? documento, CancellationToken ct,
+        string tipoPeriodo = "NORMAL", long? asientoOrigenId = null)
     {
         if (cmd.Apuntes.Count < 2 && !cmd.Borrador)
             throw new ReglaContableException("Un asiento necesita al menos dos apuntes.");
@@ -56,15 +61,17 @@ public sealed class AsientoRepositorio(
             configs[canalId] = await canales.ObtenerConfiguracionAsync(empresaId, canalId, cmd.Fecha, ct);
         var repartos = cmd.Apuntes.Select(a => repartidor.Repartir(configs[a.CanalId], a.Debe, a.Haber)).ToList();
 
-        // 2) El ejercicio ELEGIDO debe contener la fecha y estar abierto, igual que el periodo
+        // 2) El ejercicio ELEGIDO debe contener la fecha y estar abierto, igual que el periodo.
+        //    FOR SHARE: un cierre simultáneo espera a este asiento, y si el cierre gana, aquí ya se ve el ejercicio cerrado.
         var ctx = await cn.QuerySingleOrDefaultAsync<Contexto>(new CommandDefinition("""
             SELECT e.id AS ejercicio_id, p.id AS periodo_id
             FROM core.ejercicio e
-            JOIN core.periodo p ON p.ejercicio_id = e.id AND p.tipo = 'NORMAL'
+            JOIN core.periodo p ON p.ejercicio_id = e.id AND p.tipo = @tipoPeriodo
                                AND @fecha BETWEEN p.fecha_inicio AND p.fecha_fin AND p.estado = 'ABIERTO'
             WHERE e.id = @ejercicioId AND e.empresa_id = @empresaId AND e.estado = 'ABIERTO'
               AND @fecha BETWEEN e.fecha_inicio AND e.fecha_fin
-            """, new { empresaId, ejercicioId, fecha = cmd.Fecha }, tx, cancellationToken: ct))
+            FOR SHARE OF e
+            """, new { empresaId, ejercicioId, fecha = cmd.Fecha, tipoPeriodo }, tx, cancellationToken: ct))
             ?? throw new ReglaContableException(
                 $"La fecha {cmd.Fecha:dd/MM/yyyy} no está dentro del ejercicio seleccionado, o el ejercicio o el periodo están cerrados.");
 
@@ -111,14 +118,14 @@ public sealed class AsientoRepositorio(
         var estado = cmd.Borrador ? "BORRADOR" : "CONTABILIZADO";
         var asientoId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
             INSERT INTO conta.asiento (empresa_id, ejercicio_id, periodo_id, diario_id, numero, fecha, concepto, estado, origen,
-                                       plantilla_id, documento, creado_por)
+                                       plantilla_id, documento, asiento_origen_id, creado_por)
             VALUES (@empresaId, @ejercicioId, @periodoId, @diarioId, @numero, @fecha, @concepto, @estado, @origen,
-                    @plantillaId, @documento, @usuarioId)
+                    @plantillaId, @documento, @asientoOrigenId, @usuarioId)
             RETURNING id
             """, new
         {
             empresaId, ejercicioId = ctx.EjercicioId, periodoId = ctx.PeriodoId, diarioId = cmd.DiarioId,
-            numero, fecha = cmd.Fecha, concepto = cmd.Concepto.Trim(), estado, origen, plantillaId, documento, usuarioId
+            numero, fecha = cmd.Fecha, concepto = cmd.Concepto.Trim(), estado, origen, plantillaId, documento, asientoOrigenId, usuarioId
         }, tx, cancellationToken: ct));
 
         // 5) Apuntes + reparto materializado por canal base

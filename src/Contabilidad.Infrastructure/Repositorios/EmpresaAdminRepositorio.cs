@@ -148,14 +148,16 @@ public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpr
             INSERT INTO conta.cuenta_automatica (empresa_id, rol, cuenta_id)
             SELECT @empresaId, m.rol, c.id
             FROM (VALUES ('IVA_SOPORTADO','4720'), ('IVA_REPERCUTIDO','4770'), ('RETENCION_SOPORTADA','4730'),
-                         ('RETENCION_PRACTICADA','4751'), ('COMPRAS','6000'), ('VENTAS','7000')) m(rol, cod)
+                         ('RETENCION_PRACTICADA','4751'), ('COMPRAS','6000'), ('VENTAS','7000'),
+                         ('HP_ACREEDORA_IVA','4750'), ('HP_DEUDORA_IVA','4700'), ('RESULTADO_EJERCICIO','1290')) m(rol, cod)
             JOIN conta.cuenta c ON c.empresa_id = @empresaId AND c.codigo = rpad(m.cod, @digitos, '0')
             RETURNING rol
             """, new { empresaId, digitos }, tx, cancellationToken: ct))).ToHashSet();
 
-        foreach (var rol in new[] { "IVA_SOPORTADO", "IVA_REPERCUTIDO", "RETENCION_SOPORTADA", "RETENCION_PRACTICADA", "COMPRAS", "VENTAS" })
+        foreach (var rol in new[] { "IVA_SOPORTADO", "IVA_REPERCUTIDO", "RETENCION_SOPORTADA", "RETENCION_PRACTICADA", "COMPRAS", "VENTAS",
+                                    "HP_ACREEDORA_IVA", "HP_DEUDORA_IVA", "RESULTADO_EJERCICIO" })
             if (!asignadas.Contains(rol))
-                avisos.Add($"No se encontró la cuenta para el rol {rol}: configúrala en cuentas automáticas antes de contabilizar facturas.");
+                avisos.Add($"No se encontró la cuenta para el rol {rol}: configúrala en cuentas automáticas.");
     }
 
     // ------------------------------------------------------------------ ejercicios

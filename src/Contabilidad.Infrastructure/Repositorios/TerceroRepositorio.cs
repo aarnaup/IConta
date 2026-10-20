@@ -31,7 +31,7 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
         return (await cn.QueryAsync<TerceroDto>(new CommandDefinition(sql, new { empresaId, tipo, q }, cancellationToken: ct))).AsList();
     }
 
-    /// <summary>Alta de cliente/proveedor: reutiliza el NIF si ya existe y crea la subcuenta (430... / 400...).</summary>
+    /// <summary>Alta de cliente/proveedor: reutiliza el NIF si ya existe y crea la subcuenta (4300... / 4000...).</summary>
     public async Task<TerceroDto> CrearAsync(long empresaId, CrearTerceroCmd cmd, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(cmd.Nif) || string.IsNullOrWhiteSpace(cmd.Nombre))
@@ -54,8 +54,8 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             RETURNING id
             """, new { tipo = cmd.TipoDocumento, numero = nif, nombre = cmd.Nombre.Trim() }, tx, cancellationToken: ct));
 
-        var cli = cmd.EsCliente ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "430", digitos, $"Cliente {cmd.Nombre.Trim()}", "DEUDORA", ct) : null;
-        var pro = cmd.EsProveedor ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "400", digitos, $"Proveedor {cmd.Nombre.Trim()}", "ACREEDORA", ct) : null;
+        var cli = cmd.EsCliente ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4300", digitos, $"Cliente {cmd.Nombre.Trim()}", "DEUDORA", ct) : null;
+        var pro = cmd.EsProveedor ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4000", digitos, $"Proveedor {cmd.Nombre.Trim()}", "ACREEDORA", ct) : null;
         var codigo = (cli ?? pro)!.Codigo;
 
         long id;
@@ -89,6 +89,10 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
         };
     }
 
+    /// <summary>
+    /// Siguiente subcuenta libre dentro de <paramref name="prefijo"/> (4300 clientes en euros, 4000 proveedores en euros).
+    /// Se numera dentro de la subcuenta de 4 dígitos para no invadir otras del PGC, como la 4309 (facturas pendientes de formalizar).
+    /// </summary>
     private static async Task<Subcuenta> SiguienteSubcuentaAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId,
         string prefijo, int digitos, string nombre, string naturaleza, CancellationToken ct)
     {
@@ -99,11 +103,18 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
 
         var siguiente = max == 0 ? long.Parse(prefijo.PadRight(digitos, '0')) + 1 : max + 1;
         var codigo = siguiente.ToString();
+        if (!codigo.StartsWith(prefijo, StringComparison.Ordinal) || codigo.Length != digitos)
+            throw new ReglaContableException($"No quedan subcuentas libres en la {prefijo}.",
+                "Aumenta los dígitos de cuenta de la empresa o crea la subcuenta a mano.");
 
+        // Cuelga de la cuenta de 3 dígitos (430 / 400) si la empresa tiene el plan cargado
         var id = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
-            INSERT INTO conta.cuenta (empresa_id, codigo, nombre, nivel, naturaleza, es_imputable, requiere_tercero)
-            VALUES (@empresaId, @codigo, @nombre, 4, @naturaleza, true, true) RETURNING id
-            """, new { empresaId, codigo, nombre, naturaleza }, tx, cancellationToken: ct));
+            INSERT INTO conta.cuenta (empresa_id, codigo, nombre, nivel, padre_id, naturaleza, es_imputable, requiere_tercero)
+            VALUES (@empresaId, @codigo, @nombre, 4,
+                    (SELECT id FROM conta.cuenta WHERE empresa_id = @empresaId AND codigo = @padre),
+                    @naturaleza, true, true)
+            RETURNING id
+            """, new { empresaId, codigo, nombre, padre = prefijo[..3], naturaleza }, tx, cancellationToken: ct));
         return new Subcuenta { Id = id, Codigo = codigo };
     }
 }

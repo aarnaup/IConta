@@ -1,7 +1,7 @@
 # Contabilidad (.NET 10 · Dapper · Autofac · Serilog · PostgreSQL)
 
 ## Estructura (`Contabilidad.slnx`)
-- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas).
+- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES).
 - `src/Contabilidad.Domain` → reglas puras: canales (`RepartidorCanales`, evaluador de fórmulas) y facturación (`FacturaCalculadora`, `ResolutorCuentas`, `GeneradorAsientoFactura`).
 - `src/Contabilidad.Infrastructure` → Dapper + Npgsql, repositorios y módulo Autofac.
 - `src/Contabilidad.Api` → API minimal + Serilog + UI estática (`wwwroot/index.html`).
@@ -16,6 +16,7 @@ psql contabilidad -f database/03_facturacion_demo.sql
 psql contabilidad -f database/04_seguridad.sql
 psql contabilidad -f database/05_tesoreria.sql
 psql contabilidad -f database/06_fiscal.sql
+psql contabilidad -f database/07_pgc.sql
 
 # clave de firma JWT (mín. 32 caracteres; en Development ya hay una de pruebas)
 export Jwt__Key="<cadena-aleatoria-larga>"
@@ -26,9 +27,18 @@ dotnet test Contabilidad.slnx
 dotnet run --project src/Contabilidad.Api    # cadena de conexión en appsettings.json
 ```
 
+## Plan General Contable
+`07_pgc.sql` carga en `cat.cuenta_modelo` el cuadro de cuentas del PGC Normal (RD 1514/2007, 1.218 cuentas) y del PGC de PYMES (RD 1515/2007, 992 cuentas), con las modificaciones de 2016 y 2021, hasta 4 dígitos. Se puede volver a ejecutar sin duplicar.
+
+- Al dar de alta una empresa se copia el plan elegido: grupos, subgrupos y cuentas tal cual; las subcuentas (4 dígitos) se rellenan con ceros hasta los dígitos de la empresa (`4300` → `43000000`) y son las únicas que admiten apuntes.
+- Cada cuenta de 3 dígitos sin subcuentas en el PGC recibe la subcuenta `xxx0` con su mismo nombre (`5720`, `6000`, `7000`...), así siempre hay dónde asentar.
+- La naturaleza (deudora/acreedora/mixta) se asigna por grupo con excepciones para las cuentas correctoras (amortizaciones, deterioros, devoluciones, rappels...).
+- Las subcuentas de clientes y proveedores se numeran dentro de `4300` y `4000` (`43000001`, `40000001`...).
+- La lista se ha escrito a partir del cuadro de cuentas publicado; **conviene contrastarla con el BOE** antes de usarla en producción, sobre todo las diferencias entre Normal y PYMES.
+
 ## Facturas
-`POST /api/empresas/{id}/facturas/previsualizar` calcula cuotas y devuelve el asiento previsto sin guardar nada.
-`POST /api/empresas/{id}/facturas` guarda la factura y, si no es borrador, genera el asiento en la misma transacción.
+`POST /api/empresas/{id}/ejercicios/{ej}/facturas/previsualizar` calcula cuotas y devuelve el asiento previsto sin guardar nada.
+`POST /api/empresas/{id}/ejercicios/{ej}/facturas` guarda la factura y, si no es borrador, genera el asiento en la misma transacción.
 
 - % de IVA/IGIC: el vigente en la fecha de devengo (`fechaOperacion`, o la de expedición).
 - Recargo de equivalencia: en emitidas, si el cliente lo tiene marcado; en recibidas, si la empresa está en ese régimen.
@@ -73,7 +83,41 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - **Numeración de casillas**: el 303 usa la del formulario (01–09, 16–24, 27, 28–31, 44–46, 64–71…); el IGIC y los resúmenes usan claves descriptivas. **Contrástala con el formulario del año antes de presentar**: esta aplicación calcula y registra, pero no genera el fichero oficial ni envía nada a la Agencia Tributaria.
 - Un tipo de IVA sin casilla (p. ej. 7 % en el 303) o una operación intracomunitaria/importación **detiene el cálculo** con un error en vez de omitirse en silencio.
 
-## Pendiente
-Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; asiento de liquidación del IVA/IGIC; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; analítica, presupuestos y balances; carga de los datos del PGC en `cat.cuenta_modelo` (hoy vacía); cierre de ejercicios; gestión de catálogos e impresos en la UI de administración.
+## Liquidación del IVA/IGIC
+`POST /api/empresas/{id}/ejercicios/{ej}/fiscal/declaraciones/{d}/asiento` contabiliza la liquidación de un 303 o 420 **presentado** (`.../asiento/previsualizar` la calcula sin guardar; `DELETE .../asiento` la anula).
 
-**El código C# no se ha compilado ni ejecutado** (no había SDK de .NET disponible): el primer `dotnet build` puede sacar errores. Los scripts SQL 01→06 sí se han ejecutado de principio a fin en PostgreSQL 16, y las consultas de tesorería y de modelos fiscales se han probado contra esa base con datos de ejemplo.
+- Salda las cuentas 472 y 477 con su saldo a la fecha de fin del periodo: 477 (D) a 472 (H). La diferencia va a la **4750** si sale a ingresar o a la **4700** si sale a compensar o devolver.
+- Si la declaración aplica cuotas a compensar de periodos anteriores, esa parte sale de la 4700 (H) y solo el resto va a la 4750.
+- Se calcula canal a canal, como el resto de la contabilidad. Si ningún canal coincide con el resultado de la declaración, avisa (facturas contabilizadas después de presentar, apuntes manuales, periodos sin liquidar…).
+- Las liquidaciones van en orden: no se puede contabilizar un periodo si hay otro posterior ya liquidado, ni anular uno que tenga otro posterior.
+- La regularización por prorrata definitiva no está en la contabilidad: se avisa para registrarla a mano (634/639).
+- Cuentas: roles `HP_ACREEDORA_IVA` y `HP_DEUDORA_IVA` en cuentas automáticas o, si no, las subcuentas 4750 y 4700 del plan.
+
+## Cierre de ejercicio
+`GET /api/empresas/{id}/ejercicios/{ej}/cierre` dice si se puede cerrar, qué lo impide y el resultado por canal. `POST .../cierre` cierra; `POST .../cierre/deshacer` lo revierte.
+
+- En una transacción: **regularización** (periodo 13: gastos e ingresos contra la 129), **cierre** (periodo 14: todas las cuentas a cero) y **apertura** del ejercicio siguiente (periodo 0, mismos saldos). El ejercicio queda `CERRADO` y no admite más asientos.
+- Requisitos: el ejercicio anterior cerrado, el siguiente creado y contiguo, sin asientos ni facturas en borrador, sin saldo en los grupos 8 y 9 y con cuenta 129 (rol `RESULTADO_EJERCICIO`). Avisa si queda IVA/IGIC sin liquidar.
+- Deshacer anula los tres asientos (si el ejercicio siguiente sigue abierto) y reabre el ejercicio.
+- En la web: botón «Contabilizar liquidación» en Modelos fiscales y pestaña «Cierre».
+
+## Balances
+`GET /api/empresas/{id}/ejercicios/{ej}/balances/...` (permiso de lectura en Balances o Contabilidad). En la web, pestaña «Balances», con opción de imprimir.
+
+| Informe | Ruta | Parámetros |
+|---|---|---|
+| Sumas y saldos | `sumas-saldos` | `desde`, `hasta`, `nivel` (1 grupo … 4 subcuenta, 5 cuenta completa), `incluir` (MOVIMIENTOS, REGULARIZACION, CIERRE) |
+| Balance de situación | `situacion` | `hasta` |
+| Pérdidas y ganancias | `perdidas-ganancias` | `desde`, `hasta` |
+
+- Todo es **por canal base** (`canalId`, por defecto el primero): cada canal es una contabilidad completa y no se suman entre sí.
+- Balance y PyG siguen el **modelo PYMES/abreviado** y llevan la columna del ejercicio anterior. Se calculan sin los asientos de regularización y cierre, así que también sirven para ejercicios ya cerrados. Antes de regularizar, el resultado del ejercicio sale de los grupos 6 y 7.
+- Cada cuenta va a la partida cuyo prefijo coincide con más dígitos. Las cuentas corrientes (551, 552, 555…) van al activo o al pasivo según su saldo. Cada partida se puede desplegar para ver sus cuentas.
+- Si una cuenta con saldo no encaja en ninguna partida, se lista aparte; si el balance no cuadra, se avisa. Un test comprueba que todas las subcuentas del PGC cargado tienen partida.
+- **Contrasta la asignación de cuentas y la numeración con el modelo oficial antes de depositar las cuentas.** No hay todavía modelo normal completo, estado de cambios en el patrimonio neto, estado de flujos de efectivo ni memoria.
+
+## Pendiente
+Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; traspaso automático de los grupos 8 y 9 al subgrupo 13 en el cierre; asiento de regularización de la prorrata definitiva; aplicación del resultado (de la 129 a reservas o dividendos); modelo normal de cuentas anuales, estado de cambios en el patrimonio neto, flujos de efectivo y memoria; analítica y presupuestos; gestión de catálogos e impresos en la UI de administración.
+
+## Estado de verificación
+Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 149 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→07 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). También el alta de empresas con el PGC Normal y PYMES, y en una de ellas cliente, factura, cobro y modelo 303. También la liquidación del IGIC de tres trimestres seguidos (a ingresar, a compensar y compensando lo anterior, con una venta repartida en tres canales) y el cierre del ejercicio con su apertura, deshacer y volver a cerrar, por la API y desde la web. Y los balances de sumas y saldos, situación y pérdidas y ganancias de esos dos ejercicios, con comparativo, por canal y en pantalla e impresión.

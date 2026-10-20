@@ -33,6 +33,9 @@ public sealed class DeclaracionResumenDto
     public decimal? ACompensar { get; set; }
     public DateOnly? FechaPresentacion { get; set; }
     public string? Justificante { get; set; }
+    /// <summary>Asiento de liquidación (303/420), si está contabilizado.</summary>
+    public long? AsientoId { get; set; }
+    public int? AsientoNumero { get; set; }
 }
 
 /// <summary>Declaración calculada o guardada, tal y como la ve la interfaz.</summary>

@@ -1,5 +1,10 @@
 <Solution>
-  <Project Path="src/Contabilidad.Api/Contabilidad.Api.csproj" />
-  <Project Path="src/Contabilidad.Domain/Contabilidad.Domain.csproj" />
-  <Project Path="src/Contabilidad.Infrastructure/Contabilidad.Infrastructure.csproj" />
+  <Folder Name="/src/">
+    <Project Path="src/Contabilidad.Api/Contabilidad.Api.csproj" />
+    <Project Path="src/Contabilidad.Domain/Contabilidad.Domain.csproj" />
+    <Project Path="src/Contabilidad.Infrastructure/Contabilidad.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Contabilidad.Tests/Contabilidad.Tests.csproj" />
+  </Folder>
 </Solution>

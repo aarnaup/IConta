@@ -162,6 +162,8 @@
     <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
     <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
+    <button data-tab="balances" data-req="BALANCES" aria-pressed="false">Balances</button>
+    <button data-tab="cierre" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Cierre</button>
   </nav>
 
   <section id="tab-asiento" hidden>
@@ -377,10 +379,82 @@
         <p id="mfPresentarMsg" class="ayuda" role="status"></p>
       </div>
 
+      <div class="panel" id="mfLiqPanel" hidden>
+        <h2 id="mfLiqTitulo">Asiento de liquidación</h2>
+        <p class="ayuda">Salda las cuentas de IVA/IGIC soportado (472) y repercutido (477) a la fecha de fin del periodo, canal a canal.
+          La diferencia va a Hacienda acreedora (4750) si sale a ingresar, o deudora (4700) si sale a compensar o devolver.</p>
+        <div class="cab2">
+          <label>Fecha del asiento <input type="date" id="mfLiqFecha"></label>
+        </div>
+        <ul id="mfLiqAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Canal</th><th class="num">Repercutido</th><th class="num">Soportado</th><th class="num">Compensado</th><th class="num">A ingresar</th><th class="num">A favor</th></tr></thead>
+        <tbody id="mfLiqCanales"></tbody></table>
+        <h3>Apuntes</h3>
+        <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
+        <tbody id="mfLiqApuntes"></tbody></table>
+        <div class="fila-acciones">
+          <button class="btn primario" id="mfLiqGuardar" data-guarda type="button">Contabilizar</button>
+          <button class="btn" id="mfLiqCancelar" type="button">Cancelar</button>
+        </div>
+        <p id="mfLiqMsg" class="ayuda" role="status"></p>
+      </div>
+
       <div class="panel">
         <h2>Declaraciones guardadas</h2>
-        <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th></th></tr></thead>
+        <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-balances" hidden>
+    <div class="panel">
+      <div class="cab2 solo-pantalla">
+        <label>Informe <select id="baInforme">
+          <option value="situacion">Balance de situación</option>
+          <option value="perdidas-ganancias">Pérdidas y ganancias</option>
+          <option value="sumas-saldos">Sumas y saldos</option></select></label>
+        <label>Canal <select id="baCanal"></select></label>
+        <label id="baDesdeL">Desde <input type="date" id="baDesde"></label>
+        <label>Hasta <input type="date" id="baHasta"></label>
+        <label id="baNivelL">Nivel <select id="baNivel">
+          <option value="1">Grupo</option><option value="2">Subgrupo</option><option value="3">Cuenta (3 dígitos)</option>
+          <option value="4">Subcuenta (4 dígitos)</option><option value="5" selected>Cuenta completa</option></select></label>
+        <label id="baIncluirL">Asientos <select id="baIncluir">
+          <option value="MOVIMIENTOS">Sin regularización ni cierre</option><option value="REGULARIZACION">Con regularización</option>
+          <option value="CIERRE">Con cierre</option></select></label>
+      </div>
+      <div class="fila-acciones solo-pantalla">
+        <button class="btn primario" id="baVer" type="button">Ver</button>
+        <button class="btn" id="baImprimir" type="button">Imprimir</button>
+      </div>
+      <p id="baMsg" class="ayuda solo-pantalla" role="status"></p>
+      <h2 id="baTitulo"></h2>
+      <p id="baSub" class="ayuda"></p>
+      <ul id="baAvisos" class="avisos"></ul>
+      <table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table>
+      <p class="ayuda solo-pantalla" id="baPista"></p>
+    </div>
+  </section>
+
+  <section id="tab-cierre" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2 id="ciTitulo">Cierre del ejercicio</h2>
+        <p class="ayuda">Al cerrar se generan tres asientos: <strong>regularización</strong> (gastos e ingresos contra la 129),
+          <strong>cierre</strong> (todas las cuentas a cero) y <strong>apertura</strong> en el ejercicio siguiente. El ejercicio queda solo de consulta.
+          Se puede deshacer mientras el ejercicio siguiente esté abierto.</p>
+        <p id="ciEstado"></p>
+        <ul id="ciBloqueos" class="avisos"></ul>
+        <ul id="ciAvisos" class="avisos"></ul>
+        <h3>Resultado del ejercicio</h3>
+        <table><thead><tr><th>Canal</th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Resultado</th></tr></thead>
+        <tbody id="ciResultados"></tbody></table>
+        <div class="fila-acciones" data-req="CONTABILIDAD_DIRECTO">
+          <button class="btn primario" id="ciCerrar" type="button">Cerrar el ejercicio</button>
+          <button class="btn" id="ciDeshacer" type="button">Deshacer el cierre</button>
+        </div>
+        <p id="ciMsg" class="ayuda" role="status"></p>
       </div>
     </div>
   </section>

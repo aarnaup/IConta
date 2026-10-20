@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Threading.RateLimiting;
 using Autofac;
 using Autofac.Extensions.DependencyInjection;
@@ -10,6 +11,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Serilog;
+
+// Importes de los mensajes en formato español (1.234,56). El JSON no depende de la cultura.
+CultureInfo.DefaultThreadCurrentCulture = CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.GetCultureInfo("es-ES");
 
 Log.Logger = new LoggerConfiguration().WriteTo.Console().CreateBootstrapLogger();
 
@@ -132,6 +136,8 @@ try
     app.MapEmpresa();
     app.MapTesoreria();
     app.MapFiscal();
+    app.MapCierre();
+    app.MapBalances();
 
     app.Run();
 }
