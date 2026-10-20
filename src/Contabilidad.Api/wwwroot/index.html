@@ -219,6 +219,7 @@
           <label>Canal <select id="fCanal"></select></label>
           <label>Retención IRPF <select id="fRet"></select></label>
           <label>Forma de pago <select id="fForma"></select></label>
+          <label id="f349Label" hidden>Clave del 349 <select id="f349"></select></label>
         </div>
         <table>
           <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th><th style="width:220px">Operación</th>
@@ -257,6 +258,7 @@
             <label>NIF / CIF <input id="tNif"></label>
             <label>Nombre <input id="tNombre"></label>
             <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option></select></label>
+            <label><input type="checkbox" id="tCaja"> Proveedor en criterio de caja</label>
           </div>
           <div class="acciones"><button class="btn" id="tCrear" type="button">Crear tercero</button><span id="tMsg" role="status"></span></div>
         </details>
@@ -468,9 +470,13 @@
         <ul id="mfAvisos" class="avisos"></ul>
         <table><thead><tr><th>Casilla</th><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody id="mfCasillas"></tbody></table>
         <div id="mfDetalle" hidden>
-          <h3>Terceros declarados</h3>
-          <table><thead><tr><th>NIF</th><th>Nombre</th><th>Clave</th><th class="num">Total</th><th class="num">1T</th><th class="num">2T</th><th class="num">3T</th><th class="num">4T</th></tr></thead>
-          <tbody id="mfDetalleBody"></tbody></table>
+          <h3 id="mfDetalleTitulo">Terceros declarados</h3>
+          <div style="overflow-x:auto"><table><thead id="mfDetalleHead"></thead><tbody id="mfDetalleBody"></tbody></table></div>
+          <div id="mfRectificaciones" hidden>
+            <h3>Rectificaciones de periodos anteriores</h3>
+            <table><thead><tr><th>NIF-IVA</th><th>Nombre</th><th>Clave</th><th>Periodo</th><th class="num">Base anterior</th><th class="num">Base rectificada</th></tr></thead>
+            <tbody id="mfRectBody"></tbody></table>
+          </div>
         </div>
       </div>
 
@@ -530,6 +536,28 @@
           <h3>Detalle</h3>
           <div style="overflow-x:auto"><table><thead id="lrHead"></thead><tbody id="lrBody"></tbody></table></div>
         </div>
+      </div>
+
+      <div class="panel">
+        <h2>Régimen de IVA y criterio de caja</h2>
+        <p class="ayuda">En el criterio de caja el impuesto de las operaciones interiores se devenga al cobrar y se deduce al pagar (como tarde, el 31 de
+          diciembre del año siguiente). Las facturas lo dejan en 4779 / 4729 y aquí se traspasa a 477 / 472 lo de cada periodo antes de liquidar.
+          Las compras a proveedores acogidos al criterio de caja también se deducen al pagar.</p>
+        <div class="fila-acciones">
+          <label>Régimen <select id="ccRegimen"><option value="GENERAL">General</option><option value="CRITERIO_CAJA">Criterio de caja</option></select></label>
+          <button class="btn" id="ccGuardar" data-req="FISCAL_DIRECTO" type="button">Guardar régimen</button>
+        </div>
+        <div class="fila-acciones">
+          <label>Año <input id="ccAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Periodo <select id="ccPeriodo"></select></label>
+          <button class="btn" id="ccVer" type="button">Ver lo devengado</button>
+          <button class="btn primario" id="ccTraspasar" data-req="FISCAL_DIRECTO" data-guarda type="button">Contabilizar el traspaso</button>
+        </div>
+        <ul id="ccAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Libro</th><th>Factura</th><th>Tercero</th><th class="num">Total factura</th><th class="num">Base</th><th class="num">Cuota</th><th>Traspaso</th></tr></thead>
+        <tbody id="ccLista"></tbody></table>
+        <div id="ccAsientos" class="fila-acciones"></div>
+        <p id="ccMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">

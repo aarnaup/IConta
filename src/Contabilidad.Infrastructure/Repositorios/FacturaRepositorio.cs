@@ -1,5 +1,6 @@
 using Contabilidad.Domain;
 using Contabilidad.Domain.Facturacion;
+using Contabilidad.Domain.Fiscal;
 using Dapper;
 using Npgsql;
 using System.Text.Json;
@@ -30,6 +31,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
         public bool EsCliente { get; set; }
         public bool EsProveedor { get; set; }
         public bool EsAcreedor { get; set; }
+        public bool CriterioCaja { get; set; }
     }
     private sealed class TipoIvaFila
     {
@@ -71,7 +73,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
     private sealed record Preparada(
         LibroFactura Libro, FacturaCalculada Calculo, long EjercicioId, DateOnly FechaContable,
-        long PlantillaId, string PlantillaNombre, long DiarioId, string Concepto, IReadOnlyList<ApunteCmd> Apuntes);
+        long PlantillaId, string PlantillaNombre, long DiarioId, string Concepto, IReadOnlyList<ApunteCmd> Apuntes,
+        bool CriterioCaja, string? Clave349);
 
 
     // =====================================================================
@@ -102,7 +105,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             "SELECT impuesto_indirecto, regimen_iva FROM core.empresa WHERE id = @empresaId", new { empresaId }, tx, cancellationToken: ct));
 
         var tercero = await cn.QuerySingleOrDefaultAsync<TerceroFila>(new CommandDefinition("""
-            SELECT nombre, cuenta_cliente_id, cuenta_proveedor_id, recargo_equivalencia, es_cliente, es_proveedor, es_acreedor
+            SELECT nombre, cuenta_cliente_id, cuenta_proveedor_id, recargo_equivalencia, es_cliente, es_proveedor, es_acreedor, criterio_caja
             FROM conta.tercero WHERE id = @terceroId AND empresa_id = @empresaId AND activo
             """, new { terceroId = cmd.TerceroId, empresaId }, tx, cancellationToken: ct))
             ?? throw new ReglaContableException("El tercero no existe en la empresa.");
@@ -203,6 +206,37 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var calculo = FacturaCalculadora.Calcular(libro, entradas, prorrata, retencion);
 
+        // --- 349: clave de las operaciones intracomunitarias ---
+        var intracom = cmd.Lineas.Any(l => l.TipoOperacion is "INTRACOM_ENTREGA" or "INTRACOM_ADQUISICION");
+        var clave349 = string.IsNullOrWhiteSpace(cmd.Clave349) ? null : cmd.Clave349.Trim().ToUpperInvariant();
+        if (clave349 is not null && !intracom)
+            throw new ReglaContableException("La clave del 349 solo se indica en facturas con operaciones intracomunitarias.");
+        if (intracom)
+        {
+            var validas = libro == LibroFactura.Emitidas ? Calculador349.ClavesEmitidas : Calculador349.ClavesRecibidas;
+            clave349 ??= validas[0];
+            if (!validas.Contains(clave349))
+                throw new ReglaContableException($"Clave del 349 no válida: {string.Join(", ", validas)}.",
+                    libro == LibroFactura.Emitidas ? "E entregas de bienes, S servicios prestados, T operaciones triangulares."
+                                                   : "A adquisiciones de bienes, I servicios recibidos.");
+        }
+
+        // --- Factura rectificada ---
+        if (cmd.FacturaRectificadaId is { } rectId)
+        {
+            if (cmd.TipoFactura != "RECTIFICATIVA") throw new ReglaContableException("Solo una factura rectificativa indica la factura que rectifica.");
+            var okRect = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+                SELECT EXISTS (SELECT 1 FROM fiscal.factura WHERE id = @rectId AND empresa_id = @empresaId AND libro = @libro
+                               AND tercero_id = @terceroId AND estado = 'CONTABILIZADA')
+                """, new { rectId, empresaId, libro = cmd.Libro, terceroId = cmd.TerceroId }, tx, cancellationToken: ct));
+            if (!okRect) throw new ReglaContableException("La factura rectificada no existe o no es del mismo libro y tercero.");
+        }
+
+        // --- Criterio de caja: la empresa está en el régimen o (en compras) el proveedor lo está ---
+        var criterioCaja = empresa.RegimenIva == "CRITERIO_CAJA" || (libro == LibroFactura.Recibidas && tercero.CriterioCaja);
+        if (criterioCaja && calculo.Lineas.Any(l => l.TipoOperacion == "INTERIOR" && (l.Cuota != 0 || l.CuotaRecargo != 0)))
+            await cn.ExecuteAsync(new CommandDefinition("SELECT fiscal.asegurar_cuentas_caja(@empresaId)", new { empresaId }, tx, cancellationToken: ct));
+
         // --- Plantilla (explícita o la de por defecto según el libro) ---
         var tipoOp = libro == LibroFactura.Emitidas ? "VENTA" : "COMPRA";
         var plantilla = await cn.QuerySingleOrDefaultAsync<PlantillaFila>(new CommandDefinition("""
@@ -236,7 +270,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
         var numeroCompleto = string.IsNullOrWhiteSpace(cmd.Serie) ? cmd.Numero : $"{cmd.Serie}{cmd.Numero}";
 
         var apuntes = GeneradorAsientoFactura.Generar(libro, calculo, lineasPlantilla, resolutor,
-            cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo);
+            cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo, criterioCaja);
         if (apuntes.Count < 2)
             throw new ReglaContableException("La plantilla no generó apuntes suficientes para esta factura.");
 
@@ -248,7 +282,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var concepto = !string.IsNullOrWhiteSpace(cmd.Descripcion) ? cmd.Descripcion.Trim() : apuntes[0].Concepto ?? $"Factura {numeroCompleto}";
 
-        return new Preparada(libro, calculo, ejercicioId, fechaContable, plantilla.Id, plantilla.Nombre, diarioId, concepto, apuntes);
+        return new Preparada(libro, calculo, ejercicioId, fechaContable, plantilla.Id, plantilla.Nombre, diarioId, concepto, apuntes,
+            criterioCaja, clave349);
     }
 
     // =====================================================================
@@ -283,11 +318,13 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 INSERT INTO fiscal.factura
                   (empresa_id, ejercicio_id, libro, tipo_factura, serie, numero, tercero_id, actividad_id, canal_id, plantilla_id,
                    fecha_expedicion, fecha_operacion, fecha_contable, descripcion,
-                   base_total, cuota_total, recargo_total, retencion_total, total, clave_operacion_347, estado, creado_por, comando)
+                   base_total, cuota_total, recargo_total, retencion_total, total, clave_operacion_347, estado, creado_por, comando,
+                   criterio_caja, clave_operacion_349, factura_rectificada_id)
                 VALUES
                   (@empresaId, @ejercicioId, @libro, @tipoFactura, @serie, @numero, @terceroId, @actividadId, @canalId, @plantillaId,
                    @fechaExpedicion, @fechaOperacion, @fechaContable, @descripcion,
-                   @base, @cuota, @recargo, @retencion, @total, @clave347, 'BORRADOR', @usuarioId, @comando::jsonb)
+                   @base, @cuota, @recargo, @retencion, @total, @clave347, 'BORRADOR', @usuarioId, @comando::jsonb,
+                   @criterioCaja, @clave349, @rectificada)
                 RETURNING id
                 """, new
             {
@@ -297,7 +334,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 fechaOperacion = cmd.FechaOperacion, fechaContable = p.FechaContable, descripcion = cmd.Descripcion,
                 @base = t.Base, cuota = t.Cuota, recargo = t.Recargo, retencion = t.Retencion, total = t.Total,
                 clave347 = p.Libro == LibroFactura.Emitidas ? "B" : "A",
-                usuarioId, comando = JsonSerializer.Serialize(cmd, JsonOpts)
+                usuarioId, comando = JsonSerializer.Serialize(cmd, JsonOpts),
+                criterioCaja = p.CriterioCaja, clave349 = p.Clave349, rectificada = cmd.FacturaRectificadaId
             }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
@@ -380,8 +418,12 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             "FACTURA", p.PlantillaId, numeroCompleto, ct);
 
         await cn.ExecuteAsync(new CommandDefinition(
-            "UPDATE fiscal.factura SET asiento_id = @asientoId, estado = 'CONTABILIZADA', plantilla_id = @plantillaId WHERE id = @facturaId",
-            new { asientoId = a.Id, plantillaId = p.PlantillaId, facturaId }, tx, cancellationToken: ct));
+            """
+            UPDATE fiscal.factura SET asiento_id = @asientoId, estado = 'CONTABILIZADA', plantilla_id = @plantillaId,
+                   criterio_caja = @criterioCaja, clave_operacion_349 = @clave349
+            WHERE id = @facturaId
+            """,
+            new { asientoId = a.Id, plantillaId = p.PlantillaId, facturaId, criterioCaja = p.CriterioCaja, clave349 = p.Clave349 }, tx, cancellationToken: ct));
         await VencimientosGenerador.GenerarAsync(cn, tx, empresaId, facturaId, cmd.FormaPagoId, ct);
 
         await tx.CommitAsync(ct);

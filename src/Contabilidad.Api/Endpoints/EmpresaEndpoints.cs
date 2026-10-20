@@ -73,6 +73,14 @@ public static class EmpresaEndpoints
             return Results.Created($"/api/empresas/{empresaId}/terceros/{creado.Id}", creado);
         }).Requiere(Nivel.Escritura, Modulo.Facturacion);
 
+        emp.MapPut("/terceros/{terceroId:long}/criterio-caja", async (long empresaId, long terceroId, CriterioCajaTerceroCmd cmd, HttpContext http,
+            ITerceroRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await t.MarcarCriterioCajaAsync(empresaId, terceroId, cmd.CriterioCaja, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "TERCERO_CRITERIO_CAJA", "tercero", terceroId, new { cmd.CriterioCaja }, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Facturacion);
+
         emp.MapGet("/tipos-iva", (long empresaId, DateOnly? fecha, ICatalogoFacturacionRepositorio c, CancellationToken ct)
             => c.ListarTiposIvaAsync(empresaId, fecha ?? DateOnly.FromDateTime(DateTime.Today), ct))
             .Requiere(Nivel.Lectura, Modulo.Facturacion);

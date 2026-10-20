@@ -92,7 +92,25 @@ public static class FormatoAeat
                     null, l.PrimeraLinea && l.Retencion is { } r && r != 0 ? r : null, null,
                 ];
             }
-            filas.Add(f);
+            // Criterio de caja: el primer cobro/pago en la línea; los siguientes, en filas que repiten la identificación de la factura
+            var col = emitidas ? 26 : 32;
+            for (var i = 0; i < l.Cobros.Count; i++)
+            {
+                var c = l.Cobros[i];
+                var destino = f;
+                if (i > 0)
+                {
+                    destino = new object?[f.Length];
+                    Array.Copy(f, destino, emitidas ? 20 : 25);
+                }
+                destino[col] = Fecha(c.Fecha);
+                destino[col + 1] = c.Importe;
+                destino[col + 2] = c.Medio;
+                destino[col + 3] = c.Cuenta;
+                if (i > 0) filas.Add(destino);
+                if (i == 0) filas.Add(f);
+            }
+            if (l.Cobros.Count == 0) filas.Add(f);
         }
         return filas;
     }

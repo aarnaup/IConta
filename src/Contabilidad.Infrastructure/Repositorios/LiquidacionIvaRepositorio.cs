@@ -186,13 +186,19 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         // Cuentas: 472/477 del PGC más las configuradas para IVA soportado/repercutido
         var extraSop = await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_SOPORTADO", ct);
         var extraRep = await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_REPERCUTIDO", ct);
-        var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, d.FechaFin, ["472", "477"],
-            [.. extraSop, .. extraRep], ct);
+        // El impuesto pendiente del criterio de caja (4779 / 4729) no se liquida hasta que se traspasa
+        var pendientesCaja = (await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_REPERCUTIDO_CAJA", ct))
+            .Concat(await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_SOPORTADO_CAJA", ct)).ToHashSet();
+        var saldos = (await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, d.FechaFin, ["472", "477"],
+            [.. extraSop, .. extraRep], ct)).Where(s => !pendientesCaja.Contains(s.CuentaId)).ToList();
         var repercutido = saldos.Where(s => s.Codigo.StartsWith("477", StringComparison.Ordinal)
                                          || (extraRep.Contains(s.CuentaId) && !s.Codigo.StartsWith("472", StringComparison.Ordinal))).ToList();
         var soportado = saldos.Except(repercutido).ToList();
+        var pendienteCaja = await CriterioCajaRepositorio.PendienteAsync(cn, tx, empresaId, d.Modelo == "420" ? "IGIC" : "IVA",
+            PeriodoFiscal.Resolver(d.Anio, d.Periodo), ct);
         if (saldos.Count == 0)
-            throw new ReglaContableException("Las cuentas de IVA/IGIC soportado y repercutido no tienen saldo a esa fecha: no hay nada que liquidar.");
+            throw new ReglaContableException("Las cuentas de IVA/IGIC soportado y repercutido no tienen saldo a esa fecha: no hay nada que liquidar.",
+                pendienteCaja != 0 ? $"Hay {pendienteCaja:N2} de criterio de caja sin traspasar: contabiliza antes el traspaso del periodo." : null);
 
         var acreedora = await ConsultasContables.CuentaPorRolAsync(cn, tx, empresaId, "HP_ACREEDORA_IVA", "4750", ct)
             ?? throw new ReglaContableException("No se encuentra la cuenta de Hacienda Pública acreedora por IVA (4750).",
@@ -216,6 +222,9 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         if (d.RegularizacionProrrata != 0)
             avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y eso no está en la contabilidad: " +
                        "regístralo con un asiento manual (634/639 contra 472).");
+        if (pendienteCaja != 0)
+            avisos.Add($"Hay {pendienteCaja:N2} de impuesto en criterio de caja devengado en el periodo sin traspasar a las cuentas 477/472: " +
+                       "contabiliza antes el traspaso (Modelos fiscales → Criterio de caja).");
         if (!canales.Any(c => c.Resultado == esperado))
             avisos.Add($"El saldo contable no coincide con la declaración: resultado según la declaración {d.ResultadoAntes:N2}" +
                        $"; según la contabilidad {string.Join(", ", canales.Select(c => c.Resultado.ToString("N2")))}. " +

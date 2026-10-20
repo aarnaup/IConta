@@ -153,6 +153,7 @@ try
     app.MapConciliacion();
     app.MapRemesas();
     app.MapBienesInversion();
+    app.MapCriterioCaja();
 
     app.Run();
 }

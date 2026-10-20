@@ -37,7 +37,13 @@ public sealed class LineaLibroDto
     public int? AsientoNumero { get; set; }
     public string? Descripcion { get; set; }
     public bool PrimeraLinea { get; set; }
+    /// <summary>Factura en criterio de caja: sus cobros/pagos van en el libro (solo en la primera línea).</summary>
+    public bool CriterioCaja { get; set; }
+    public List<CobroLibroDto> Cobros { get; set; } = [];
 }
+
+/// <summary>Cobro o pago de una factura en criterio de caja. Medio: 01 transferencia, 02 cheque, 04 otros, 05 domiciliación.</summary>
+public sealed record CobroLibroDto(DateOnly Fecha, decimal Importe, string Medio, string? Cuenta);
 
 public sealed record TotalLibro(string TipoOperacion, decimal Porcentaje, decimal PorcentajeRecargo, int Lineas, decimal Base, decimal Cuota,
     decimal CuotaRecargo, decimal CuotaDeducible);
@@ -64,10 +70,11 @@ public static class LibrosRegistro
         var cab = emitidas
             ? new[] { "Fecha expedición", "Fecha operación", "Serie", "Número", "Tipo de factura", "NIF destinatario", "Nombre destinatario",
                       "Tipo de operación", "Base imponible", $"Tipo {impuesto} %", $"Cuota {impuesto}", "Tipo recargo %", "Cuota recargo",
-                      "Retención IRPF", "Total factura", "Factura rectificada", "Asiento", "Descripción" }
+                      "Retención IRPF", "Total factura", "Factura rectificada", "Asiento", "Descripción", "Cobros (criterio de caja)" }
             : new[] { "Nº registro", "Fecha registro", "Fecha expedición", "Fecha operación", "Serie", "Número", "Tipo de factura", "NIF emisor",
                       "Nombre emisor", "Tipo de operación", "Base imponible", $"Tipo {impuesto} %", $"Cuota {impuesto} soportada", "Tipo recargo %",
-                      "Cuota recargo", "Cuota deducible", "Bien de inversión", "Retención IRPF", "Total factura", "Factura rectificada", "Asiento", "Descripción" };
+                      "Cuota recargo", "Cuota deducible", "Bien de inversión", "Retención IRPF", "Total factura", "Factura rectificada", "Asiento", "Descripción",
+                      "Pagos (criterio de caja)" };
 
         var sb = new StringBuilder();
         sb.AppendLine(string.Join(';', cab.Select(Campo)));
@@ -77,11 +84,11 @@ public static class LibrosRegistro
                                 Texto(l.TipoOperacion), Importe(l.Base), Importe(l.Porcentaje) };
             string[] fila = emitidas
                 ? [.. comun, Importe(l.Cuota), Importe(l.PorcentajeRecargo), Importe(l.CuotaRecargo), Importe(l.Retencion), Importe(l.TotalFactura),
-                   l.FacturaRectificada ?? "", l.AsientoNumero?.ToString(CultureInfo.InvariantCulture) ?? "", l.Descripcion ?? ""]
+                   l.FacturaRectificada ?? "", l.AsientoNumero?.ToString(CultureInfo.InvariantCulture) ?? "", l.Descripcion ?? "", Cobros(l)]
                 : [l.NumeroRegistro?.ToString(CultureInfo.InvariantCulture) ?? "", Fecha(l.FechaContable), .. comun, Importe(l.Cuota),
                    Importe(l.PorcentajeRecargo), Importe(l.CuotaRecargo), Importe(l.CuotaDeducible), l.BienInversion ? "Sí" : "No",
                    Importe(l.Retencion), Importe(l.TotalFactura), l.FacturaRectificada ?? "",
-                   l.AsientoNumero?.ToString(CultureInfo.InvariantCulture) ?? "", l.Descripcion ?? ""];
+                   l.AsientoNumero?.ToString(CultureInfo.InvariantCulture) ?? "", l.Descripcion ?? "", Cobros(l)];
             sb.AppendLine(string.Join(';', fila.Select(Campo)));
         }
         return [.. Encoding.UTF8.GetPreamble(), .. Encoding.UTF8.GetBytes(sb.ToString())];
@@ -95,6 +102,9 @@ public static class LibrosRegistro
         "INTRACOM_ENTREGA" => "Entrega intracomunitaria", "EXPORTACION" => "Exportación", "INVERSION_SUJETO_PASIVO" => "Inversión del sujeto pasivo",
         _ => clave
     };
+
+    private static string Cobros(LineaLibroDto l)
+        => string.Join(" | ", l.Cobros.Select(c => $"{Fecha(c.Fecha)} {Importe(c.Importe)}"));
 
     private static readonly CultureInfo Es = CultureInfo.GetCultureInfo("es-ES");
     private static string Fecha(DateOnly? d) => d?.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture) ?? "";

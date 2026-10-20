@@ -17,7 +17,12 @@ public sealed record EntradaImpuestoIndirecto(
     bool SolicitaDevolucion,
     bool EsUltimoPeriodo,
     /// <summary>Regularización de bienes de inversión (anual en el último periodo, o por venta en el periodo de la venta).</summary>
-    decimal RegularizacionBienesInversion = 0);
+    decimal RegularizacionBienesInversion = 0,
+    /// <summary>Información adicional del criterio de caja (operaciones del periodo por la regla general de devengo).</summary>
+    InformacionCaja? Caja = null);
+
+/// <summary>Bases y cuotas de las facturas en criterio de caja con fecha en el periodo (casillas 62/63 y 74/75 del 303).</summary>
+public sealed record InformacionCaja(decimal BaseEntregas, decimal CuotaEntregas, decimal BaseAdquisiciones, decimal CuotaAdquisiciones);
 
 /// <summary>
 /// Autoliquidación de IVA (303) o IGIC (420) y resúmenes anuales, sobre facturas ya agrupadas.
@@ -131,7 +136,7 @@ public static class CalculadorImpuestoIndirecto
                 ("INTRACOM_ADQUISICION", "10", "11", "Adquisiciones intracomunitarias de bienes y servicios"),
                 ("INVERSION_SUJETO_PASIVO", "12", "13", "Otras operaciones con inversión del sujeto pasivo") })
             {
-                var g = recibidas.Where(x => x.TipoOperacion == tipo).ToList();
+                var g = recibidas.Where(x => x.TipoOperacion == tipo || (tipo == "INTRACOM_ADQUISICION" && x.TipoOperacion == "INTRACOM_SERVICIOS")).ToList();
                 if (g.Count == 0) continue;
                 Add(cb, $"{txt}: base", g.Sum(x => x.Base));
                 Add(cc, $"{txt}: cuota", g.Sum(x => x.Cuota));
@@ -145,7 +150,7 @@ public static class CalculadorImpuestoIndirecto
         // Interiores (con las de inversión del sujeto pasivo), importaciones y adquisiciones intracomunitarias; corrientes e inversión
         var grupos = new (Func<GrupoIva, bool> Es, string Nombre, string[] Iva, string[] Igic)[]
         {
-            (x => x.TipoOperacion is "INTERIOR" or "INVERSION_SUJETO_PASIVO", "Operaciones interiores", ["28", "29", "30", "31"], ["SCB", "SCC", "SIB", "SIC"]),
+            (x => x.TipoOperacion is "INTERIOR" or "INVERSION_SUJETO_PASIVO" or "INTRACOM_SERVICIOS", "Operaciones interiores", ["28", "29", "30", "31"], ["SCB", "SCC", "SIB", "SIC"]),
             (x => x.TipoOperacion == "IMPORTACION", "Importaciones", ["32", "33", "34", "35"], ["ICB", "ICC", "IIB", "IIC"]),
             (x => x.TipoOperacion == "INTRACOM_ADQUISICION", "Adquisiciones intracomunitarias", ["36", "37", "38", "39"], ["", "", "", ""]),
         };
@@ -197,6 +202,13 @@ public static class CalculadorImpuestoIndirecto
         {
             var g = e.Grupos.Where(x => x.Libro == "EMITIDAS" && x.TipoOperacion == tipo).ToList();
             if (g.Count > 0) Add(igic ? ig : iva, txt, g.Sum(x => x.Base));
+        }
+        if (e.Caja is { } cj)
+        {
+            Add(igic ? "CCEB" : "62", "Criterio de caja: entregas del periodo por la regla general (base)", cj.BaseEntregas);
+            Add(igic ? "CCEC" : "63", "Criterio de caja: entregas del periodo por la regla general (cuota)", cj.CuotaEntregas);
+            Add(igic ? "CCAB" : "74", "Criterio de caja: adquisiciones del periodo (base)", cj.BaseAdquisiciones);
+            Add(igic ? "CCAC" : "75", "Criterio de caja: adquisiciones del periodo (cuota soportada)", cj.CuotaAdquisiciones);
         }
 
         // ---------------------------------------------------------------- resultado

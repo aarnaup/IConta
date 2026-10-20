@@ -364,6 +364,7 @@ function pintaFL() {
       </td>
       <td><button class="x" type="button" data-fdel="${i}" aria-label="Quitar línea ${i + 1}">×</button></td>
     </tr>`).join('');
+  pinta349();
 }
 
 $('#fLineas').addEventListener('input', e => {
@@ -371,7 +372,7 @@ $('#fLineas').addEventListener('input', e => {
   const f = e.target.dataset.f;
   fst.lineas[+tr.dataset.i][f] = f === 'tipoIvaId' ? +e.target.value : f === 'inv' ? e.target.checked : e.target.value;
 });
-$('#fLineas').addEventListener('change', e => { if (e.target.dataset.f === 'regla') pintaFL(); });
+$('#fLineas').addEventListener('change', e => { if (e.target.dataset.f === 'regla') pintaFL(); if (e.target.dataset.f === 'op') pinta349(); });
 $('#fLineas').addEventListener('click', e => {
   const d = e.target.dataset.fdel; if (d === undefined) return;
   fst.lineas.splice(+d, 1); if (!fst.lineas.length) fst.lineas.push(nuevaFL()); pintaFL();
@@ -380,11 +381,21 @@ $('#fAdd').onclick = () => { const l = nuevaFL(); l.tipoIvaId = (fst.tipos[0] ||
 $('#fLibro').onchange = () => { fst.lineas.forEach(l => { l.regla = 'TOTAL'; l.op = ''; l.inv = false; }); $('#fPreview').hidden = true; cargaFacturas().catch(e => setF(e.message, 'err')); };
 $('#fFecha').onchange = () => cargaFacturas().catch(e => setF(e.message, 'err'));
 
+const CLAVES_349 = { EMITIDAS: [['E', 'E · Entregas de bienes'], ['S', 'S · Servicios prestados'], ['T', 'T · Operación triangular']],
+                     RECIBIDAS: [['A', 'A · Adquisiciones de bienes'], ['I', 'I · Servicios recibidos']] };
+function pinta349() {
+  const hay = fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')), lib = $('#fLibro').value;
+  $('#f349Label').hidden = !hay;
+  if ($('#f349').dataset.libro !== lib) {
+    $('#f349').innerHTML = CLAVES_349[lib].map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join(''); $('#f349').dataset.libro = lib;
+  }
+}
 function cmdFactura(borrador) {
   return {
     libro: $('#fLibro').value, tipoFactura: 'ORDINARIA', numero: $('#fNumero').value.trim(),
     terceroId: +$('#fTercero').value || 0, formaPagoId: +$('#fForma').value || null, canalId: +$('#fCanal').value || 0,
     fechaExpedicion: $('#fFecha').value, tipoRetencionId: +$('#fRet').value || null, borrador,
+    clave349: fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')) ? $('#f349').value : null,
     lineas: fst.lineas.filter(l => l.tipoIvaId && num(l.base)).map(l => {
       const t = fst.tipos.find(x => x.id === l.tipoIvaId);
       return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: l.op || (t && t.esExento ? 'EXENTA' : 'INTERIOR'),
@@ -436,7 +447,9 @@ async function listaFacturas() {
 $('#tCrear').onclick = async () => {
   const tipo = $('#tTipo').value;
   try {
-    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE' });
+    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE',
+      criterioCaja: tipo !== 'CLIENTE' && $('#tCaja').checked });
+    $('#tCaja').checked = false;
     msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = '';
     await cargaFacturas();
   } catch (e) { msg($('#tMsg'), e.message, 'err-texto'); }
@@ -851,12 +864,54 @@ async function cargaFiscal() {
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
     pintaPeriodos();
   }
-  await Promise.all([cargaDeclaraciones(), listaProrratas()]);
+  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja()]);
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
     $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ régimen de IVA y criterio de caja
+async function cargaCriterioCaja() {
+  const c = await api(urlE('/fiscal/configuracion'));
+  $('#ccRegimen').value = c.regimenIva === 'CRITERIO_CAJA' ? 'CRITERIO_CAJA' : 'GENERAL';
+  if (!$('#ccAnio').value) $('#ccAnio').value = $('#mfAnio').value;
+  if (!$('#ccPeriodo').options.length)
+    $('#ccPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+      .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
+}
+async function verCriterioCaja() {
+  const d = await api(urlE(`/fiscal/criterio-caja?anio=${+$('#ccAnio').value}&periodo=${$('#ccPeriodo').value}`));
+  $('#ccAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#ccLista').innerHTML = (d.lineas.map(l => `<tr><td>${l.libro === 'EMITIDAS' ? 'Emitida' : 'Recibida'}</td><td>${esc(l.factura)}</td><td>${esc(l.tercero)}</td>
+      <td class="num">${fmt(l.total)}</td><td class="num">${fmt(l.base)}</td><td class="num">${fmt(l.cuota)}</td>
+      <td>${l.traspasado ? 'asiento nº ' + l.asientoNumero : 'pendiente'}</td></tr>`).join('')
+    + (d.lineas.length ? `<tr class="total"><td colspan="5">Repercutido ${fmt(d.repercutido)} · deducible ${fmt(d.deducible)}</td><td class="num">${fmt(d.pendiente)}</td><td>sin traspasar</td></tr>` : ''))
+    || '<tr><td colspan="7" class="vacio">Nada devengado por criterio de caja en este periodo.</td></tr>';
+  const asientos = new Map(d.lineas.filter(l => l.traspasado).map(l => [l.asientoId, l.asientoNumero]));
+  $('#ccAsientos').innerHTML = permitido('FISCAL_DIRECTO') && S.ejercicio.estado === 'ABIERTO'
+    ? [...asientos].map(([id, n]) => `<button class="btn" data-anular-cc="${id}">Anular el traspaso nº ${n}</button>`).join(' ') : '';
+}
+$('#ccVer').onclick = () => verCriterioCaja().catch(e => msg($('#ccMsg'), e.message, 'ayuda err-texto'));
+$('#ccGuardar').onclick = async () => {
+  try {
+    const c = await api(urlE('/fiscal/configuracion'), { method: 'PUT', body: JSON.stringify({ regimenIva: $('#ccRegimen').value }) });
+    msg($('#ccMsg'), c.regimenIva === 'CRITERIO_CAJA' ? 'Empresa en criterio de caja: las facturas que se contabilicen desde ahora lo aplican.'
+      : 'Empresa en régimen general. Las facturas ya contabilizadas en criterio de caja lo siguen aplicando.', 'ayuda ok-texto');
+  } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#ccTraspasar').onclick = async () => {
+  try {
+    const t = await post(urlX('/fiscal/criterio-caja/traspasar'), { anio: +$('#ccAnio').value, periodo: $('#ccPeriodo').value });
+    await verCriterioCaja();
+    msg($('#ccMsg'), `Traspaso contabilizado (asiento nº ${t.asientoNumero}): repercutido ${fmt(t.repercutido)}, deducible ${fmt(t.deducible)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#ccAsientos').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-anular-cc]'); if (!b || !confirm('¿Anular el traspaso?')) return;
+  try { await api(urlX('/fiscal/criterio-caja/' + b.dataset.anularCc), { method: 'DELETE' }); await verCriterioCaja(); msg($('#ccMsg'), 'Traspaso anulado.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#ccMsg'), err.message, 'ayuda err-texto'); }
+});
 
 // ------------------------------------------------------------ prorrata
 async function listaProrratas() {
@@ -941,11 +996,28 @@ function muestraDeclaracion(v) {
   $('#mfAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
   $('#mfCasillas').innerHTML = v.casillas.map(c => `<tr><td>${esc(c.clave)}</td><td>${esc(c.descripcion)}</td><td class="num">${fmt(c.importe)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="vacio">No hay operaciones en este periodo.</td></tr>';
-  const filas = Array.isArray(v.detalle) ? v.detalle : null;
-  $('#mfDetalle').hidden = !filas;
-  $('#mfDetalleBody').innerHTML = filas ? (filas.map(f => `<tr><td>${esc(f.nif)}</td><td>${esc(f.nombre)}</td><td>${esc(f.clave)}</td><td class="num">${fmt(f.total)}</td>
-    <td class="num">${fmt(f.t1)}</td><td class="num">${fmt(f.t2)}</td><td class="num">${fmt(f.t3)}</td><td class="num">${fmt(f.t4)}</td></tr>`).join('')
-    || '<tr><td colspan="8" class="vacio">Ningún tercero supera el umbral.</td></tr>') : '';
+  const det = v.detalle, th = cols => `<tr>${cols.map(c => c.startsWith('#') ? `<th class="num">${esc(c.slice(1))}</th>` : `<th>${esc(c)}</th>`).join('')}</tr>`;
+  let titulo = 'Terceros declarados', cab = '', cuerpo = '', rect = null;
+  if (['111', '115'].includes(v.modelo) && Array.isArray(det)) {
+    titulo = 'Perceptores'; cab = th(['NIF', 'Nombre', '#Base', '#Retención']);
+    cuerpo = det.map(p => `<tr><td>${esc(p.nif)}</td><td>${esc(p.nombre)}</td><td class="num">${fmt(p.base)}</td><td class="num">${fmt(p.retencion)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="vacio">Sin retenciones en el periodo.</td></tr>';
+  } else if (v.modelo === '349' && det) {
+    titulo = 'Operadores intracomunitarios'; cab = th(['NIF-IVA', 'Nombre', 'Clave', '#Base imponible']);
+    cuerpo = det.operaciones.map(o => `<tr><td>${esc(o.nifComunitario)}</td><td>${esc(o.nombre)}</td><td>${esc(o.clave)}</td><td class="num">${fmt(o.base)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="vacio">Sin operaciones en el periodo.</td></tr>';
+    rect = det.rectificaciones;
+  } else if (Array.isArray(det)) {
+    cab = th(['NIF', 'Nombre', 'Clave', '#Total', '#1T', '#2T', '#3T', '#4T']);
+    cuerpo = det.map(f => `<tr><td>${esc(f.nif)}</td><td>${esc(f.nombre)}</td><td>${esc(f.clave)}</td><td class="num">${fmt(f.total)}</td>
+      <td class="num">${fmt(f.t1)}</td><td class="num">${fmt(f.t2)}</td><td class="num">${fmt(f.t3)}</td><td class="num">${fmt(f.t4)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="vacio">Ningún tercero supera el umbral.</td></tr>';
+  }
+  $('#mfDetalle').hidden = !cab;
+  $('#mfDetalleTitulo').textContent = titulo; $('#mfDetalleHead').innerHTML = cab; $('#mfDetalleBody').innerHTML = cuerpo;
+  $('#mfRectificaciones').hidden = !(rect && rect.length);
+  $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
+      <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
   $('#mfResultado').hidden = false;
 }
 

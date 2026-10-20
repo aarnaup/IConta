@@ -11,6 +11,7 @@ public class GeneradorAsientoFacturaTests
         new("IVA_REPERCUTIDO", null, null, 477), new("IVA_SOPORTADO", null, null, 472),
         new("VENTAS", null, null, 700), new("COMPRAS", null, null, 600),
         new("RETENCION_SOPORTADA", null, null, 473), new("RETENCION_PRACTICADA", null, null, 475),
+        new("IVA_REPERCUTIDO_CAJA", null, null, 4779), new("IVA_SOPORTADO_CAJA", null, null, 4729),
     ], cuentaCliente: 430, cuentaProveedor: 400);
 
     private static readonly LineaPlantilla[] Venta =
@@ -136,4 +137,18 @@ public class GeneradorAsientoFacturaTests
     [InlineData(LibroFactura.Emitidas, "INTRACOM_ENTREGA", "IGIC")]
     public void Operaciones_no_validas_para_el_libro_o_el_impuesto(LibroFactura libro, string tipo, string impuesto)
         => Assert.Throws<ReglaContableException>(() => OperacionesIva.Validar(libro, tipo, impuesto));
+
+    [Fact]
+    public void Criterio_de_caja_deja_el_impuesto_pendiente()
+    {
+        var v = FacturaCalculadora.Calcular(LibroFactura.Emitidas, [L(1000m, 21m)], null, null);
+        var a = GeneradorAsientoFactura.Generar(LibroFactura.Emitidas, v, Venta, Resolutor(), 9, null, 5, "C", "F-1", new DateOnly(2026, 1, 1), null, criterioCaja: true);
+        Cuadra(a);
+        Assert.Equal(210m, a.Single(x => x.CuentaId == 4779).Haber);
+        Assert.DoesNotContain(a, x => x.CuentaId == 477);
+        var c = FacturaCalculadora.Calcular(LibroFactura.Recibidas, [L(1000m, 21m)], null, null);
+        var b = GeneradorAsientoFactura.Generar(LibroFactura.Recibidas, c, Compra, Resolutor(), 9, null, 5, "P", "P-1", new DateOnly(2026, 1, 1), null, criterioCaja: true);
+        Cuadra(b);
+        Assert.Equal(210m, b.Single(x => x.CuentaId == 4729).Debe);
+    }
 }

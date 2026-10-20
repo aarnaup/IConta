@@ -88,6 +88,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "IGIC" => e.ImpuestoIndirecto == "IGIC",
             "IRPF" => directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
+            "INTRACOM" => e.ImpuestoIndirecto == "IVA",
+            "RETENCIONES" => true,
             _ => false
         }).ToList();
     }
@@ -132,6 +134,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             case "TERCEROS":
                 await Calcular347Async(cn, tx, empresaId, p, d, ct);
                 break;
+            case "RETENCIONES":
+                await CalcularRetencionesAsync(cn, tx, empresaId, modelo, p, d, ct);
+                break;
+            case "INTRACOM":
+                await Calcular349Async(cn, tx, empresaId, empresa, p, d, ct);
+                break;
         }
         return d;
     }
@@ -147,13 +155,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
     {
         if (empresa.ImpuestoIndirecto != modelo.Impuesto)
             throw new ReglaContableException($"El modelo {modelo.Codigo} es de {modelo.Impuesto} y la empresa tributa por {empresa.ImpuestoIndirecto}.");
-        if (empresa.RegimenIva != "GENERAL")
+        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA"))
             throw new ReglaContableException($"El régimen {empresa.RegimenIva} todavía no está soportado en {modelo.Codigo}.",
-                "Solo el régimen general. Criterio de caja, simplificado, agricultura y recargo de equivalencia como régimen de la empresa están pendientes.");
+                "Régimen general y criterio de caja. Simplificado, agricultura y recargo de equivalencia como régimen de la empresa están pendientes.");
 
         var igic = modelo.Impuesto == "IGIC";
         var grupos = (await cn.QueryAsync<GrupoFila>(new CommandDefinition("""
-            SELECT f.libro, (f.tipo_factura = 'RECTIFICATIVA') AS rectificativa, fi.tipo_operacion, fi.porcentaje, fi.porcentaje_recargo,
+            SELECT f.libro, (f.tipo_factura = 'RECTIFICATIVA') AS rectificativa,
+                   CASE WHEN fi.tipo_operacion = 'INTRACOM_ADQUISICION' AND f.clave_operacion_349 = 'I' THEN 'INTRACOM_SERVICIOS'
+                        ELSE fi.tipo_operacion END AS tipo_operacion, fi.porcentaje, fi.porcentaje_recargo,
                    fi.es_bien_inversion, SUM(fi.base) AS base, SUM(fi.cuota) AS cuota, SUM(fi.cuota_recargo) AS cuota_recargo,
                    SUM(fi.cuota_deducible) AS cuota_deducible
             FROM fiscal.factura f
@@ -161,10 +171,16 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             JOIN cat.tipo_iva t ON t.id = fi.tipo_iva_id
             WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA'
               AND f.fecha_contable BETWEEN @inicio AND @fin AND t.impuesto = @impuesto
+              AND NOT (f.criterio_caja AND fi.tipo_operacion = 'INTERIOR')     -- esas se devengan al cobrar o pagar
             GROUP BY 1, 2, 3, 4, 5, 6
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin, impuesto = modelo.Impuesto }, tx, cancellationToken: ct)))
             .Select(g => new GrupoIva(g.Libro, g.Rectificativa, g.TipoOperacion, g.Porcentaje, g.PorcentajeRecargo, g.EsBienInversion,
                                       g.Base, g.Cuota, g.CuotaRecargo, g.CuotaDeducible)).ToList();
+
+        // Criterio de caja: lo cobrado y pagado en el periodo (y lo que llega al 31/12 del año siguiente)
+        var (gruposCaja, infoCaja, avisosCaja) = await CriterioCajaRepositorio.ParaDeclaracionAsync(cn, tx, empresaId, modelo.Impuesto, p, ct);
+        grupos.AddRange(gruposCaja);
+        d.Avisos.AddRange(avisosCaja);
 
         var anual = p.EsAnual;
 
@@ -215,7 +231,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         }
 
         CalculadorImpuestoIndirecto.Calcular(igic,
-            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio, regBienes), d);
+            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio, regBienes, infoCaja), d);
 
         if (anual)
         {
@@ -294,6 +310,104 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         if (previos < esperados)
             d.Avisos.Add($"Solo hay {previos} de {esperados} trimestres anteriores presentados en la aplicación: los pagos fraccionados anteriores pueden estar incompletos.");
         d.Avisos.Add($"Ingresos: cuentas {string.Join(", ", Calculador130.PrefijosIngresos)}. Gastos: cuentas {string.Join(", ", Calculador130.PrefijosGastos)}. Revisa que correspondan a tu plan contable.");
+    }
+
+    // ---------------------------------------------------------------- 111 / 115
+    private sealed class PercepcionFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string Modelo { get; set; } = "";
+        public decimal Base { get; set; }
+        public decimal Retencion { get; set; }
+    }
+
+    private static async Task CalcularRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
+        PeriodoFiscal p, DeclaracionCalculada d, CancellationToken ct)
+    {
+        // Retenciones practicadas en facturas recibidas, por fecha contable
+        var filas = (await cn.QueryAsync<PercepcionFila>(new CommandDefinition("""
+            SELECT f.tercero_id, n.numero AS nif, t.nombre, tr.modelo_ingreso AS modelo, SUM(r.base) AS base, SUM(r.importe) AS retencion
+            FROM fiscal.factura f
+            JOIN fiscal.factura_retencion r ON r.factura_id = f.id
+            JOIN cat.tipo_retencion_irpf tr ON tr.id = r.tipo_retencion_id
+            JOIN conta.tercero t ON t.id = f.tercero_id
+            JOIN core.nif n ON n.id = t.nif_id
+            WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
+              AND f.fecha_contable BETWEEN @inicio AND @fin AND tr.modelo_ingreso IN ('111', '115')
+            GROUP BY 1, 2, 3, 4
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct))).AsList();
+
+        var cuentas = await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "RETENCION_PRACTICADA", ct);
+        decimal? contable = null;
+        if (cuentas.Length > 0)
+            contable = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+                -- Retenciones practicadas en el periodo: abonos (y cargos de facturas rectificativas); no cuenta el pago a Hacienda
+                SELECT COALESCE(SUM(CASE WHEN s.origen = 'FACTURA' THEN a.haber - a.debe ELSE a.haber END), 0)
+                FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id
+                WHERE a.cuenta_id = ANY(@cuentas) AND s.estado = 'CONTABILIZADO' AND s.origen NOT IN ('REGULARIZACION', 'CIERRE', 'APERTURA')
+                  AND s.fecha BETWEEN @inicio AND @fin
+                """, new { cuentas, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
+
+        CalculadorRetenciones.Calcular(modelo.Codigo,
+            filas.Where(f => f.Modelo == modelo.Codigo).Select(f => new PercepcionRetenida(f.TerceroId, f.Nif, f.Nombre, f.Base, f.Retencion)).ToList(),
+            contable, filas.Sum(f => f.Retencion), d);
+    }
+
+    // ---------------------------------------------------------------- 349
+    private sealed class Intracom349Fila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Pais { get; set; } = "";
+        public bool PaisUe { get; set; }
+        public string Nombre { get; set; } = "";
+        public string Clave { get; set; } = "";
+        public decimal Base { get; set; }
+        public DateOnly? FechaOriginal { get; set; }
+    }
+
+    private const string Select349 = """
+        SELECT f.tercero_id, n.numero AS nif, pa.iso2 AS pais, pa.es_ue AS pais_ue, t.nombre,
+               COALESCE(f.clave_operacion_349, CASE f.libro WHEN 'EMITIDAS' THEN 'E' ELSE 'A' END) AS clave,
+               SUM(fi.base) AS base, r.fecha_contable AS fecha_original
+        FROM fiscal.factura f
+        JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+        JOIN conta.tercero t ON t.id = f.tercero_id
+        JOIN core.nif n ON n.id = t.nif_id
+        JOIN cat.pais pa ON pa.id = n.pais_id
+        LEFT JOIN fiscal.factura r ON r.id = f.factura_rectificada_id
+        WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
+          AND fi.tipo_operacion IN ('INTRACOM_ENTREGA', 'INTRACOM_ADQUISICION')
+        """;
+
+    private static async Task Calcular349Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
+        DeclaracionCalculada d, CancellationToken ct)
+    {
+        if (empresa.ImpuestoIndirecto != "IVA") throw new ReglaContableException("El 349 es de empresas que tributan por IVA.");
+        var filas = (await cn.QueryAsync<Intracom349Fila>(new CommandDefinition(Select349 + " GROUP BY 1, 2, 3, 4, 5, 6, 8",
+            new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct))).AsList();
+
+        // Las rectificativas de facturas de periodos anteriores van como rectificaciones de aquel periodo
+        var mensual = !p.EsTrimestral;
+        PeriodoFiscal Original(DateOnly f) => PeriodoFiscal.Resolver(f.Year, mensual ? f.Month.ToString("00") : $"{(f.Month - 1) / 3 + 1}T");
+        var operaciones = filas.Where(f => f.FechaOriginal is null || f.FechaOriginal >= p.Inicio)
+            .Select(f => new OperacionIntracom(f.TerceroId, f.Nif, f.Pais, f.PaisUe, f.Nombre, f.Clave, f.Base)).ToList();
+        var rectificaciones = new List<Rectificacion349>();
+        foreach (var g in filas.Where(f => f.FechaOriginal < p.Inicio).GroupBy(f => (f.TerceroId, f.Clave, Periodo: Original(f.FechaOriginal!.Value))))
+        {
+            var po = g.Key.Periodo;
+            var anterior = (await cn.QueryAsync<Intracom349Fila>(new CommandDefinition(Select349 +
+                    " AND f.tercero_id = @tercero AND COALESCE(f.clave_operacion_349, CASE f.libro WHEN 'EMITIDAS' THEN 'E' ELSE 'A' END) = @clave" +
+                    " GROUP BY 1, 2, 3, 4, 5, 6, 8",
+                new { empresaId, inicio = po.Inicio, fin = po.Fin, tercero = g.Key.TerceroId, clave = g.Key.Clave }, tx, cancellationToken: ct)))
+                .Sum(x => x.Base);
+            var f0 = g.First();
+            rectificaciones.Add(new Rectificacion349(Calculador349.NifComunitario(f0.Nif, f0.Pais), f0.Nombre, g.Key.Clave, po.Anio, po.Codigo,
+                anterior, anterior + g.Sum(x => x.Base)));
+        }
+        Calculador349.Calcular(operaciones, rectificaciones, d);
     }
 
     // ---------------------------------------------------------------- 347 / 415
