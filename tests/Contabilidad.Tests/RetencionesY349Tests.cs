@@ -107,6 +107,38 @@ public class CriterioCajaTests
     }
 
     [Fact]
+    public void Rectificativa_ligada_sigue_el_cobro_de_la_factura_original()
+    {
+        var orig = F();                                                   // 1.000 + 210, 10/03/2026
+        var rect = new FacturaCaja(2, "EMITIDAS", true, new DateOnly(2026, 5, 10), new DateOnly(2026, 5, 10), -242, 9,
+            [new LineaCaja(1, 21, 0, false, -200, -42, 0, 0)], RectificadaId: 1);
+        var p2 = new PeriodoFiscal(2026, "2T", new DateOnly(2026, 4, 1), new DateOnly(2026, 6, 30));
+        var p3 = new PeriodoFiscal(2026, "3T", new DateOnly(2026, 7, 1), new DateOnly(2026, 9, 30));
+
+        // Sin cobrar al rectificar: la rectificativa no se devenga sola; al cobrar los 968 se devengan 210 − 42
+        Assert.Empty(CriterioCaja.DelPeriodo([orig, rect], [], p2));
+        var cobro = new CobroCaja[] { new(1, new DateOnly(2026, 8, 1), 968) };
+        var t3 = CriterioCaja.DelPeriodo([orig, rect], cobro, p3);
+        Assert.Equal(168m, t3.Sum(d => d.Cuota));
+        Assert.Equal((210m, -42m), (t3.Single(d => d.Factura.Id == 1).Cuota, t3.Single(d => d.Factura.Id == 2).Cuota));
+
+        // Ya cobrada al rectificar: la rectificación se devenga en su fecha
+        var cobrada = new CobroCaja[] { new(1, new DateOnly(2026, 4, 2), 1210) };
+        var t2 = CriterioCaja.DelPeriodo([orig, rect], cobrada, p2);
+        Assert.Equal((210m, -42m), (t2.Single(d => d.Factura.Id == 1).Cuota, t2.Single(d => d.Factura.Id == 2).Cuota));
+
+        // Cobrada la mitad antes de rectificar: al rectificar no cambia lo devengado (605 / 968 del nuevo total)
+        var mitad = new CobroCaja[] { new(1, new DateOnly(2026, 4, 2), 605) };
+        var antes = CriterioCaja.DelIntervalo([orig, rect], mitad, new DateOnly(2026, 4, 1), new DateOnly(2026, 5, 9)).Sum(d => d.Cuota);
+        var conRect = CriterioCaja.DelIntervalo([orig, rect], mitad, new DateOnly(2026, 4, 1), new DateOnly(2026, 5, 31)).Sum(d => d.Cuota);
+        Assert.Equal(105m, antes);
+        Assert.Equal(105m, conRect);
+        // y el límite es el de la original (31/12/2027): entonces se devenga todo lo que falta
+        var limite = CriterioCaja.DelIntervalo([orig, rect], mitad, new DateOnly(2027, 10, 1), new DateOnly(2027, 12, 31)).Sum(d => d.Cuota);
+        Assert.Equal(168m - 105m, limite);
+    }
+
+    [Fact]
     public void Recibidas_deducen_al_pagar_y_rectificativas_en_su_fecha()
     {
         var f = F("RECIBIDAS");

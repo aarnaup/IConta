@@ -34,6 +34,7 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         public long? CanalId { get; set; }
         public string Numero { get; set; } = "";
         public string Tercero { get; set; } = "";
+        public long? RectificadaId { get; set; }
     }
     private sealed class LineaFila
     {
@@ -60,10 +61,14 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         var filas = (await cn.QueryAsync<FacturaFila>(new CommandDefinition("""
             SELECT f.id, f.libro, (f.tipo_factura = 'RECTIFICATIVA') AS rectificativa,
                    COALESCE(f.fecha_operacion, f.fecha_expedicion) AS fecha_operacion, f.fecha_contable, f.total, f.canal_id,
-                   COALESCE(f.serie, '') || f.numero AS numero, t.nombre AS tercero
+                   COALESCE(f.serie, '') || f.numero AS numero, t.nombre AS tercero,
+                   CASE WHEN o.criterio_caja AND o.estado = 'CONTABILIZADA' THEN o.id END AS rectificada_id
             FROM fiscal.factura f JOIN conta.tercero t ON t.id = f.tercero_id
+            LEFT JOIN fiscal.factura o ON o.id = f.factura_rectificada_id
             WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA' AND f.criterio_caja AND f.fecha_contable <= @fin
-              AND make_date(EXTRACT(YEAR FROM COALESCE(f.fecha_operacion, f.fecha_expedicion))::int + 1, 12, 31) >= @inicio
+              -- el límite de una rectificativa ligada es el de su factura original
+              AND make_date(EXTRACT(YEAR FROM COALESCE(CASE WHEN o.criterio_caja THEN COALESCE(o.fecha_operacion, o.fecha_expedicion) END,
+                                                       f.fecha_operacion, f.fecha_expedicion))::int + 1, 12, 31) >= @inicio
               AND EXISTS (SELECT 1 FROM fiscal.factura_iva fi JOIN cat.tipo_iva ti ON ti.id = fi.tipo_iva_id
                           WHERE fi.factura_id = f.id AND fi.tipo_operacion = 'INTERIOR' AND ti.impuesto = @impuesto)
             ORDER BY f.fecha_contable, f.id
@@ -87,7 +92,7 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
 
         var facturas = filas.Select(f => new FacturaCaja(f.Id, f.Libro, f.Rectificativa, f.FechaOperacion, f.FechaContable, f.Total, f.CanalId,
             lineas[f.Id].Select(l => new LineaCaja(l.TipoIvaId, l.Porcentaje, l.PorcentajeRecargo, l.EsBienInversion, l.Base, l.Cuota,
-                l.CuotaRecargo, l.CuotaDeducible)).ToList())).ToList();
+                l.CuotaRecargo, l.CuotaDeducible)).ToList(), f.RectificadaId)).ToList();
         return new Datos(facturas, cobros, filas.ToDictionary(f => f.Id));
     }
 
@@ -106,7 +111,7 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
             delPeriodo.Where(f => f.Libro == "RECIBIDAS").Sum(f => f.Lineas.Sum(l => l.Cuota)));
         var avisos = new List<string>();
         var limite = devengos.Count(d => CriterioCaja.FechaLimite(d.Factura) >= p.Inicio && CriterioCaja.FechaLimite(d.Factura) <= p.Fin
-                                         && CriterioCaja.Proporcion(d.Factura, datos.Cobros, p.Fin.AddDays(-1)) < 1);
+                                         && CriterioCaja.ProporcionEn(d.Factura, datos.Facturas, datos.Cobros, p.Fin.AddDays(-1)) < 1);
         if (limite > 0)
             avisos.Add($"{limite} factura(s) en criterio de caja llegan al 31 de diciembre del año siguiente sin cobrar o pagar del todo: el resto se devenga ahora.");
         var hechos = await cn.ExecuteScalarAsync<int>(new CommandDefinition(
