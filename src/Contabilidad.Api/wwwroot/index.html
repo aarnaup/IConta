@@ -387,6 +387,7 @@
           <label>Hasta <input type="date" id="coHasta"></label>
           <button class="btn" id="coVer" type="button">Ver</button>
           <button class="btn primario" id="coAuto" data-req="TESORERIA:ESCRITURA" type="button">Conciliar automáticamente</button>
+          <button class="btn" id="coReglas" data-req="TESORERIA_DIRECTO" type="button" title="Contabiliza y concilia las líneas cuyo concepto coincide con una regla">Aplicar reglas</button>
         </div>
         <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
           <label>Extracto <input type="file" id="coFichero" accept=".n43,.aeb,.txt,.csv,.q43"></label>
@@ -424,6 +425,21 @@
             <button class="btn" id="coAccionNo" type="button">Cancelar</button>
           </div>
         </div>
+        <details>
+          <summary>Reglas por concepto</summary>
+          <p class="ayuda">Si el concepto de una línea pendiente contiene el texto (sin distinguir mayúsculas ni acentos), «Aplicar reglas» la contabiliza
+            contra la cuenta indicada y la concilia. Útil para comisiones, recibos de suministros, cuotas…</p>
+          <table><thead><tr><th>Texto</th><th>Signo</th><th>Cuenta</th><th>Concepto del asiento</th><th class="num">Orden</th><th></th></tr></thead><tbody id="rcLista"></tbody></table>
+          <div class="cab2" data-req="TESORERIA:ESCRITURA">
+            <label>Texto <input id="rcTexto" maxlength="100" placeholder="comision, endesa…"></label>
+            <label>Signo <select id="rcSigno"><option value="CARGO">Cargos (salidas)</option><option value="ABONO">Abonos (entradas)</option><option value="AMBOS">Ambos</option></select></label>
+            <label>Cuenta <input id="rcCuenta" list="dl-cuentas" placeholder="626…, 628…"></label>
+            <label>Canal <select id="rcCanal"></select></label>
+            <label>Concepto del asiento <input id="rcConcepto" maxlength="250" placeholder="El de la línea"></label>
+            <label>Orden <input id="rcOrden" inputmode="numeric" value="100" style="width:6em"></label>
+          </div>
+          <div class="fila-acciones" data-req="TESORERIA:ESCRITURA"><button class="btn" id="rcCrear" type="button">Añadir regla</button></div>
+        </details>
         <h3>Últimas conciliaciones</h3>
         <table><thead><tr><th>Cuándo</th><th>Tipo</th><th class="num">Importe</th><th>Banco</th><th>Asientos</th><th></th></tr></thead><tbody id="coRecientes"></tbody></table>
         <h3>Extractos importados</h3>

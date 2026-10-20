@@ -85,5 +85,29 @@ public static class ConciliacionEndpoints
                 new { lineaId, c.AsientoId }, ct);
             return Results.Ok(c);
         }).RequiereDirecto(Nivel.Escritura, Modulo.Tesoreria);
+
+        // ---- Reglas por concepto ----
+        t.MapGet("/reglas-conciliacion", (long empresaId, IConciliacionRepositorio r, CancellationToken ct) => r.ReglasAsync(empresaId, ct))
+            .Requiere(Nivel.Lectura, Modulo.Tesoreria);
+        t.MapPost("/reglas-conciliacion", async (long empresaId, CrearReglaConciliacionCmd cmd, HttpContext http, IConciliacionRepositorio r,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var g = await r.CrearReglaAsync(empresaId, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "REGLA_CONCILIACION_CREADA", "regla_conciliacion", g.Id, new { g.Texto, g.Cuenta }, ct);
+            return Results.Ok(g);
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+        t.MapDelete("/reglas-conciliacion/{reglaId:long}", async (long empresaId, long reglaId, IConciliacionRepositorio r, CancellationToken ct) =>
+        {
+            await r.BorrarReglaAsync(empresaId, reglaId, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+        app.MapPost("/api/empresas/{empresaId:long}/ejercicios/{ejercicioId:long}/tesoreria/conciliacion/reglas",
+            async (long empresaId, long ejercicioId, AplicarReglasCmd cmd, HttpContext http, IConciliacionRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+            {
+                var a = await r.AplicarReglasAsync(empresaId, ejercicioId, http.User.UsuarioId(), cmd, ct);
+                if (!cmd.Simular && a.Aplicadas > 0)
+                    await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "REGLAS_CONCILIACION_APLICADAS", "cuenta_bancaria", cmd.CuentaBancariaId, new { a.Aplicadas }, ct);
+                return Results.Ok(a);
+            }).RequireAuthorization().RequiereDirecto(Nivel.Escritura, Modulo.Tesoreria);
     }
 }

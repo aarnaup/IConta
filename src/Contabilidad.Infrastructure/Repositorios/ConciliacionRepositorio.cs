@@ -19,6 +19,11 @@ public interface IConciliacionRepositorio
 
     Task<ConciliacionHechaDto> AsientoDesdeLineaAsync(long empresaId, long ejercicioId, long usuarioId, long lineaId, AsientoDesdeLineaCmd cmd, CancellationToken ct);
     Task<ConciliacionHechaDto> LiquidarDesdeLineaAsync(long empresaId, long ejercicioId, long usuarioId, long lineaId, LiquidarDesdeLineaCmd cmd, CancellationToken ct);
+
+    Task<IReadOnlyList<ReglaConciliacionDto>> ReglasAsync(long empresaId, CancellationToken ct);
+    Task<ReglaConciliacionDto> CrearReglaAsync(long empresaId, CrearReglaConciliacionCmd cmd, CancellationToken ct);
+    Task BorrarReglaAsync(long empresaId, long reglaId, CancellationToken ct);
+    Task<ReglasAplicadasDto> AplicarReglasAsync(long empresaId, long ejercicioId, long usuarioId, AplicarReglasCmd cmd, CancellationToken ct);
 }
 
 /// <summary>
@@ -351,6 +356,14 @@ public sealed class ConciliacionRepositorio(IConexionFactory conexiones, IAsient
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
         var (linea, cuenta) = await LineaPendienteAsync(cn, tx, empresaId, lineaId, ct);
+        var r = await AsientoDesdeLineaAsync(cn, tx, empresaId, ejercicioId, usuarioId, linea, cuenta, cmd, ct);
+        await tx.CommitAsync(ct);
+        return r;
+    }
+
+    private async Task<ConciliacionHechaDto> AsientoDesdeLineaAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId, long usuarioId,
+        LineaFila linea, CuentaFila cuenta, AsientoDesdeLineaCmd cmd, CancellationToken ct)
+    {
         if (cmd.CuentaId == cuenta.CuentaContableId) throw new ReglaContableException("La contrapartida no puede ser la propia cuenta del banco.");
 
         var concepto = string.IsNullOrWhiteSpace(cmd.Concepto) ? (linea.Concepto ?? "Movimiento bancario") : cmd.Concepto.Trim();
@@ -371,7 +384,6 @@ public sealed class ConciliacionRepositorio(IConexionFactory conexiones, IAsient
         }, "TESORERIA", null, "EXTRACTO", ct);
 
         var id = await ConciliarAsientoAsync(cn, tx, empresaId, usuarioId, cuenta, linea, a.Id, ct);
-        await tx.CommitAsync(ct);
         return new ConciliacionHechaDto(id, a.Id, a.Numero);
     }
 
@@ -457,4 +469,95 @@ public sealed class ConciliacionRepositorio(IConexionFactory conexiones, IAsient
     private static Task Bloquear(NpgsqlConnection cn, NpgsqlTransaction tx, long cuentaBancariaId, CancellationToken ct)
         => cn.ExecuteAsync(new CommandDefinition("SELECT pg_advisory_xact_lock(hashtext(@clave))",
             new { clave = $"conciliacion|{cuentaBancariaId}" }, tx, cancellationToken: ct));
+
+    // =====================================================================
+    // Reglas por concepto
+    // =====================================================================
+    private const string SelectReglas = """
+        SELECT r.id, r.cuenta_bancaria_id, r.texto, r.signo, r.cuenta_id, c.codigo AS cuenta, c.nombre AS cuenta_nombre, r.canal_id, r.concepto, r.orden
+        FROM tes.regla_conciliacion r JOIN conta.cuenta c ON c.id = r.cuenta_id
+        WHERE r.empresa_id = @empresaId AND r.activa
+        """;
+
+    public async Task<IReadOnlyList<ReglaConciliacionDto>> ReglasAsync(long empresaId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        return (await cn.QueryAsync<ReglaConciliacionDto>(new CommandDefinition(SelectReglas + " ORDER BY r.orden, r.id",
+            new { empresaId }, cancellationToken: ct))).AsList();
+    }
+
+    public async Task<ReglaConciliacionDto> CrearReglaAsync(long empresaId, CrearReglaConciliacionCmd cmd, CancellationToken ct)
+    {
+        var texto = (cmd.Texto ?? "").Trim();
+        if (ReglasConciliacion.Normalizar(texto).Length < 3) throw new ReglaContableException("El texto de la regla debe tener al menos 3 caracteres.");
+        if (texto.Length > 100) throw new ReglaContableException("El texto de la regla admite como mucho 100 caracteres.");
+        var signo = (cmd.Signo ?? "").Trim().ToUpperInvariant();
+        if (signo is not ("CARGO" or "ABONO" or "AMBOS")) throw new ReglaContableException("Signo no válido: CARGO, ABONO o AMBOS.");
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var cuentaOk = await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS (SELECT 1 FROM conta.cuenta WHERE id = @id AND empresa_id = @empresaId AND es_imputable AND activa)",
+            new { id = cmd.CuentaId, empresaId }, cancellationToken: ct));
+        if (!cuentaOk) throw new ReglaContableException("La cuenta de la regla no existe o no admite apuntes.");
+        if (!await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS (SELECT 1 FROM canal.canal WHERE id = @id AND empresa_id = @empresaId)", new { id = cmd.CanalId, empresaId }, cancellationToken: ct)))
+            throw new ReglaContableException("El canal no es de la empresa.");
+        if (cmd.CuentaBancariaId is { } cb) await CuentaAsync(cn, null, empresaId, cb, ct);
+        if (await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS (SELECT 1 FROM tes.cuenta_bancaria WHERE cuenta_contable_id = @id AND empresa_id = @empresaId)", new { id = cmd.CuentaId, empresaId }, cancellationToken: ct)))
+            throw new ReglaContableException("La contrapartida de una regla no puede ser la cuenta de un banco.");
+        var id = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
+            INSERT INTO tes.regla_conciliacion (empresa_id, cuenta_bancaria_id, texto, signo, cuenta_id, canal_id, concepto, orden)
+            VALUES (@empresaId, @cuentaBancariaId, @texto, @signo, @cuentaId, @canalId, @concepto, @orden) RETURNING id
+            """, new { empresaId, cuentaBancariaId = cmd.CuentaBancariaId, texto, signo, cuentaId = cmd.CuentaId, canalId = cmd.CanalId,
+                       concepto = string.IsNullOrWhiteSpace(cmd.Concepto) ? null : cmd.Concepto.Trim(), orden = cmd.Orden }, cancellationToken: ct));
+        return await cn.QuerySingleAsync<ReglaConciliacionDto>(new CommandDefinition(SelectReglas + " AND r.id = @id", new { empresaId, id }, cancellationToken: ct));
+    }
+
+    public async Task BorrarReglaAsync(long empresaId, long reglaId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var n = await cn.ExecuteAsync(new CommandDefinition(
+            "UPDATE tes.regla_conciliacion SET activa = false WHERE id = @reglaId AND empresa_id = @empresaId AND activa", new { reglaId, empresaId }, cancellationToken: ct));
+        if (n == 0) throw new ReglaContableException("La regla no existe.");
+    }
+
+    public async Task<ReglasAplicadasDto> AplicarReglasAsync(long empresaId, long ejercicioId, long usuarioId, AplicarReglasCmd cmd, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var cuenta = await CuentaAsync(cn, tx, empresaId, cmd.CuentaBancariaId, ct);
+        await Bloquear(cn, tx, cuenta.Id, ct);
+        var ej = await cn.QuerySingleOrDefaultAsync<EjercicioFila>(new CommandDefinition(
+            "SELECT fecha_inicio, fecha_fin, estado FROM core.ejercicio WHERE id = @ejercicioId AND empresa_id = @empresaId",
+            new { ejercicioId, empresaId }, tx, cancellationToken: ct)) ?? throw new ReglaContableException("El ejercicio no existe en la empresa.");
+
+        var reglas = (await cn.QueryAsync<ReglaConciliacionDto>(new CommandDefinition(SelectReglas, new { empresaId }, tx, cancellationToken: ct))).ToList();
+        var dominio = reglas.Select(r => new ReglaConciliacion(r.Id, r.CuentaBancariaId, r.Texto, r.Signo, r.Orden)).ToList();
+        var lineas = (await cn.QueryAsync<LineaFila>(new CommandDefinition("""
+            SELECT id, cuenta_bancaria_id, fecha, importe, concepto, estado FROM tes.extracto_linea
+            WHERE cuenta_bancaria_id = @id AND estado = 'PENDIENTE' AND fecha BETWEEN @desde AND @hasta ORDER BY fecha, id
+            """, new { id = cuenta.Id, desde = ej.FechaInicio, hasta = ej.FechaFin }, tx, cancellationToken: ct))).ToList();
+
+        var avisos = new List<string>();
+        if (reglas.Count == 0) avisos.Add("No hay reglas de conciliación: créalas con un texto del concepto y la cuenta contrapartida.");
+        if (!cmd.Simular && ej.Estado != "ABIERTO") throw new ReglaContableException("El ejercicio está cerrado.");
+        var resultado = new List<LineaReglaDto>();
+        foreach (var l in lineas)
+        {
+            var r = ReglasConciliacion.Primera(dominio, cuenta.Id, l.Importe, l.Concepto);
+            if (r is null) continue;
+            var dto = reglas.First(x => x.Id == r.Id);
+            int? numero = null;
+            if (!cmd.Simular)
+                numero = (await AsientoDesdeLineaAsync(cn, tx, empresaId, ejercicioId, usuarioId, l, cuenta,
+                    new AsientoDesdeLineaCmd { CuentaId = dto.CuentaId, CanalId = dto.CanalId, Concepto = dto.Concepto }, ct)).AsientoNumero;
+            resultado.Add(new LineaReglaDto(l.Id, l.Fecha, l.Importe, l.Concepto, dto.Id, dto.Texto, $"{dto.Cuenta} {dto.CuentaNombre}", numero));
+        }
+        if (resultado.Count == 0 && reglas.Count > 0) avisos.Add("Ninguna línea pendiente del ejercicio coincide con las reglas.");
+        if (cmd.Simular) await tx.RollbackAsync(ct); else await tx.CommitAsync(ct);
+        return new ReglasAplicadasDto(cmd.Simular ? 0 : resultado.Count, resultado, avisos);
+    }
+
+    private sealed class EjercicioFila { public DateOnly FechaInicio { get; set; } public DateOnly FechaFin { get; set; } public string Estado { get; set; } = ""; }
 }

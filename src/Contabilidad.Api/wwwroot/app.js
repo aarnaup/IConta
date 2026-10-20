@@ -638,6 +638,7 @@ async function cargaConciliacion() {
 
 async function verConciliacion() {
   const banco = $('#coBanco').value; if (!banco) return;
+  cargaReglasConciliacion().catch(e => msg($('#coMsg'), e.message, 'ayuda err-texto'));
   const [e, extractos] = await Promise.all([
     api(urlE(`/tesoreria/conciliacion?cuentaBancariaId=${banco}&hasta=${$('#coHasta').value}`)),
     api(urlE(`/tesoreria/extractos?cuentaBancariaId=${banco}`))]);
@@ -706,6 +707,41 @@ $('#coAuto').onclick = async () => {
     const r = await post(urlE('/tesoreria/conciliacion/automatica'), { cuentaBancariaId: +$('#coBanco').value, diasMargen: 5 });
     await verConciliacion();
     msg($('#coMsg'), `${r.conciliadas} movimiento(s) conciliados automáticamente. Quedan ${r.lineasPendientes} en el banco y ${r.apuntesPendientes} en la contabilidad.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ---- Reglas de conciliación por concepto
+const signoTxt = { CARGO: 'Cargos', ABONO: 'Abonos', AMBOS: 'Ambos' };
+async function cargaReglasConciliacion() {
+  const reglas = await api(urlE('/tesoreria/reglas-conciliacion')), escribe = permitido('TESORERIA:ESCRITURA');
+  $('#rcLista').innerHTML = reglas.map(r => `<tr><td>${esc(r.texto)}</td><td>${signoTxt[r.signo]}</td><td>${esc(r.cuenta)} ${esc(r.cuentaNombre)}</td>
+      <td>${esc(r.concepto || '')}</td><td class="num">${r.orden}</td>
+      <td class="fila-acciones">${escribe ? `<button class="btn" data-borrar-regla="${r.id}">Quitar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">Sin reglas.</td></tr>';
+  if (!$('#rcCanal').options.length) $('#rcCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+}
+$('#rcCrear').onclick = async () => {
+  try {
+    const cuenta = cuentaPorCodigo($('#rcCuenta').value); if (!cuenta) throw new Error('Elige una cuenta existente.');
+    await post(urlE('/tesoreria/reglas-conciliacion'), { texto: $('#rcTexto').value, signo: $('#rcSigno').value, cuentaId: cuenta, canalId: +$('#rcCanal').value,
+      concepto: $('#rcConcepto').value || null, orden: parseInt($('#rcOrden').value, 10) || 100 });
+    ['#rcTexto', '#rcCuenta', '#rcConcepto'].forEach(i => $(i).value = '');
+    await cargaReglasConciliacion(); msg($('#coMsg'), 'Regla añadida.', 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#rcLista').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-borrar-regla]'); if (!b) return;
+  try { await api(urlE('/tesoreria/reglas-conciliacion/' + b.dataset.borrarRegla), { method: 'DELETE' }); await cargaReglasConciliacion(); }
+  catch (err) { msg($('#coMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#coReglas').onclick = async () => {
+  try {
+    const cuenta = +$('#coBanco').value;
+    const s = await post(urlX('/tesoreria/conciliacion/reglas'), { cuentaBancariaId: cuenta, simular: true });
+    if (!s.lineas.length) { msg($('#coMsg'), s.avisos.join(' ') || 'Ninguna línea coincide con las reglas.', 'ayuda'); return; }
+    if (!confirm(`Se contabilizarán y conciliarán ${s.lineas.length} línea(s):\n` + s.lineas.map(l => `${fechaES(l.fecha)} ${l.concepto} ${fmt(l.importe)} → ${l.cuenta}`).join('\n'))) return;
+    const a = await post(urlX('/tesoreria/conciliacion/reglas'), { cuentaBancariaId: cuenta });
+    await verConciliacion(); msg($('#coMsg'), `${a.aplicadas} línea(s) contabilizadas y conciliadas con las reglas.`, 'ayuda ok-texto');
   } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
 };
 

@@ -170,3 +170,25 @@ public class ConciliadorTests
         Assert.Equal([(2L, 10L)], r);
     }
 }
+
+public class ReglasConciliacionTests
+{
+    private static readonly Contabilidad.Domain.Tesoreria.ReglaConciliacion[] Reglas =
+    [
+        new(1, null, "comision", "CARGO", 10), new(2, null, "Endesa", "CARGO", 20), new(3, 7, "intereses", "ABONO", 5), new(4, null, "recibo", "AMBOS", 90),
+    ];
+
+    [Theory]
+    [InlineData("COMISIÓN MANTENIMIENTO", -12, 1)]
+    [InlineData("Recibo ENDESA ENERGIA", -80.5, 2)]     // la regla de orden menor gana
+    [InlineData("comision devuelta", 12, null)]          // signo distinto
+    [InlineData("Abono de intereses", 3.1, 3)]
+    [InlineData("Recibo comunidad", -40, 4)]
+    [InlineData("Transferencia cliente", 500, null)]
+    public void Primera_regla_que_coincide(string concepto, decimal importe, int? regla)
+        => Assert.Equal(regla, (int?)Contabilidad.Domain.Tesoreria.ReglasConciliacion.Primera(Reglas, 7, importe, concepto)?.Id);
+
+    [Fact]
+    public void Regla_de_otra_cuenta_no_se_aplica()
+        => Assert.Null(Contabilidad.Domain.Tesoreria.ReglasConciliacion.Primera(Reglas, 8, 3.1m, "Abono de intereses"));
+}

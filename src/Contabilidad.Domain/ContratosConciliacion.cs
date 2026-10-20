@@ -110,3 +110,42 @@ public sealed class LiquidarDesdeLineaCmd
 }
 
 public sealed record ConciliacionHechaDto(long ConciliacionId, long? AsientoId, int? AsientoNumero);
+
+public sealed class ReglaConciliacionDto
+{
+    public long Id { get; set; }
+    public long? CuentaBancariaId { get; set; }
+    public string Texto { get; set; } = "";
+    public string Signo { get; set; } = "";
+    public long CuentaId { get; set; }
+    public string Cuenta { get; set; } = "";
+    public string CuentaNombre { get; set; } = "";
+    public long CanalId { get; set; }
+    public string? Concepto { get; set; }
+    public int Orden { get; set; }
+}
+
+public sealed class CrearReglaConciliacionCmd
+{
+    /// <summary>Texto que debe aparecer en el concepto de la línea (sin distinguir mayúsculas ni acentos).</summary>
+    public string Texto { get; set; } = "";
+    /// <summary>CARGO (salidas), ABONO (entradas) o AMBOS.</summary>
+    public string Signo { get; set; } = "CARGO";
+    public long CuentaId { get; set; }
+    public long CanalId { get; set; }
+    public long? CuentaBancariaId { get; set; }
+    /// <summary>Concepto del asiento; por defecto, el de la línea.</summary>
+    public string? Concepto { get; set; }
+    public int Orden { get; set; } = 100;
+}
+
+public sealed class AplicarReglasCmd
+{
+    public long CuentaBancariaId { get; set; }
+    /// <summary>Sin contabilizar: solo dice qué regla se aplicaría a cada línea.</summary>
+    public bool Simular { get; set; }
+}
+
+public sealed record LineaReglaDto(long LineaId, DateOnly Fecha, decimal Importe, string? Concepto, long ReglaId, string Regla, string Cuenta, int? AsientoNumero);
+
+public sealed record ReglasAplicadasDto(int Aplicadas, IReadOnlyList<LineaReglaDto> Lineas, IReadOnlyList<string> Avisos);

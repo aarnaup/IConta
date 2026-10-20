@@ -16,3 +16,18 @@ CREATE TABLE IF NOT EXISTS fiscal.regularizacion_prorrata (
   asiento_id  bigint NOT NULL REFERENCES conta.asiento(id)
 );
 CREATE INDEX IF NOT EXISTS ix_regularizacion_prorrata ON fiscal.regularizacion_prorrata (empresa_id, anio);
+
+-- Reglas de conciliación: si el concepto de una línea del extracto contiene el texto, se contabiliza contra la cuenta indicada
+CREATE TABLE IF NOT EXISTS tes.regla_conciliacion (
+  id                 bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  empresa_id         bigint NOT NULL REFERENCES core.empresa(id),
+  cuenta_bancaria_id bigint REFERENCES tes.cuenta_bancaria(id),        -- NULL = todas las cuentas
+  texto              varchar(100) NOT NULL,
+  signo              varchar(6) NOT NULL DEFAULT 'AMBOS' CHECK (signo IN ('CARGO','ABONO','AMBOS')),
+  cuenta_id          bigint NOT NULL REFERENCES conta.cuenta(id),
+  canal_id           bigint NOT NULL REFERENCES canal.canal(id),
+  concepto           varchar(250),
+  orden              integer NOT NULL DEFAULT 100,
+  activa             boolean NOT NULL DEFAULT true
+);
+CREATE INDEX IF NOT EXISTS ix_regla_conciliacion ON tes.regla_conciliacion (empresa_id) WHERE activa;
