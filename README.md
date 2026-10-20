@@ -4,7 +4,8 @@
 - `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES), `08_aplicacion_resultado.sql` (origen de asiento para la aplicación del resultado), `09_inmovilizado.sql` (amortización por fechas, categorías por defecto y diario de amortizaciones), `10_libros_registro.sql` (número de registro de las facturas recibidas), `11_conciliacion.sql` (extractos bancarios y conciliación), `12_remesas.sql` (mandatos y remesas SEPA), `13_bienes_inversion.sql` (regularización de bienes de inversión), `14_operaciones_iva.sql` (intracomunitarias, importaciones e inversión del sujeto pasivo), `15_retenciones_349_caja.sql` (claves del 349, criterio de caja y países de la UE), `16_prorrata_cierre_tesoreria.sql` (regularización de prorrata, cierre de los grupos 8 y 9, extorno y reglas de conciliación).
 - `src/Contabilidad.Domain` → reglas puras: canales (`RepartidorCanales`, evaluador de fórmulas) y facturación (`FacturaCalculadora`, `ResolutorCuentas`, `GeneradorAsientoFactura`).
 - `src/Contabilidad.Infrastructure` → Dapper + Npgsql, repositorios y módulo Autofac.
-- `src/Contabilidad.Api` → API minimal + Serilog + UI estática (`wwwroot/index.html`).
+- `src/Contabilidad.Api` → API minimal (JSON) + Serilog + Swagger. No sirve la web.
+- `src/Contabilidad.Web` → aplicación web (HTML, CSS y JS estáticos en `wwwroot/`). Es un proyecto aparte que no referencia a los demás: llama a la API por HTTP con la dirección de `Api:Url`.
 - `tests/Contabilidad.Tests` → xUnit sobre el dominio (no necesita base de datos).
 
 ## Puesta en marcha
@@ -26,6 +27,7 @@ psql contabilidad -f database/13_bienes_inversion.sql
 psql contabilidad -f database/14_operaciones_iva.sql
 psql contabilidad -f database/15_retenciones_349_caja.sql
 psql contabilidad -f database/16_prorrata_cierre_tesoreria.sql
+psql contabilidad -f database/17_sii_regimenes_sociedades.sql
 
 # clave de firma JWT (mín. 32 caracteres; en Development ya hay una de pruebas)
 export Jwt__Key="<cadena-aleatoria-larga>"
@@ -33,13 +35,21 @@ export Jwt__Key="<cadena-aleatoria-larga>"
 dotnet run --project src/Contabilidad.Api -- crear-superadmin tu@correo.es "Tu nombre"
 
 dotnet test Contabilidad.slnx
-dotnet run --project src/Contabilidad.Api    # cadena de conexión en appsettings.json
+dotnet run --project src/Contabilidad.Api    # API en http://localhost:6579 (cadena de conexión en appsettings.json)
+dotnet run --project src/Contabilidad.Web    # web en http://localhost:6581, llama a la API de Api:Url
 ```
+
+## API y web por separado
+Son dos aplicaciones que se publican y se exponen cada una en su dirección (`dotnet publish src/Contabilidad.Api` y `dotnet publish src/Contabilidad.Web`).
+- **Web** (`Contabilidad.Web`): sirve `index.html`, `app.js`, `app.css` y `/config.js`, que le dice a la página dónde está la API. Se configura con `Api:Url` (variable `Api__Url`), por ejemplo `https://api.midominio.es`. Si se deja vacía, la web llama a la API en su mismo origen (útil detrás de un proxy que envía `/api` a la API). La política de seguridad (CSP) solo permite conectar con ese origen.
+- **API** (`Contabilidad.Api`): solo responde en `/api/**`, `/swagger` y `/openapi`. Admite peticiones de la web por CORS desde los orígenes de `Cors:Origenes` (variables `Cors__Origenes__0`, `Cors__Origenes__1`…), por ejemplo `https://conta.midominio.es`. Sin orígenes configurados, ningún navegador de otro origen puede llamarla. En Development ya están `http://localhost:6581`, `https://localhost:6580` y `http://localhost:5081`.
+- La sesión viaja en la cabecera `Authorization: Bearer` (no hay cookies), así que el CORS no admite credenciales.
+- Si al compilar la API tras actualizar sale `DirectoryNotFoundException: …/Contabilidad.Api/wwwroot/`, borra las carpetas `bin` y `obj` de `src/Contabilidad.Api` (quedan restos de cuando servía la web).
 
 ## Swagger y Postman
 En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
-- **Swagger UI**: `http://localhost:5080/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
-- **Documento OpenAPI**: `http://localhost:5080/openapi/v1.json`. En Postman: *Import* → pega esa URL (o el fichero). Crea una colección con las rutas agrupadas por módulo y autenticación *Bearer Token*: haz el login, copia el `token` de la respuesta en la variable de la colección (`bearerToken`) y el resto de peticiones ya lo envían.
+- **Swagger UI**: `http://localhost:6579/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
+- **Documento OpenAPI**: `http://localhost:6579/openapi/v1.json`. En Postman: *Import* → pega esa URL (o el fichero). Crea una colección con las rutas agrupadas por módulo y autenticación *Bearer Token*: haz el login, copia el `token` de la respuesta en la variable de la colección (`bearerToken`) y el resto de peticiones ya lo envían.
 - Los parámetros `{empresaId}` y `{ejercicioId}` son los `id` de `GET /api/mis-empresas` y `GET /api/empresas/{id}/ejercicios`. Fechas como `2026-12-31`; errores de negocio, 400 con `{ error, detalle }`.
 
 ## Plan General Contable

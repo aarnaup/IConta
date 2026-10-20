@@ -1,5 +1,8 @@
 'use strict';
 // ============================================================ utilidades
+// La API se sirve aparte: su dirección llega en /config.js (vacía = mismo origen). Todas las llamadas pasan por apiFetch.
+const API = String(window.ICONTA_CONFIG?.api || '').replace(/\/+$/, '');
+const apiFetch = (url, opt) => fetch(API + url, opt);
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const fmt = n => new Intl.NumberFormat('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
@@ -27,7 +30,7 @@ async function api(url, opt = {}) {
   const headers = { ...(opt.headers || {}) };
   if (opt.body) headers['Content-Type'] = 'application/json';
   if (S.token) headers.Authorization = 'Bearer ' + S.token;
-  const r = await fetch(url, { ...opt, headers });
+  const r = await apiFetch(url, { ...opt, headers });
   if (r.status === 401 && S.token) { salir('La sesión ha caducado. Vuelve a entrar.'); throw new Error('Sesión caducada'); }
   if (!r.ok) {
     let m = r.statusText;
@@ -460,7 +463,7 @@ async function listaFacturas() {
 async function imprimeFactura(id) {
   const w = window.open('', '_blank');
   try {
-    const r = await fetch(urlX(`/facturas/${id}/impreso`), { headers: { Authorization: 'Bearer ' + S.token } });
+    const r = await apiFetch(urlX(`/facturas/${id}/impreso`), { headers: { Authorization: 'Bearer ' + S.token } });
     if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
     const url = URL.createObjectURL(new Blob([await r.text()], { type: 'text/html' }));
     if (!w) { location.assign(url); return; }
@@ -551,7 +554,7 @@ $('#reGenerar').onclick = async () => {
 };
 
 async function descargaRemesa(id) {
-  const r = await fetch(urlE(`/tesoreria/remesas/${id}/fichero`), { headers: { Authorization: 'Bearer ' + S.token } });
+  const r = await apiFetch(urlE(`/tesoreria/remesas/${id}/fichero`), { headers: { Authorization: 'Bearer ' + S.token } });
   if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
   const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'remesa.xml').replace(/"/g, '');
   const url = URL.createObjectURL(await r.blob());
@@ -1208,7 +1211,7 @@ $('#lrVer').onclick = async () => {
 // La descarga necesita el token: se pide con fetch y se guarda como fichero
 async function descargaLibro(q, porDefecto) {
   try {
-    const r = await fetch(urlE(q), { headers: { Authorization: 'Bearer ' + S.token } });
+    const r = await apiFetch(urlE(q), { headers: { Authorization: 'Bearer ' + S.token } });
     if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
     const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || porDefecto).replace(/"/g, '');
     const url = URL.createObjectURL(await r.blob());
@@ -1283,7 +1286,7 @@ function muestraDeclaracion(v) {
 }
 
 async function descargaPost(url, cuerpo, porDefecto) {
-  const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + S.token, 'Content-Type': 'application/json' },
+  const r = await apiFetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + S.token, 'Content-Type': 'application/json' },
     body: JSON.stringify(cuerpo) });
   if (!r.ok) {
     let m = r.statusText;

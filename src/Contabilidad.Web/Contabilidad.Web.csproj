@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Aplicación web (HTML, CSS y JS estáticos). No depende de la API ni de la base de datos: la llama por HTTP. -->
+  <ItemGroup>
+    <PackageReference Include="Serilog.AspNetCore" Version="9.*" />
+  </ItemGroup>
+</Project>
