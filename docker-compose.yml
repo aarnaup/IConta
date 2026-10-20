@@ -1,0 +1,66 @@
+# Contabilidad completa en local: PostgreSQL con los scripts de database/, la API y la web.
+#   cp .env.example .env        (y pon una JWT_KEY propia)
+#   docker compose up -d --build
+#   docker compose run --rm api crear-superadmin tu@correo.es "Tu nombre"
+# Web: http://localhost:6581 · API: http://localhost:6579
+# Los scripts de database/ solo se ejecutan la primera vez, con el volumen de datos vacío
+# (para empezar de cero: docker compose down -v).
+
+name: iconta
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: contabilidad
+      POSTGRES_USER: ${POSTGRES_USER:-contabilidad}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD (copia .env.example a .env)}
+    volumes:
+      - db-datos:/var/lib/postgresql/data
+      - ./database:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${DB_PUERTO:-5433}:5432"
+    healthcheck:
+      # Durante la carga inicial el servidor no escucha por TCP: solo está «sano» cuando ha terminado
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d contabilidad"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    restart: unless-stopped
+
+  api:
+    image: iconta-api
+    build:
+      context: .
+      dockerfile: src/Contabilidad.Api/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ConnectionStrings__Contabilidad: Host=db;Port=5432;Database=contabilidad;Username=${POSTGRES_USER:-contabilidad};Password=${POSTGRES_PASSWORD}
+      Jwt__Key: ${JWT_KEY:?Falta JWT_KEY (mínimo 32 caracteres)}
+      Cors__Origenes__0: ${WEB_URL:-http://localhost:6581}
+      OpenApi__Habilitar: ${SWAGGER:-false}
+    volumes:
+      - api-logs:/app/logs
+    ports:
+      - "${API_PUERTO:-6579}:8080"
+    restart: unless-stopped
+
+  web:
+    image: iconta-web
+    build:
+      context: .
+      dockerfile: src/Contabilidad.Web/Dockerfile
+    depends_on:
+      - api
+    environment:
+      # Dirección de la API tal como la ve el navegador
+      Api__Url: ${API_URL:-http://localhost:6579}
+    ports:
+      - "${WEB_PUERTO:-6581}:8080"
+    restart: unless-stopped
+
+volumes:
+  db-datos:
+  api-logs:

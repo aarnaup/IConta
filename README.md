@@ -46,6 +46,17 @@ Son dos aplicaciones que se publican y se exponen cada una en su dirección (`do
 - La sesión viaja en la cabecera `Authorization: Bearer` (no hay cookies), así que el CORS no admite credenciales.
 - Si al compilar la API tras actualizar sale `DirectoryNotFoundException: …/Contabilidad.Api/wwwroot/`, borra las carpetas `bin` y `obj` de `src/Contabilidad.Api` (quedan restos de cuando servía la web).
 
+## Docker Compose
+`docker-compose.yml` levanta todo en local: PostgreSQL 16 (carga los scripts de `database/` en orden la primera vez), la API y la web.
+```bash
+cp .env.example .env          # pon una JWT_KEY propia (openssl rand -base64 48) y la contraseña de la base
+docker compose up -d --build
+docker compose run --rm api crear-superadmin tu@correo.es "Tu nombre"   # pide la contraseña
+```
+- Web en `http://localhost:6581`, API en `http://localhost:6579` (Swagger con `SWAGGER=true` en `.env`) y PostgreSQL en el puerto `5433` de tu máquina.
+- Los datos quedan en el volumen `db-datos`. Los scripts solo se ejecutan con el volumen vacío: para empezar de cero, `docker compose down -v`. Un script nuevo sobre una base ya creada se aplica a mano: `docker compose exec -T db psql -U contabilidad contabilidad < database/18_….sql`.
+- Si cambias los puertos o publicas con un dominio, ajusta `API_URL` y `WEB_URL` en `.env`: son las direcciones que usa el navegador.
+
 ## Docker
 Cada proyecto tiene su `Dockerfile` (`src/Contabilidad.Api/Dockerfile` y `src/Contabilidad.Web/Dockerfile`). Se construyen desde la raíz del repositorio, porque la API usa Domain e Infrastructure. Las imágenes escuchan en el puerto 8080, se ejecutan con un usuario sin privilegios y arrancan en Production (Swagger apagado salvo con `OpenApi__Habilitar=true`).
 ```bash
