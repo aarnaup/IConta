@@ -15,7 +15,9 @@ public sealed record EntradaImpuestoIndirecto(
     /// <summary>Cuotas a compensar de periodos anteriores todavía sin aplicar.</summary>
     decimal CompensacionPendiente,
     bool SolicitaDevolucion,
-    bool EsUltimoPeriodo);
+    bool EsUltimoPeriodo,
+    /// <summary>Regularización de bienes de inversión (anual en el último periodo, o por venta en el periodo de la venta).</summary>
+    decimal RegularizacionBienesInversion = 0);
 
 /// <summary>
 /// Autoliquidación de IVA (303) o IGIC (420) y resúmenes anuales, sobre facturas ya agrupadas.
@@ -143,6 +145,11 @@ public static class CalculadorImpuestoIndirecto
             var c = recibidasRect.Sum(x => x.CuotaDeducible);
             Add(igic ? "RDC" : "41", "Rectificación de deducciones: cuota", c);
             totalDeducible += c;
+        }
+        if (e.RegularizacionBienesInversion != 0)
+        {
+            Add(igic ? "RBI" : "43", "Regularización de bienes de inversión", e.RegularizacionBienesInversion);
+            totalDeducible += e.RegularizacionBienesInversion;
         }
         if (e.EsUltimoPeriodo && e.RegularizacionProrrata != 0)
         {

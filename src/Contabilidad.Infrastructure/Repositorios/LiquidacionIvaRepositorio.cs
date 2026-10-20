@@ -42,6 +42,8 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         public decimal ResultadoAntes { get; set; }
         public decimal Compensacion { get; set; }
         public decimal RegularizacionProrrata { get; set; }
+        public decimal RegularizacionBienes { get; set; }
+        public decimal BienesContabilizado { get; set; }
     }
     private sealed class EjercicioFila { public DateOnly FechaInicio { get; set; } public DateOnly FechaFin { get; set; } public string Estado { get; set; } = ""; }
     private sealed class CuentaFila { public long Id { get; set; } public string Codigo { get; set; } = ""; public string Nombre { get; set; } = ""; }
@@ -113,7 +115,14 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'COMP' ELSE '68' END), 0) AS compensacion,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
-                                AND casilla = CASE m.codigo WHEN '420' THEN 'REG' ELSE '44' END), 0) AS regularizacion_prorrata
+                                AND casilla = CASE m.codigo WHEN '420' THEN 'REG' ELSE '44' END), 0) AS regularizacion_prorrata,
+                      COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
+                                AND casilla = CASE m.codigo WHEN '420' THEN 'RBI' ELSE '43' END), 0) AS regularizacion_bienes,
+                      COALESCE((SELECT SUM(r.importe_regularizacion) FROM inmov.bien_inversion_regularizacion r
+                                JOIN inmov.bien_inversion b ON b.id = r.bien_inversion_id
+                                JOIN inmov.inmovilizado i ON i.id = b.inmovilizado_id
+                                JOIN conta.asiento a ON a.id = r.asiento_id AND a.estado <> 'ANULADO'
+                                WHERE i.empresa_id = d.empresa_id AND r.fecha BETWEEN d.fecha_inicio AND d.fecha_fin), 0) AS bienes_contabilizado
                FROM fiscal.declaracion d
                JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
                LEFT JOIN conta.asiento s ON s.id = d.asiento_id
@@ -199,7 +208,11 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
             soportado, repercutido, saldoDeudora, d.Compensacion, acreedora, deudora));
 
         // Contraste con la declaración: la regularización de prorrata no está en la contabilidad
-        var esperado = d.ResultadoAntes + d.RegularizacionProrrata;
+        // La de bienes de inversión sí, si se ha contabilizado su asiento (472 contra 6342/6392) dentro del periodo
+        var esperado = d.ResultadoAntes + d.RegularizacionProrrata + d.RegularizacionBienes - d.BienesContabilizado;
+        if (d.RegularizacionBienes != d.BienesContabilizado)
+            avisos.Add($"La declaración regulariza {d.RegularizacionBienes:N2} por bienes de inversión y hay contabilizados {d.BienesContabilizado:N2} en el periodo: " +
+                       "contabiliza la regularización (Inmovilizado → Bienes de inversión) antes de la liquidación.");
         if (d.RegularizacionProrrata != 0)
             avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y eso no está en la contabilidad: " +
                        "regístralo con un asiento manual (634/639 contra 472).");

@@ -531,6 +531,23 @@
       </div>
 
       <div class="panel">
+        <h2>Prorrata</h2>
+        <p class="ayuda">Porcentaje de deducción por año natural. Durante el año se aplica el provisional; en el último periodo se regulariza con el
+          definitivo, que se calcula con las operaciones del año (redondeado a la unidad superior).</p>
+        <table><thead><tr><th>Año</th><th>Sector</th><th class="num">Provisional</th><th class="num">Definitivo</th><th class="num">Op. con derecho</th>
+          <th class="num">Op. totales</th></tr></thead><tbody id="prLista"></tbody></table>
+        <div data-req="FISCAL:ESCRITURA" class="fila-acciones">
+          <label>Año <input id="prAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Provisional % <input id="prProv" inputmode="numeric" style="width:5em"></label>
+          <label>Definitivo % <input id="prDef" inputmode="numeric" style="width:5em"></label>
+          <label>Op. con derecho <input id="prCon" inputmode="decimal" style="width:9em"></label>
+          <label>Op. totales <input id="prTot" inputmode="decimal" style="width:9em"></label>
+          <button class="btn" id="prGuardar" type="button">Guardar</button>
+        </div>
+        <p id="prMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel">
         <h2>Declaraciones guardadas</h2>
         <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>
@@ -584,6 +601,21 @@
         <h3>Amortización contabilizada</h3>
         <table><thead><tr><th>Periodo</th><th class="num">Importe</th><th class="num">Acumulada</th><th>Asiento</th></tr></thead>
         <tbody id="inMovs"></tbody></table>
+        <div id="inBI">
+          <h3>Bien de inversión (IVA/IGIC)</h3>
+          <p id="inBIResumen" class="ayuda"></p>
+          <div id="inBIForm" data-req="INMOVILIZADO:ESCRITURA">
+            <div class="cab2">
+              <label>Cuota soportada <input id="inBICuota" inputmode="decimal" placeholder="La de la factura"></label>
+              <label>Prorrata del año de inicio (%) <input id="inBIProrrata" inputmode="numeric" placeholder="La del año"></label>
+              <label>Año de inicio de utilización <input id="inBIAnio" inputmode="numeric" placeholder="El de inicio de amortización"></label>
+              <label><input type="checkbox" id="inBIInmueble"> Inmueble (10 años)</label>
+              <label><input type="checkbox" id="inBIExenta"> Su venta será exenta o no sujeta</label>
+            </div>
+            <div class="fila-acciones"><button class="btn" id="inBIAlta" type="button">Registrar como bien de inversión</button></div>
+          </div>
+          <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inBIQuitar" type="button" hidden>Quitar del registro</button></div>
+        </div>
         <div id="inBajaForm" data-req="INMOVILIZADO_DIRECTO">
           <h3>Baja o venta</h3>
           <div class="cab2">
@@ -615,6 +647,27 @@
         <h3>Amortizaciones contabilizadas en este ejercicio</h3>
         <table><thead><tr><th>Asiento</th><th>Fecha</th><th class="num">Elementos</th><th class="num">Total</th><th></th></tr></thead>
         <tbody id="amHechas"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Bienes de inversión: regularización del IVA/IGIC</h2>
+        <p class="ayuda">Libro registro de bienes de inversión. Durante 5 años (10 los inmuebles) la deducción se ajusta cada año si la prorrata
+          definitiva se separa más de 10 puntos de la del año de inicio, y de una vez si el bien se vende. El importe entra solo en el 303/420
+          (casilla 43); aquí se contabiliza: 472 contra 6392 (más deducción) o 6342 (menos).</p>
+        <div class="fila-acciones">
+          <label>Año <input id="biAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="biVer" type="button">Ver</button>
+          <span data-req="INMOVILIZADO_DIRECTO">
+            <label>Periodo <select id="biPeriodo"></select></label>
+            <button class="btn primario" id="biContabilizar" data-guarda type="button">Contabilizar la regularización</button>
+          </span>
+        </div>
+        <ul id="biAvisos" class="avisos"></ul>
+        <div style="overflow-x:auto"><table><thead><tr><th>Código</th><th>Descripción</th><th>Inicio</th><th class="num">Años</th><th class="num">Cuota soportada</th>
+          <th class="num">Prorrata inicial</th><th class="num">Deducción inicial</th><th>Regularizaciones</th><th>Estado</th></tr></thead>
+        <tbody id="biLista"></tbody></table></div>
+        <div id="biAsientos" class="fila-acciones"></div>
+        <p id="biMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">

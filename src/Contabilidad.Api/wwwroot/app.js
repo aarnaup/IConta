@@ -838,12 +838,33 @@ async function cargaFiscal() {
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
     pintaPeriodos();
   }
-  await cargaDeclaraciones();
+  await Promise.all([cargaDeclaraciones(), listaProrratas()]);
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
     $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ prorrata
+async function listaProrratas() {
+  const filas = await api(urlE('/fiscal/prorratas'));
+  const pc = v => v == null ? '' : v + ' %';
+  $('#prLista').innerHTML = filas.map(p => `<tr><td>${p.anio}</td><td>${p.sectorDiferenciado ?? ''}</td><td class="num">${pc(p.porcentajeProvisional)}</td>
+      <td class="num">${pc(p.porcentajeDefinitivo)}</td><td class="num">${p.operacionesConDerecho != null ? fmt(p.operacionesConDerecho) : ''}</td>
+      <td class="num">${p.operacionesTotales != null ? fmt(p.operacionesTotales) : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">Sin prorrata: se deduce todo el impuesto soportado.</td></tr>';
+  if (!$('#prAnio').value) $('#prAnio').value = $('#mfAnio').value;
+}
+$('#prGuardar').onclick = async () => {
+  try {
+    const ent = id => $(id).value.trim() ? parseInt($(id).value, 10) : null, dec = id => $(id).value.trim() ? num($(id).value) : null;
+    const p = await api(urlE('/fiscal/prorratas'), { method: 'PUT', body: JSON.stringify({ anio: +$('#prAnio').value,
+      porcentajeProvisional: ent('#prProv'), porcentajeDefinitivo: ent('#prDef'), operacionesConDerecho: dec('#prCon'), operacionesTotales: dec('#prTot') }) });
+    ['#prProv', '#prDef', '#prCon', '#prTot'].forEach(i => $(i).value = '');
+    await listaProrratas();
+    msg($('#prMsg'), `Prorrata de ${p.anio} guardada${p.porcentajeDefinitivo != null ? ': definitivo ' + p.porcentajeDefinitivo + ' %' : ''}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#prMsg'), e.message, 'ayuda err-texto'); }
+};
 
 // ------------------------------------------------------------ libros registro de IVA/IGIC
 const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#lrAnio').value}&periodo=${$('#lrPeriodo').value}`;
@@ -1019,7 +1040,12 @@ async function cargaInmovilizado() {
     || '<tr><td colspan="7" class="vacio">No hay categorías.</td></tr>';
   pintaMesesCategoria();
   if (!$('#amHasta').value || $('#amHasta').value < S.ejercicio.fechaInicio || $('#amHasta').value > S.ejercicio.fechaFin) $('#amHasta').value = S.ejercicio.fechaFin;
-  await Promise.all([listaInmovilizado(), listaAmortizaciones()]);
+  const anioEj = +S.ejercicio.fechaFin.slice(0, 4);
+  if (!$('#biAnio').value || $('#biAnio').dataset.ej !== String(S.ejercicio.id)) { $('#biAnio').value = anioEj; $('#biAnio').dataset.ej = S.ejercicio.id; }
+  if (!$('#biPeriodo').options.length)
+    $('#biPeriodo').innerHTML = ['4T', '3T', '2T', '1T', '12', '11', '10', '09', '08', '07', '06', '05', '04', '03', '02', '01']
+      .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
+  await Promise.all([listaInmovilizado(), listaAmortizaciones(), listaBienesInversion()]);
 }
 function pintaMesesCategoria() {
   const c = IN.categorias.find(x => String(x.id) === $('#inCat').value);
@@ -1076,6 +1102,7 @@ function pintaFicha(f) {
   $('#inMovs').innerHTML = f.movimientos.map(m => `<tr><td>${m.desde ? fechaES(m.desde) : ''} – ${m.hasta ? fechaES(m.hasta) : ''}</td><td class="num">${fmt(m.importe)}</td>
       <td class="num">${fmt(m.acumulada)}</td><td>${m.asientoNumero ? 'nº ' + m.asientoNumero + ' (' + esc(m.ejercicio) + ')' : ''}</td></tr>`).join('')
     || '<tr><td colspan="4" class="vacio">Todavía no se ha contabilizado amortización.</td></tr>';
+  pintaBienInversion(e).catch(err => msg($('#inFichaMsg'), err.message, 'ayuda err-texto'));
   $('#inBFecha').value = dentroEj(hoy()); $('#inBTipo').value = 'BAJA'; $('#inBImporte').value = '0'; $('#inBCobro').value = '';
   $('#inBaja').hidden = e.estado !== 'ALTA'; $('#inAnularBaja').hidden = e.estado === 'ALTA';
   $$('#inBajaForm .cab2').forEach(x => x.hidden = e.estado !== 'ALTA');
@@ -1099,6 +1126,71 @@ $('#inAnularBaja').onclick = async () => {
   if (!IN.ficha || !confirm('¿Anular la baja? El elemento vuelve a estar en alta.')) return;
   try { await api(urlX(`/inmovilizado/${IN.ficha.elemento.id}/baja`), { method: 'DELETE' }); await verFicha(IN.ficha.elemento.id); await listaInmovilizado(); msg($('#inFichaMsg'), 'Baja anulada.', 'ayuda ok-texto'); }
   catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ---- bienes de inversión (regularización del IVA/IGIC, arts. 107-110 LIVA)
+const tipoReg = { INICIO: 'inicio', ANUAL: 'anual', TRANSMISION: 'venta' };
+const textoCuadro = b => b.cuadro.filter(c => c.tipo !== 'INICIO').map(c =>
+  `${c.anio} ${tipoReg[c.tipo]}${c.prorrata != null ? ' ' + c.prorrata + ' %' : ''}: ${fmt(c.importe)}${c.contabilizada ? ' (asiento nº ' + c.asientoNumero + ')' : c.importe ? ' (pendiente)' : ''}`
+).join(' · ');
+async function libroBienes(anio) { return api(urlE('/inmovilizado/bienes-inversion?anio=' + anio)); }
+async function listaBienesInversion() {
+  const l = await libroBienes(+$('#biAnio').value || new Date().getFullYear());
+  $('#biAvisos').innerHTML = l.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  const asientos = new Map();
+  l.bienes.forEach(b => b.cuadro.filter(c => c.asientoId && c.anio === l.anio).forEach(c => asientos.set(c.asientoId, c.asientoNumero)));
+  $('#biLista').innerHTML = (l.bienes.map(b => `<tr><td>${esc(b.codigo)}</td><td>${esc(b.descripcion)}</td><td>${b.anioInicio}</td><td class="num">${b.anios}</td>
+      <td class="num">${fmt(b.cuotaSoportada)}</td><td class="num">${b.prorrataInicial} %</td><td class="num">${fmt(b.deduccionInicial)}</td>
+      <td>${esc(textoCuadro(b)) || '<span class="ayuda">—</span>'}</td><td>${estadoInm[b.estado] || esc(b.estado)}</td></tr>`).join('')
+    + (l.bienes.length ? `<tr class="total"><td colspan="7">Regularización de ${l.anio}</td><td colspan="2">${fmt(l.regularizacionAnio)} · contabilizado ${fmt(l.contabilizado)}</td></tr>` : ''))
+    || '<tr><td colspan="9" class="vacio">No hay bienes en el registro. Se dan de alta desde la ficha del elemento.</td></tr>';
+  $('#biAsientos').innerHTML = permitido('INMOVILIZADO_DIRECTO') && S.ejercicio.estado === 'ABIERTO'
+    ? [...asientos].map(([id, n]) => `<button class="btn" data-anular-bi="${id}">Anular el asiento nº ${n}</button>`).join(' ') : '';
+}
+$('#biVer').onclick = () => listaBienesInversion().catch(e => msg($('#biMsg'), e.message, 'ayuda err-texto'));
+$('#biContabilizar').onclick = async () => {
+  try {
+    const r = await post(urlX('/inmovilizado/bienes-inversion/regularizar'), { anio: +$('#biAnio').value, periodo: $('#biPeriodo').value });
+    await listaBienesInversion();
+    msg($('#biMsg'), `Regularización contabilizada: asiento nº ${r.asientoNumero} por ${fmt(r.importe)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#biMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#biAsientos').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-anular-bi]'); if (!b || !confirm('¿Anular la regularización contabilizada?')) return;
+  try { await api(urlX('/inmovilizado/bienes-inversion/regularizacion/' + b.dataset.anularBi), { method: 'DELETE' }); await listaBienesInversion(); msg($('#biMsg'), 'Regularización anulada.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#biMsg'), err.message, 'ayuda err-texto'); }
+});
+async function pintaBienInversion(e) {
+  const l = await libroBienes(+$('#biAnio').value || new Date().getFullYear());
+  const b = l.bienes.find(x => x.inmovilizadoId === e.id);
+  $('#inBIResumen').textContent = b
+    ? `En el registro desde ${b.anioInicio} hasta ${b.ultimoAnio}${b.esInmueble ? ' (inmueble)' : ''}: cuota soportada ${fmt(b.cuotaSoportada)}, prorrata del año de inicio ${b.prorrataInicial} %, `
+      + `deducción ${fmt(b.deduccionInicial)}.${b.transmisionExenta ? ' Venta exenta o no sujeta.' : ''} ${textoCuadro(b)}`
+    : e.valorAdquisicion > 3005.06 ? 'No está en el registro de bienes de inversión. Si su IVA/IGIC se dedujo con prorrata, regístralo para regularizarlo los años siguientes.'
+      : 'Valor de 3.005,06 € o menos: no es bien de inversión a efectos del impuesto.';
+  $('#inBIForm').hidden = !!b || e.valorAdquisicion <= 3005.06 || !permitido('INMOVILIZADO:ESCRITURA');
+  $('#inBIQuitar').hidden = !b;
+  ['#inBICuota', '#inBIProrrata', '#inBIAnio'].forEach(i => $(i).value = ''); $('#inBIInmueble').checked = $('#inBIExenta').checked = false;
+}
+$('#inBIAlta').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    const n = v => v.trim() ? num(v) : null;
+    await post(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion`), {
+      cuotaSoportada: n($('#inBICuota').value), prorrataInicial: $('#inBIProrrata').value.trim() ? parseInt($('#inBIProrrata').value, 10) : null,
+      anioInicio: $('#inBIAnio').value.trim() ? parseInt($('#inBIAnio').value, 10) : null,
+      esInmueble: $('#inBIInmueble').checked, transmisionExenta: $('#inBIExenta').checked });
+    await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
+    msg($('#inFichaMsg'), 'Registrado como bien de inversión.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#inBIQuitar').onclick = async () => {
+  if (!IN.ficha || !confirm('¿Quitar el elemento del registro de bienes de inversión?')) return;
+  try {
+    await api(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion`), { method: 'DELETE' });
+    await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
+    msg($('#inFichaMsg'), 'Quitado del registro.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
 };
 
 function pintaAmortizacion(v) {
