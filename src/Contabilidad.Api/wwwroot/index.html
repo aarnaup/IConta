@@ -162,6 +162,7 @@
     <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
     <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
+    <button data-tab="inmovilizado" data-req="INMOVILIZADO:LECTURA" aria-pressed="false">Inmovilizado</button>
     <button data-tab="balances" data-req="BALANCES" aria-pressed="false">Balances</button>
     <button data-tab="cierre" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Cierre</button>
   </nav>
@@ -403,6 +404,108 @@
         <h2>Declaraciones guardadas</h2>
         <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-inmovilizado" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Elementos de inmovilizado</h2>
+        <div class="fila-acciones">
+          <label>Mostrar <select id="inEstado"><option value="ALTA">En alta</option><option value="">Todos</option>
+            <option value="BAJA">Dados de baja</option><option value="VENDIDO">Vendidos</option></select></label>
+          <button class="btn" id="inNuevoBtn" data-req="INMOVILIZADO:ESCRITURA" type="button">Nuevo elemento</button>
+        </div>
+        <table><thead><tr><th>Código</th><th>Descripción</th><th>Categoría</th><th>Canal</th><th class="num">Valor</th>
+          <th class="num">Amortizado</th><th class="num">Valor neto</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="inLista"></tbody></table>
+        <p id="inMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="inNuevo" hidden>
+        <h2>Nuevo elemento</h2>
+        <div class="cab2">
+          <label>Descripción <input id="inDesc" maxlength="250"></label>
+          <label>Categoría <select id="inCat"></select></label>
+          <label>Canal <select id="inCanal"></select></label>
+          <label>Fecha de adquisición <input type="date" id="inFAdq"></label>
+          <label>Inicio de la amortización <input type="date" id="inFIni" placeholder="La de adquisición"></label>
+          <label>Código <input id="inCodigo" maxlength="20" placeholder="Automático"></label>
+          <label>Valor de adquisición <input id="inValor" inputmode="decimal"></label>
+          <label>Valor residual <input id="inResidual" inputmode="decimal" value="0"></label>
+          <label>Vida útil (meses) <input id="inMeses" inputmode="numeric"></label>
+          <label>Amortización previa <input id="inPrevia" inputmode="decimal" value="0" title="Lo ya amortizado en otro programa"></label>
+          <label>Contabilizar la compra contra <input id="inContra" list="dl-cuentas" placeholder="Vacío si ya está con su factura"></label>
+        </div>
+        <div class="fila-acciones">
+          <button class="btn primario" id="inGuardar" data-guarda type="button">Dar de alta</button>
+          <button class="btn" id="inCancelar" type="button">Cancelar</button>
+        </div>
+        <p id="inNuevoMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="inFicha" hidden>
+        <h2 id="inFichaTitulo"></h2>
+        <p id="inFichaSub" class="ayuda"></p>
+        <h3>Cuadro de amortización</h3>
+        <table><thead><tr><th>Desde</th><th>Hasta</th><th class="num">Cuota</th><th class="num">Acumulada</th><th class="num">Valor neto</th></tr></thead>
+        <tbody id="inCuadro"></tbody></table>
+        <h3>Amortización contabilizada</h3>
+        <table><thead><tr><th>Periodo</th><th class="num">Importe</th><th class="num">Acumulada</th><th>Asiento</th></tr></thead>
+        <tbody id="inMovs"></tbody></table>
+        <div id="inBajaForm" data-req="INMOVILIZADO_DIRECTO">
+          <h3>Baja o venta</h3>
+          <div class="cab2">
+            <label>Fecha <input type="date" id="inBFecha"></label>
+            <label>Tipo <select id="inBTipo"><option value="BAJA">Baja sin venta</option><option value="VENTA">Venta</option></select></label>
+            <label>Precio de venta (sin impuestos) <input id="inBImporte" inputmode="decimal" value="0"></label>
+            <label>Se cobra en <input id="inBCobro" list="dl-cuentas" placeholder="572…, 543…"></label>
+          </div>
+          <div class="fila-acciones">
+            <button class="btn primario" id="inBaja" data-guarda type="button">Contabilizar la baja</button>
+            <button class="btn" id="inAnularBaja" data-guarda type="button">Anular la baja</button>
+          </div>
+        </div>
+        <p id="inFichaMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" data-req="INMOVILIZADO_DIRECTO">
+        <h2>Amortización</h2>
+        <p class="ayuda">Lineal por días. Calcula lo pendiente de cada elemento hasta la fecha y lo contabiliza en un solo asiento (68x contra 28x).</p>
+        <div class="fila-acciones">
+          <label>Hasta <input type="date" id="amHasta"></label>
+          <button class="btn" id="amPrevia" type="button">Previsualizar</button>
+          <button class="btn primario" id="amGuardar" data-guarda type="button">Contabilizar</button>
+        </div>
+        <ul id="amAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Código</th><th>Descripción</th><th>Canal</th><th class="num">Cuota</th><th class="num">Acumulada</th><th class="num">Valor neto</th></tr></thead>
+        <tbody id="amLineas"></tbody></table>
+        <p id="amMsg" class="ayuda" role="status"></p>
+        <h3>Amortizaciones contabilizadas en este ejercicio</h3>
+        <table><thead><tr><th>Asiento</th><th>Fecha</th><th class="num">Elementos</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody id="amHechas"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Categorías</h2>
+        <table><thead><tr><th>Nombre</th><th>Tipo</th><th>Inmovilizado</th><th>Amort. acumulada</th><th>Gasto</th><th>Método</th><th class="num">Vida útil</th></tr></thead>
+        <tbody id="caLista"></tbody></table>
+        <div data-req="INMOVILIZADO:ESCRITURA">
+          <h3>Nueva categoría</h3>
+          <div class="cab2">
+            <label>Nombre <input id="caNombre" maxlength="150"></label>
+            <label>Tipo <select id="caTipo"><option value="MATERIAL">Material</option><option value="INTANGIBLE">Intangible</option>
+              <option value="INVERSION_INMOBILIARIA">Inversión inmobiliaria</option></select></label>
+            <label>Método <select id="caMetodo"><option value="LINEAL">Lineal</option><option value="NO_AMORTIZA">No se amortiza</option></select></label>
+            <label>Cuenta de inmovilizado <input id="caInm" list="dl-cuentas" placeholder="21…"></label>
+            <label>Cuenta de amortización acumulada <input id="caAmo" list="dl-cuentas" placeholder="281…"></label>
+            <label>Cuenta de gasto <input id="caGas" list="dl-cuentas" placeholder="681…"></label>
+            <label>Vida útil (meses) <input id="caMeses" inputmode="numeric"></label>
+          </div>
+          <button class="btn" id="caGuardar" type="button">Crear categoría</button>
+          <p id="caMsg" class="ayuda" role="status"></p>
+        </div>
       </div>
     </div>
   </section>

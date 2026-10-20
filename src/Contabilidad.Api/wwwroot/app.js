@@ -138,6 +138,7 @@ function permitido(req) {
   if (!S.acceso) return false;
   if (req === 'TESORERIA_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.TESORERIA] >= ORDEN.ESCRITURA;
   if (req === 'FISCAL_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.FISCAL] >= ORDEN.ESCRITURA;
+  if (req === 'INMOVILIZADO_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.INMOVILIZADO] >= ORDEN.ESCRITURA;
   if (req === 'BALANCES') return ['BALANCES', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
   if (req === 'CONTABILIDAD_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.CONTABILIDAD] >= ORDEN.ESCRITURA;
   if (req === 'REVISOR')
@@ -174,6 +175,7 @@ async function entrarEmpresa(empresa, ejercicio) {
   MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
   $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
+  IN.ficha = null; $('#inFicha').hidden = true; $('#inNuevo').hidden = true;
   pintaLineas(); recalcula();
 
   vista('app');
@@ -191,9 +193,9 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'balances', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
   const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
-                  balances: cargaBalances, cierre: cargaCierre }[nombre];
+                  inmovilizado: cargaInmovilizado, balances: cargaBalances, cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
 }
 $('#navApp').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTab(b.dataset.tab); });
@@ -490,6 +492,7 @@ $('#liqGuardar').onclick = async () => {
       { fecha: $('#liqFecha').value, importe: num($('#liqImporte').value), cuentaBancariaId: +$('#liqBanco').value });
     msg($('#vMsg'), `Contabilizado en el asiento ${r.asientoNumero}.` + (r.pendiente > 0 ? ` Quedan ${fmt(r.pendiente)} pendientes.` : ''), 'ayuda ok-texto');
     TES.liq = null; $('#liqPanel').hidden = true;
+  IN.ficha = null; $('#inFicha').hidden = true; $('#inNuevo').hidden = true;
     await cargaTesoreria();
   } catch (err) { msg($('#liqMsg'), err.message, 'ayuda err-texto'); }
 };
@@ -642,6 +645,147 @@ $('#mfLiqGuardar').onclick = async () => {
     msg($('#mfMsg'), `Liquidación contabilizada: asiento nº ${r.asientoNumero}.`, 'ayuda ok-texto');
     await cargaDeclaraciones();
   } catch (e) { msg($('#mfLiqMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ------------------------------------------------------------ inmovilizado
+const IN = { categorias: [], ficha: null };
+const estadoInm = { ALTA: 'En alta', BAJA: 'Baja', VENDIDO: 'Vendido' };
+const cuentaPorCodigo = cod => { const c = S.cuentas.find(x => x.codigo === (cod || '').trim()); return c ? c.id : null; };
+const dentroEj = d => d < S.ejercicio.fechaInicio ? S.ejercicio.fechaInicio : d > S.ejercicio.fechaFin ? S.ejercicio.fechaFin : d;
+
+async function cargaInmovilizado() {
+  IN.categorias = await api(urlE('/inmovilizado/categorias'));
+  $('#inCat').innerHTML = IN.categorias.map(c => `<option value="${c.id}">${esc(c.nombre)}</option>`).join('');
+  $('#inCanal').innerHTML = S.canales.map(c => `<option value="${c.id}">${esc(c.codigo)} · ${esc(c.nombre)}</option>`).join('');
+  $('#caLista').innerHTML = IN.categorias.map(c => `<tr><td>${esc(c.nombre)}</td><td>${esc(c.tipo.toLowerCase())}</td><td>${esc(c.cuentaInmovilizado || '')}</td>
+      <td>${esc(c.cuentaAmortAcumulada || '')}</td><td>${esc(c.cuentaGastoAmort || '')}</td><td>${c.metodoDefecto === 'LINEAL' ? 'Lineal' : 'No se amortiza'}</td>
+      <td class="num">${c.vidaUtilMesesDefecto ? c.vidaUtilMesesDefecto + ' meses' : ''}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">No hay categorías.</td></tr>';
+  pintaMesesCategoria();
+  if (!$('#amHasta').value || $('#amHasta').value < S.ejercicio.fechaInicio || $('#amHasta').value > S.ejercicio.fechaFin) $('#amHasta').value = S.ejercicio.fechaFin;
+  await Promise.all([listaInmovilizado(), listaAmortizaciones()]);
+}
+function pintaMesesCategoria() {
+  const c = IN.categorias.find(x => String(x.id) === $('#inCat').value);
+  $('#inMeses').placeholder = c && c.vidaUtilMesesDefecto ? `${c.vidaUtilMesesDefecto} (de la categoría)` : '';
+  $('#inMeses').disabled = c && c.metodoDefecto === 'NO_AMORTIZA';
+}
+$('#inCat').onchange = pintaMesesCategoria;
+
+async function listaInmovilizado() {
+  const filas = await api(urlE('/inmovilizado' + ($('#inEstado').value ? '?estado=' + $('#inEstado').value : '')));
+  $('#inLista').innerHTML = (filas.map(e => `<tr><td>${esc(e.codigo)}</td><td>${esc(e.descripcion)}</td><td>${esc(e.categoria)}</td><td>${esc(e.canal)}</td>
+      <td class="num">${fmt(e.valorAdquisicion)}</td><td class="num">${fmt(e.amortizado)}</td><td class="num">${fmt(e.valorNeto)}</td>
+      <td>${estadoInm[e.estado] || esc(e.estado)}${e.fechaBaja ? ' · ' + fechaES(e.fechaBaja) : ''}</td>
+      <td class="fila-acciones"><button class="btn" data-ver="${e.id}">Ver</button></td></tr>`).join('')
+    + (filas.length ? `<tr class="total"><td colspan="4">Total</td><td class="num">${fmt(filas.reduce((a, e) => a + e.valorAdquisicion, 0))}</td>
+      <td class="num">${fmt(filas.reduce((a, e) => a + e.amortizado, 0))}</td><td class="num">${fmt(filas.reduce((a, e) => a + e.valorNeto, 0))}</td><td colspan="2"></td></tr>` : ''))
+    || '<tr><td colspan="9" class="vacio">No hay elementos.</td></tr>';
+}
+$('#inEstado').onchange = () => listaInmovilizado().catch(e => msg($('#inMsg'), e.message, 'ayuda err-texto'));
+$('#inLista').addEventListener('click', e => { const b = e.target.closest('button[data-ver]'); if (b) verFicha(b.dataset.ver).catch(err => msg($('#inMsg'), err.message, 'ayuda err-texto')); });
+
+$('#inNuevoBtn').onclick = () => {
+  ['#inDesc', '#inCodigo', '#inValor', '#inMeses', '#inContra', '#inFIni'].forEach(i => $(i).value = '');
+  $('#inResidual').value = '0'; $('#inPrevia').value = '0'; $('#inFAdq').value = dentroEj(hoy());
+  msg($('#inNuevoMsg'), '', 'ayuda'); $('#inNuevo').hidden = false; $('#inNuevo').scrollIntoView({ behavior: 'smooth' });
+};
+$('#inCancelar').onclick = () => $('#inNuevo').hidden = true;
+$('#inGuardar').onclick = async () => {
+  try {
+    const contra = $('#inContra').value.trim();
+    if (contra && !cuentaPorCodigo(contra)) throw new Error(`La cuenta ${contra} no existe.`);
+    const f = await post(urlX('/inmovilizado'), {
+      descripcion: $('#inDesc').value, categoriaId: +$('#inCat').value, canalId: +$('#inCanal').value, codigo: $('#inCodigo').value || null,
+      fechaAdquisicion: $('#inFAdq').value, fechaInicioAmortizacion: $('#inFIni').value || null, valorAdquisicion: num($('#inValor').value),
+      valorResidual: num($('#inResidual').value), vidaUtilMeses: $('#inMeses').value ? parseInt($('#inMeses').value, 10) : null,
+      amortizacionPrevia: num($('#inPrevia').value), cuentaContrapartidaId: contra ? cuentaPorCodigo(contra) : null
+    });
+    $('#inNuevo').hidden = true;
+    msg($('#inMsg'), `Alta de ${f.elemento.codigo} ${f.elemento.descripcion}.`, 'ayuda ok-texto');
+    await listaInmovilizado(); pintaFicha(f);
+  } catch (e) { msg($('#inNuevoMsg'), e.message, 'ayuda err-texto'); }
+};
+
+async function verFicha(id) { pintaFicha(await api(urlE('/inmovilizado/' + id))); }
+function pintaFicha(f) {
+  IN.ficha = f; const e = f.elemento;
+  $('#inFichaTitulo').textContent = `${e.codigo} · ${e.descripcion}`;
+  $('#inFichaSub').textContent = `${e.categoria} · canal ${e.canal} · adquirido el ${fechaES(e.fechaAdquisicion)} por ${fmt(e.valorAdquisicion)}`
+    + (e.metodo === 'LINEAL' ? ` · amortización lineal en ${e.vidaUtilMeses} meses desde el ${fechaES(e.fechaInicioAmortizacion)} hasta el ${fechaES(f.finAmortizacion)}` : ' · no se amortiza')
+    + (e.valorResidual ? ` · valor residual ${fmt(e.valorResidual)}` : '') + (e.amortizacionPrevia ? ` · amortización previa ${fmt(e.amortizacionPrevia)}` : '')
+    + ` · ${estadoInm[e.estado]}${e.fechaBaja ? ' el ' + fechaES(e.fechaBaja) : ''}.`;
+  $('#inCuadro').innerHTML = f.cuadro.map(t => `<tr><td>${fechaES(t.desde)}</td><td>${fechaES(t.hasta)}</td><td class="num">${fmt(t.cuota)}</td>
+      <td class="num">${fmt(t.acumulada)}</td><td class="num">${fmt(t.valorNeto)}</td></tr>`).join('') || '<tr><td colspan="5" class="vacio">No se amortiza.</td></tr>';
+  $('#inMovs').innerHTML = f.movimientos.map(m => `<tr><td>${m.desde ? fechaES(m.desde) : ''} – ${m.hasta ? fechaES(m.hasta) : ''}</td><td class="num">${fmt(m.importe)}</td>
+      <td class="num">${fmt(m.acumulada)}</td><td>${m.asientoNumero ? 'nº ' + m.asientoNumero + ' (' + esc(m.ejercicio) + ')' : ''}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="vacio">Todavía no se ha contabilizado amortización.</td></tr>';
+  $('#inBFecha').value = dentroEj(hoy()); $('#inBTipo').value = 'BAJA'; $('#inBImporte').value = '0'; $('#inBCobro').value = '';
+  $('#inBaja').hidden = e.estado !== 'ALTA'; $('#inAnularBaja').hidden = e.estado === 'ALTA';
+  $$('#inBajaForm .cab2').forEach(x => x.hidden = e.estado !== 'ALTA');
+  msg($('#inFichaMsg'), '', 'ayuda');
+  $('#inFicha').hidden = false; $('#inFicha').scrollIntoView({ behavior: 'smooth' });
+}
+$('#inBaja').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    const venta = $('#inBTipo').value === 'VENTA', cobro = $('#inBCobro').value.trim();
+    if (venta && !cuentaPorCodigo(cobro)) throw new Error('Indica la cuenta en la que se cobra la venta.');
+    if (!confirm('Se contabilizará la amortización hasta esa fecha y la baja del elemento. ¿Continuar?')) return;
+    const r = await post(urlX(`/inmovilizado/${IN.ficha.elemento.id}/baja`), {
+      fecha: $('#inBFecha').value, tipo: $('#inBTipo').value, importeVenta: venta ? num($('#inBImporte').value) : 0, cuentaCobroId: venta ? cuentaPorCodigo(cobro) : null });
+    const res = r.resultado.resultado;
+    await verFicha(IN.ficha.elemento.id); await listaInmovilizado();
+    msg($('#inFichaMsg'), `Baja contabilizada (asiento nº ${r.asientoNumero}). ${res > 0 ? 'Beneficio' : res < 0 ? 'Pérdida' : 'Resultado'}: ${fmt(Math.abs(res))}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#inAnularBaja').onclick = async () => {
+  if (!IN.ficha || !confirm('¿Anular la baja? El elemento vuelve a estar en alta.')) return;
+  try { await api(urlX(`/inmovilizado/${IN.ficha.elemento.id}/baja`), { method: 'DELETE' }); await verFicha(IN.ficha.elemento.id); await listaInmovilizado(); msg($('#inFichaMsg'), 'Baja anulada.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+
+function pintaAmortizacion(v) {
+  $('#amAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#amLineas').innerHTML = (v.lineas.map(l => `<tr><td>${esc(l.codigo)}</td><td>${esc(l.descripcion)}</td><td>${esc(l.canal)}</td><td class="num">${fmt(l.importe)}</td>
+      <td class="num">${fmt(l.acumulada)}</td><td class="num">${fmt(l.valorNeto)}</td></tr>`).join('')
+    + (v.lineas.length ? `<tr class="total"><td colspan="3">Total</td><td class="num">${fmt(v.total)}</td><td colspan="2"></td></tr>` : ''))
+    || '<tr><td colspan="6" class="vacio">No hay amortización pendiente hasta esa fecha.</td></tr>';
+}
+async function listaAmortizaciones() {
+  if (!permitido('INMOVILIZADO_DIRECTO')) return;
+  const filas = await api(urlX('/inmovilizado/amortizacion'));
+  $('#amHechas').innerHTML = filas.map(a => `<tr><td>nº ${a.numero}</td><td>${fechaES(a.fecha)}</td><td class="num">${a.elementos}</td><td class="num">${fmt(a.total)}</td>
+      <td class="fila-acciones"><button class="btn" data-anular="${a.asientoId}" ${S.ejercicio.estado === 'ABIERTO' ? '' : 'disabled'}>Anular</button></td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Ninguna.</td></tr>';
+}
+$('#amPrevia').onclick = async () => {
+  try { pintaAmortizacion(await post(urlX('/inmovilizado/amortizacion/previsualizar'), { hasta: $('#amHasta').value })); msg($('#amMsg'), '', 'ayuda'); }
+  catch (e) { msg($('#amMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#amGuardar').onclick = async () => {
+  try {
+    const v = await post(urlX('/inmovilizado/amortizacion'), { hasta: $('#amHasta').value });
+    pintaAmortizacion(v); await Promise.all([listaAmortizaciones(), listaInmovilizado()]);
+    msg($('#amMsg'), `Amortización contabilizada: asiento nº ${v.asientoNumero} por ${fmt(v.total)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#amMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#amHechas').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-anular]'); if (!b || !confirm('¿Anular esta amortización?')) return;
+  try { await api(urlX('/inmovilizado/amortizacion/' + b.dataset.anular), { method: 'DELETE' }); await Promise.all([listaAmortizaciones(), listaInmovilizado()]); msg($('#amMsg'), 'Amortización anulada.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#amMsg'), err.message, 'ayuda err-texto'); }
+});
+
+$('#caGuardar').onclick = async () => {
+  try {
+    const id = cod => { if (!cod.trim()) return null; const c = cuentaPorCodigo(cod); if (!c) throw new Error(`La cuenta ${cod} no existe.`); return c; };
+    await post(urlE('/inmovilizado/categorias'), {
+      nombre: $('#caNombre').value, tipo: $('#caTipo').value, metodoDefecto: $('#caMetodo').value, cuentaInmovilizadoId: id($('#caInm').value),
+      cuentaAmortAcumuladaId: id($('#caAmo').value), cuentaGastoAmortId: id($('#caGas').value),
+      vidaUtilMesesDefecto: $('#caMeses').value ? parseInt($('#caMeses').value, 10) : null });
+    ['#caNombre', '#caInm', '#caAmo', '#caGas', '#caMeses'].forEach(i => $(i).value = '');
+    msg($('#caMsg'), 'Categoría creada.', 'ayuda ok-texto'); await cargaInmovilizado();
+  } catch (e) { msg($('#caMsg'), e.message, 'ayuda err-texto'); }
 };
 
 // ------------------------------------------------------------ balances

@@ -207,6 +207,14 @@ public sealed class CierreEjercicioRepositorio(IConexionFactory conexiones, IAsi
             avisos.Add($"Hay IVA/IGIC sin liquidar ({string.Join(", ", ivaSinLiquidar)}): su saldo pasará al ejercicio siguiente. " +
                        "Contabiliza antes la liquidación del último periodo si corresponde.");
 
+        if (ej.Estado == "ABIERTO")
+        {
+            var amortPendiente = await InmovilizadoRepositorio.PendientesAsync(cn, tx, empresaId, ej.FechaFin, ct);
+            if (amortPendiente.Count > 0)
+                avisos.Add($"Hay {amortPendiente.Count} elemento(s) de inmovilizado con amortización pendiente hasta el {ej.FechaFin:dd/MM/yyyy} " +
+                           $"({amortPendiente.Sum(x => x.Importe):N2}): contabilízala antes de cerrar.");
+        }
+
         var (_, resultados) = GeneradorCierre.Regularizacion(saldos, cuentaResultado ?? 0);
         if (saldos.Count == 0) avisos.Add("El ejercicio no tiene movimientos.");
 

@@ -138,6 +138,7 @@ try
     app.MapFiscal();
     app.MapCierre();
     app.MapBalances();
+    app.MapInmovilizado();
 
     app.Run();
 }

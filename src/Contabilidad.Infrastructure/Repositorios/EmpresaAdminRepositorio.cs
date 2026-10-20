@@ -78,6 +78,7 @@ public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpr
 
             await CrearDiariosYCanalesAsync(cn, tx, empresaId, ct);
             await CopiarPlanAsync(cn, tx, empresaId, cmd.PlanModeloId, cmd.DigitosCuenta, avisos, ct);
+            await cn.ExecuteAsync(new CommandDefinition("SELECT inmov.crear_categorias_defecto(@empresaId)", new { empresaId }, tx, cancellationToken: ct));
 
             if (cmd.PrimerEjercicio is { } ej) await CrearEjercicioEnTransaccionAsync(cn, tx, empresaId, ej, ct);
             else avisos.Add("La empresa no tiene ejercicio: crea uno antes de empezar a trabajar.");
@@ -95,7 +96,8 @@ public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpr
         => cn.ExecuteAsync(new CommandDefinition("""
             INSERT INTO conta.diario (empresa_id, codigo, nombre, tipo) VALUES
               (@e, 'GEN',  'Diario general', 'GENERAL'), (@e, 'COMP', 'Compras', 'COMPRAS'),
-              (@e, 'VENT', 'Ventas', 'VENTAS'),          (@e, 'BANC', 'Bancos', 'BANCOS');
+              (@e, 'VENT', 'Ventas', 'VENTAS'),          (@e, 'BANC', 'Bancos', 'BANCOS'),
+              (@e, 'AMOR', 'Amortizaciones', 'AMORTIZACION');
 
             INSERT INTO core.forma_pago (empresa_id, codigo, nombre, tipo, num_plazos, dias_primer_plazo, dias_entre_plazos) VALUES
               (@e, 'CONT',  'Contado',                 'EFECTIVO',      1,  0,  0),
