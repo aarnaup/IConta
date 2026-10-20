@@ -479,6 +479,11 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         var deEsteEjercicio = await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
             "SELECT EXISTS (SELECT 1 FROM conta.asiento WHERE id = @id AND ejercicio_id = @ejercicioId)", new { id = e.AsientoBajaId, ejercicioId }, tx, cancellationToken: ct));
         if (!deEsteEjercicio) throw new ReglaContableException("La baja está contabilizada en otro ejercicio: selecciónalo para anularla.");
+        if (await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+                SELECT EXISTS (SELECT 1 FROM inmov.bien_inversion_regularizacion r JOIN inmov.bien_inversion b ON b.id = r.bien_inversion_id
+                               WHERE b.inmovilizado_id = @id AND r.tipo = 'TRANSMISION')
+                """, new { id = e.Id }, tx, cancellationToken: ct)))
+            throw new ReglaContableException("La venta tiene contabilizada la regularización del bien de inversión: anúlala antes (Bienes de inversión).");
 
         await cn.ExecuteAsync(new CommandDefinition("DELETE FROM inmov.amortizacion WHERE asiento_id = @id", new { id = e.AsientoBajaId }, tx, cancellationToken: ct));
         await cn.ExecuteAsync(new CommandDefinition("UPDATE conta.asiento SET estado = 'ANULADO' WHERE id = @id", new { id = e.AsientoBajaId }, tx, cancellationToken: ct));

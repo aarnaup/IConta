@@ -125,7 +125,7 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
     public async Task<IReadOnlyList<VencimientoDto>> ListarVencimientosAsync(long empresaId, FiltroVencimientos f, CancellationToken ct)
     {
         if (f.Tipo is not (null or "COBRO" or "PAGO")) throw new ReglaContableException("El tipo debe ser COBRO o PAGO.");
-        if (f.Estado is not (null or "PENDIENTE" or "PARCIAL" or "LIQUIDADO" or "ANULADO" or "ABIERTOS"))
+        if (f.Estado is not (null or "PENDIENTE" or "PARCIAL" or "REMESADO" or "LIQUIDADO" or "ANULADO" or "ABIERTOS"))
             throw new ReglaContableException("Estado de vencimiento no válido.");
 
         await using var cn = await conexiones.AbrirAsync(ct);
@@ -141,7 +141,7 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
             LEFT JOIN core.forma_pago fp ON fp.id = v.forma_pago_id
             WHERE v.empresa_id = @empresaId
               AND (@tipo::text IS NULL OR v.tipo = @tipo)
-              AND (@estado::text IS NULL OR (@estado = 'ABIERTOS' AND v.estado IN ('PENDIENTE','PARCIAL')) OR v.estado = @estado)
+              AND (@estado::text IS NULL OR (@estado = 'ABIERTOS' AND v.estado IN ('PENDIENTE','PARCIAL','REMESADO')) OR v.estado = @estado)
               AND (@desde::date IS NULL OR v.fecha_vencimiento >= @desde)
               AND (@hasta::date IS NULL OR v.fecha_vencimiento <= @hasta)
               AND (@terceroId::bigint IS NULL OR v.tercero_id = @terceroId)
@@ -159,7 +159,7 @@ public sealed class TesoreriaRepositorio(IConexionFactory conexiones, IAsientoRe
             SELECT CASE WHEN fecha_vencimiento < @hoy THEN 'VENCIDO' ELSE to_char(fecha_vencimiento, 'YYYY-MM') END AS periodo,
                    tipo, SUM(importe_pendiente) AS importe
             FROM tes.vencimiento
-            WHERE empresa_id = @empresaId AND estado IN ('PENDIENTE','PARCIAL')
+            WHERE empresa_id = @empresaId AND estado IN ('PENDIENTE','PARCIAL','REMESADO')
               AND fecha_vencimiento < (date_trunc('month', @hoy::timestamp) + make_interval(months => @meses))::date
             GROUP BY 1, 2
             """, new { empresaId, hoy, meses }, cancellationToken: ct));

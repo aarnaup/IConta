@@ -55,6 +55,13 @@ public static class FiscalEndpoints
             return Results.File(LibrosRegistro.Csv(l.Libro, l.Impuesto, l.Lineas), "text/csv; charset=utf-8", nombre);
         }).Requiere(Nivel.Lectura, Modulo.Fiscal);
 
+        // Formato oficial de la AEAT: un XLSX con las hojas EXPEDIDAS y RECIBIDAS
+        f.MapGet("/libros-aeat", async (long empresaId, int anio, string periodo, ILibrosRegistroRepositorio r, CancellationToken ct) =>
+        {
+            var (contenido, nombre) = await r.FormatoAeatAsync(empresaId, anio, periodo, ct);
+            return Results.File(contenido, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", nombre);
+        }).Requiere(Nivel.Lectura, Modulo.Fiscal);
+
         f.MapPost("/declaraciones/{id:long}/presentar", async (long empresaId, long id, PresentarDeclaracionCmd cmd, HttpContext http,
             IFiscalRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
         {

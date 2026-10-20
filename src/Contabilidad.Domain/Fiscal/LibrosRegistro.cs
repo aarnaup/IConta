@@ -19,6 +19,10 @@ public sealed class LineaLibroDto
     public string TipoFactura { get; set; } = "";
     public string Nif { get; set; } = "";
     public string Nombre { get; set; } = "";
+    /// <summary>País del NIF (ISO 3166-1 alfa-2), su pertenencia a la UE y el tipo de documento, para el formato de la AEAT.</summary>
+    public string PaisIso2 { get; set; } = "ES";
+    public bool PaisUe { get; set; }
+    public string TipoDocumento { get; set; } = "NIF";
     public string TipoOperacion { get; set; } = "";
     public decimal Base { get; set; }
     public decimal Porcentaje { get; set; }

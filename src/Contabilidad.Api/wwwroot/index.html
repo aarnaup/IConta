@@ -317,6 +317,59 @@
         <p id="liqMsg" class="ayuda" role="status"></p>
       </div>
 
+      <div class="panel" id="rePanel" data-req="TESORERIA:LECTURA">
+        <h2>Remesas SEPA</h2>
+        <p class="ayuda">Cobros: recibos domiciliados con mandato (adeudos, fichero pain.008). Pagos: transferencias a proveedores (pain.001).
+          Genera el fichero, súbelo a la banca electrónica y contabiliza la remesa cuando el banco la abone o la cargue.</p>
+        <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
+          <label>Tipo <select id="reTipo"><option value="COBRO">Cobros (recibos)</option><option value="PAGO">Pagos (transferencias)</option></select></label>
+          <label>Cuenta <select id="reBanco"></select></label>
+          <label>Vencen hasta <input type="date" id="reHasta"></label>
+          <button class="btn" id="reBuscar" type="button">Buscar vencimientos</button>
+        </div>
+        <div id="reCandidatos" hidden>
+          <table><thead><tr><th></th><th>Vence</th><th>Tercero</th><th>Factura</th><th class="num">Pendiente</th><th>IBAN</th><th>Mandato</th></tr></thead>
+          <tbody id="reCandBody"></tbody></table>
+          <div class="fila-acciones">
+            <span id="reSeleccion" class="ayuda"></span>
+            <label>Fecha de cargo <input type="date" id="reFecha"></label>
+            <button class="btn primario" id="reGenerar" type="button" disabled>Generar remesa</button>
+          </div>
+        </div>
+        <p id="reMsg" class="ayuda" role="status"></p>
+        <h3>Remesas</h3>
+        <table><thead><tr><th>Referencia</th><th>Tipo</th><th>Cargo</th><th class="num">Operaciones</th><th class="num">Importe</th><th>Estado</th><th></th></tr></thead>
+        <tbody id="reLista"></tbody></table>
+        <div class="panel" id="reDetalle" hidden>
+          <h3 id="reDetTitulo"></h3>
+          <table><thead><tr><th>Tercero</th><th>Factura</th><th class="num">Importe</th><th>IBAN</th><th>Secuencia</th><th>Estado</th><th></th></tr></thead>
+          <tbody id="reDetBody"></tbody></table>
+          <div class="fila-acciones" id="reContabForm" data-req="TESORERIA_DIRECTO">
+            <label>Fecha de abono/cargo en el banco <input type="date" id="reContabFecha"></label>
+            <button class="btn primario" id="reContabilizar" data-guarda type="button">Contabilizar la remesa</button>
+          </div>
+        </div>
+
+        <h3>Cuentas y mandatos de clientes y proveedores</h3>
+        <div class="fila-acciones">
+          <label>Tercero <select id="mtTercero"></select></label>
+        </div>
+        <table><thead><tr><th>IBAN</th><th>BIC</th><th>Mandatos</th></tr></thead><tbody id="mtCuentas"></tbody></table>
+        <div class="cab2" data-req="TESORERIA:ESCRITURA">
+          <label>Nuevo IBAN <input id="mtIban" autocomplete="off"></label>
+          <label>BIC (opcional) <input id="mtBic" maxlength="11"></label>
+          <label>&nbsp;<button class="btn" id="mtAnadirCuenta" type="button">Añadir cuenta</button></label>
+        </div>
+        <div class="cab2" data-req="TESORERIA:ESCRITURA" id="mtMandatoForm">
+          <label>Mandato sobre la cuenta <select id="mtCuenta"></select></label>
+          <label>Fecha de firma <input type="date" id="mtFirma"></label>
+          <label>Esquema <select id="mtEsquema"><option value="CORE">CORE</option><option value="B2B">B2B (solo empresas)</option></select></label>
+          <label>Referencia <input id="mtRef" maxlength="35" placeholder="Automática"></label>
+          <label>&nbsp;<button class="btn" id="mtCrear" type="button">Crear mandato</button></label>
+        </div>
+        <p id="mtMsg" class="ayuda" role="status"></p>
+      </div>
+
       <div class="panel" id="coPanel">
         <h2>Conciliación bancaria</h2>
         <p class="ayuda">Importa el extracto del banco (Norma 43 o CSV) y cásalo con los apuntes de la cuenta contable del banco.
@@ -463,6 +516,7 @@
           <label>Periodo <select id="lrPeriodo"></select></label>
           <button class="btn primario" id="lrVer" type="button">Ver</button>
           <button class="btn" id="lrCsv" type="button">Descargar CSV</button>
+          <button class="btn" id="lrAeat" type="button" title="Hojas EXPEDIDAS y RECIBIDAS del modelo de la AEAT (solo IVA)">Formato AEAT (XLSX)</button>
         </div>
         <p id="lrMsg" class="ayuda" role="status"></p>
         <div id="lrResultado" hidden>
@@ -474,6 +528,23 @@
           <h3>Detalle</h3>
           <div style="overflow-x:auto"><table><thead id="lrHead"></thead><tbody id="lrBody"></tbody></table></div>
         </div>
+      </div>
+
+      <div class="panel">
+        <h2>Prorrata</h2>
+        <p class="ayuda">Porcentaje de deducción por año natural. Durante el año se aplica el provisional; en el último periodo se regulariza con el
+          definitivo, que se calcula con las operaciones del año (redondeado a la unidad superior).</p>
+        <table><thead><tr><th>Año</th><th>Sector</th><th class="num">Provisional</th><th class="num">Definitivo</th><th class="num">Op. con derecho</th>
+          <th class="num">Op. totales</th></tr></thead><tbody id="prLista"></tbody></table>
+        <div data-req="FISCAL:ESCRITURA" class="fila-acciones">
+          <label>Año <input id="prAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Provisional % <input id="prProv" inputmode="numeric" style="width:5em"></label>
+          <label>Definitivo % <input id="prDef" inputmode="numeric" style="width:5em"></label>
+          <label>Op. con derecho <input id="prCon" inputmode="decimal" style="width:9em"></label>
+          <label>Op. totales <input id="prTot" inputmode="decimal" style="width:9em"></label>
+          <button class="btn" id="prGuardar" type="button">Guardar</button>
+        </div>
+        <p id="prMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">
@@ -530,6 +601,21 @@
         <h3>Amortización contabilizada</h3>
         <table><thead><tr><th>Periodo</th><th class="num">Importe</th><th class="num">Acumulada</th><th>Asiento</th></tr></thead>
         <tbody id="inMovs"></tbody></table>
+        <div id="inBI">
+          <h3>Bien de inversión (IVA/IGIC)</h3>
+          <p id="inBIResumen" class="ayuda"></p>
+          <div id="inBIForm" data-req="INMOVILIZADO:ESCRITURA">
+            <div class="cab2">
+              <label>Cuota soportada <input id="inBICuota" inputmode="decimal" placeholder="La de la factura"></label>
+              <label>Prorrata del año de inicio (%) <input id="inBIProrrata" inputmode="numeric" placeholder="La del año"></label>
+              <label>Año de inicio de utilización <input id="inBIAnio" inputmode="numeric" placeholder="El de inicio de amortización"></label>
+              <label><input type="checkbox" id="inBIInmueble"> Inmueble (10 años)</label>
+              <label><input type="checkbox" id="inBIExenta"> Su venta será exenta o no sujeta</label>
+            </div>
+            <div class="fila-acciones"><button class="btn" id="inBIAlta" type="button">Registrar como bien de inversión</button></div>
+          </div>
+          <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inBIQuitar" type="button" hidden>Quitar del registro</button></div>
+        </div>
         <div id="inBajaForm" data-req="INMOVILIZADO_DIRECTO">
           <h3>Baja o venta</h3>
           <div class="cab2">
@@ -561,6 +647,27 @@
         <h3>Amortizaciones contabilizadas en este ejercicio</h3>
         <table><thead><tr><th>Asiento</th><th>Fecha</th><th class="num">Elementos</th><th class="num">Total</th><th></th></tr></thead>
         <tbody id="amHechas"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Bienes de inversión: regularización del IVA/IGIC</h2>
+        <p class="ayuda">Libro registro de bienes de inversión. Durante 5 años (10 los inmuebles) la deducción se ajusta cada año si la prorrata
+          definitiva se separa más de 10 puntos de la del año de inicio, y de una vez si el bien se vende. El importe entra solo en el 303/420
+          (casilla 43); aquí se contabiliza: 472 contra 6392 (más deducción) o 6342 (menos).</p>
+        <div class="fila-acciones">
+          <label>Año <input id="biAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="biVer" type="button">Ver</button>
+          <span data-req="INMOVILIZADO_DIRECTO">
+            <label>Periodo <select id="biPeriodo"></select></label>
+            <button class="btn primario" id="biContabilizar" data-guarda type="button">Contabilizar la regularización</button>
+          </span>
+        </div>
+        <ul id="biAvisos" class="avisos"></ul>
+        <div style="overflow-x:auto"><table><thead><tr><th>Código</th><th>Descripción</th><th>Inicio</th><th class="num">Años</th><th class="num">Cuota soportada</th>
+          <th class="num">Prorrata inicial</th><th class="num">Deducción inicial</th><th>Regularizaciones</th><th>Estado</th></tr></thead>
+        <tbody id="biLista"></tbody></table></div>
+        <div id="biAsientos" class="fila-acciones"></div>
+        <p id="biMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">

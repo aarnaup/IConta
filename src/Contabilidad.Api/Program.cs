@@ -145,6 +145,8 @@ try
     app.MapBalances();
     app.MapInmovilizado();
     app.MapConciliacion();
+    app.MapRemesas();
+    app.MapBienesInversion();
 
     app.Run();
 }

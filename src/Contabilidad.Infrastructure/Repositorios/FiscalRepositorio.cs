@@ -41,7 +41,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal CuotaRecargo { get; set; }
         public decimal CuotaDeducible { get; set; }
     }
-    private sealed class ProrrataFila { public decimal Regularizacion { get; set; } public int SinDefinitiva { get; set; } public int BienesInversion { get; set; } }
+    private sealed class ProrrataFila { public decimal Regularizacion { get; set; } public int SinDefinitiva { get; set; } }
     private sealed class OperacionFila
     {
         public long TerceroId { get; set; }
@@ -173,10 +173,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         if (p.EsUltimoDelAnio)
         {
             var pr = await cn.QuerySingleAsync<ProrrataFila>(new CommandDefinition("""
-                SELECT COALESCE(SUM(CASE WHEN pr.id IS NOT NULL AND NOT fi.es_bien_inversion
+                SELECT COALESCE(SUM(CASE WHEN pr.id IS NOT NULL
                                          THEN ROUND(fi.cuota * (pr.porcentaje_definitivo - fi.porcentaje_deduccion) / 100.0, 2) END), 0) AS regularizacion,
-                       COUNT(*) FILTER (WHERE pr.id IS NULL) AS sin_definitiva,
-                       COUNT(*) FILTER (WHERE fi.es_bien_inversion) AS bienes_inversion
+                       COUNT(*) FILTER (WHERE pr.id IS NULL) AS sin_definitiva
                 FROM fiscal.factura f
                 JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
                 JOIN cat.tipo_iva t ON t.id = fi.tipo_iva_id
@@ -190,10 +189,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 tx, cancellationToken: ct));
             regularizacion = pr.Regularizacion;
             if (pr.SinDefinitiva > 0)
-                d.Avisos.Add($"Hay {pr.SinDefinitiva} línea(s) con prorrata sin porcentaje definitivo de {p.Anio}: no se regularizan. Fija el definitivo en fiscal.prorrata y recalcula.");
-            if (pr.BienesInversion > 0)
-                d.Avisos.Add("Hay bienes de inversión con prorrata: su regularización (plazo de 5/10 años) no se calcula todavía.");
+                d.Avisos.Add($"Hay {pr.SinDefinitiva} línea(s) con prorrata sin porcentaje definitivo de {p.Anio}: no se regularizan. Fija el definitivo (Modelos fiscales → Prorrata) y recalcula.");
         }
+
+        // Bienes de inversión: regularización anual (último periodo) y por venta (periodo de la venta), arts. 107-110 LIVA
+        var (regBienes, avisosBienes) = await BienesInversionRepositorio.ParaDeclaracionAsync(cn, tx, empresaId, p, ct);
+        d.Avisos.AddRange(avisosBienes);
 
         // Compensaciones de periodos anteriores (solo autoliquidaciones, no el resumen anual)
         decimal pendiente = 0;
@@ -213,7 +214,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         }
 
         CalculadorImpuestoIndirecto.Calcular(igic,
-            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio), d);
+            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio, regBienes), d);
 
         if (anual)
         {

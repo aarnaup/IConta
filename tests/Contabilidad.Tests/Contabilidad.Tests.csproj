@@ -11,5 +11,10 @@
   <ItemGroup>
     <Using Include="Xunit" />
     <ProjectReference Include="..\..\src\Contabilidad.Domain\Contabilidad.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Contabilidad.Infrastructure\Contabilidad.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Esquemas oficiales ISO 20022 para validar los ficheros SEPA generados -->
+    <None Include="Esquemas\*.xsd" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
