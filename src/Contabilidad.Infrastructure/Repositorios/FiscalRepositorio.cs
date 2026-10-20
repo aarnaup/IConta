@@ -183,7 +183,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 LEFT JOIN fiscal.prorrata pr ON pr.empresa_id = f.empresa_id AND pr.anio = @anio
                      AND pr.sector_diferenciado IS NOT DISTINCT FROM a.sector_diferenciado AND pr.porcentaje_definitivo IS NOT NULL
                 WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
-                  AND fi.regla_deduccion = 'PRORRATA' AND fi.tipo_operacion = 'INTERIOR' AND t.impuesto = @impuesto
+                  AND fi.regla_deduccion = 'PRORRATA' AND fi.tipo_operacion IN ('INTERIOR','IMPORTACION','INTRACOM_ADQUISICION','INVERSION_SUJETO_PASIVO')
+                  AND t.impuesto = @impuesto
                   AND f.fecha_contable BETWEEN @inicioAnio AND @finAnio
                 """, new { empresaId, anio = (short)p.Anio, impuesto = modelo.Impuesto, inicioAnio = p.InicioAnio, finAnio = new DateOnly(p.Anio, 12, 31) },
                 tx, cancellationToken: ct));
@@ -308,6 +309,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             JOIN conta.tercero t ON t.id = f.tercero_id
             JOIN core.nif n ON n.id = t.nif_id
             WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
+              -- No van al 347 las operaciones del 349 (intracomunitarias), las importaciones ni las exportaciones
+              AND NOT EXISTS (SELECT 1 FROM fiscal.factura_iva x WHERE x.factura_id = f.id
+                              AND x.tipo_operacion IN ('INTRACOM_ENTREGA','INTRACOM_ADQUISICION','IMPORTACION','EXPORTACION'))
             GROUP BY 1, 2, 3, 4, 5
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
         Calculador347.Calcular(filas.Select(f => new Operacion347(f.TerceroId, f.Nif, f.Nombre, f.Clave, f.Trimestre, f.Importe)).ToList(), d);

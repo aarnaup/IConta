@@ -7,6 +7,8 @@ namespace Contabilidad.Domain.Facturacion;
 ///  - BASE, CUOTA_NO_DEDUCIBLE, RETENCION, TOTAL: importes agregados de la factura.
 ///  - EXPRESION: fórmula con BASE, CUOTA, CUOTA_DEDUCIBLE, CUOTA_NO_DEDUCIBLE, RECARGO, RETENCION, TOTAL.
 ///  - Factura en negativo (rectificativa): importes absolutos y Debe/Haber invertidos.
+///  - Cuota autorrepercutida (adquisición intracomunitaria, inversión del sujeto pasivo): además de lo que diga la plantilla
+///    (472 por la parte deducible, gasto por la no deducible), se abona por tipo a la cuenta del rol IVA_REPERCUTIDO (477).
 /// </summary>
 public static class GeneradorAsientoFactura
 {
@@ -81,6 +83,13 @@ public static class GeneradorAsientoFactura
 
             long? tipoRet = l.OrigenImporte == "RETENCION" ? f.Retencion?.TipoRetencionId : null;
             Añade(l, cuentas.Resolver(l.CuentaId, l.CuentaRol, null, tipoRet), importe);
+        }
+
+        if (libro == LibroFactura.Recibidas)
+        {
+            var autorrepercusion = new LineaPlantilla(short.MaxValue, null, "IVA_REPERCUTIDO", "HABER", "CUOTA", null, false, null, null);
+            foreach (var row in f.Lineas.Where(r => OperacionesIva.Autorrepercutida(libro, r.TipoOperacion) && r.Cuota != 0))
+                Añade(autorrepercusion, cuentas.Resolver(null, "IVA_REPERCUTIDO", row.TipoIvaId), row.Cuota);
         }
 
         return apuntes;

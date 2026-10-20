@@ -162,9 +162,57 @@ public class CalculadorImpuestoIndirectoTests
             CalculadorImpuestoIndirecto.Calcular(false, new([G("EMITIDAS", 7, 100, 7)], 0, 0, false, false), Nueva()));
 
     [Fact]
-    public void Operaciones_intracomunitarias_o_inversion_del_sujeto_pasivo_se_rechazan()
-        => Assert.Throws<ReglaContableException>(() =>
-            CalculadorImpuestoIndirecto.Calcular(false, new([G("RECIBIDAS", 21, 100, 21, op: "INTRACOM_ADQUISICION")], 0, 0, false, false), Nueva()));
+    public void Autorrepercusion_devenga_y_deduce_a_la_vez()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("RECIBIDAS", 21, 1000, 210, ded: 210, op: "INTRACOM_ADQUISICION"),
+            G("RECIBIDAS", 21, 500, 105, ded: 105, op: "INVERSION_SUJETO_PASIVO"),
+            G("RECIBIDAS", 21, 2000, 420, ded: 420, op: "INTRACOM_ADQUISICION", inv: true)], 0, 0, false, false), d);
+        Assert.Equal((3000m, 630m), (d["10"], d["11"]));
+        Assert.Equal((500m, 105m), (d["12"], d["13"]));
+        Assert.Equal(735m, d["27"]);
+        Assert.Equal((500m, 105m), (d["28"], d["29"]));        // la ISP recibida va con las interiores
+        Assert.Equal((1000m, 210m), (d["36"], d["37"]));
+        Assert.Equal((2000m, 420m), (d["38"], d["39"]));
+        Assert.Equal(735m, d["45"]);
+        Assert.Equal(0m, d["71"]);
+    }
+
+    [Fact]
+    public void Con_prorrata_la_autorrepercusion_deja_cuota_a_ingresar()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([G("RECIBIDAS", 21, 1000, 210, ded: 168, op: "INTRACOM_ADQUISICION")], 0, 0, false, false), d);
+        Assert.Equal(42m, d["71"]);
+    }
+
+    [Fact]
+    public void Importaciones_y_casillas_informativas()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("RECIBIDAS", 21, 800, 168, ded: 168, op: "IMPORTACION"),
+            G("RECIBIDAS", 21, 5000, 1050, ded: 1050, op: "IMPORTACION", inv: true),
+            G("EMITIDAS", 0, 3000, 0, op: "INTRACOM_ENTREGA"), G("EMITIDAS", 0, 700, 0, op: "EXPORTACION"),
+            G("EMITIDAS", 0, 400, 0, op: "INVERSION_SUJETO_PASIVO"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
+        Assert.Equal((800m, 168m, 5000m, 1050m), (d["32"], d["33"], d["34"], d["35"]));
+        Assert.Equal((3000m, 700m, 400m), (d["59"], d["60"], d["122"]));
+        Assert.Equal(21m, d["27"]);
+        Assert.Equal(21m - 1218m, d["46"]);
+    }
+
+    [Fact]
+    public void En_el_IGIC_no_hay_intracomunitarias_pero_si_importaciones_e_ISP()
+    {
+        Assert.Throws<ReglaContableException>(() =>
+            CalculadorImpuestoIndirecto.Calcular(true, new([G("RECIBIDAS", 7, 100, 7, op: "INTRACOM_ADQUISICION")], 0, 0, false, false), Nueva()));
+        var d = new DeclaracionCalculada { Modelo = "420" };
+        CalculadorImpuestoIndirecto.Calcular(true, new([G("RECIBIDAS", 7, 1000, 70, ded: 70, op: "IMPORTACION"),
+            G("RECIBIDAS", 7, 200, 14, ded: 14, op: "INVERSION_SUJETO_PASIVO")], 0, 0, false, false), d);
+        Assert.Equal((1000m, 70m, 14m, 14m), (d["ICB"], d["ICC"], d["ISPC"], d["TDEV"]));
+        Assert.Equal(84m, d["TDED"]);
+    }
 
     [Fact]
     public void Las_operaciones_exentas_y_no_sujetas_no_alteran_el_resultado()

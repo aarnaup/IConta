@@ -53,6 +53,10 @@ try
         });
     builder.Services.AddAuthorization();
 
+    // ---- Documentación OpenAPI / Swagger (siempre en Development; en otros entornos con OpenApi:Habilitar=true) ----
+    var documentar = builder.Environment.IsDevelopment() || builder.Configuration.GetValue<bool>("OpenApi:Habilitar");
+    if (documentar) builder.Services.AddDocumentacionApi();
+
     // ---- Limitación de intentos en el login (por IP) ----
     builder.Services.AddRateLimiter(o =>
     {
@@ -113,6 +117,8 @@ try
         h["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'";
         await next();
     });
+
+    if (documentar) app.MapDocumentacionApi();
 
     app.UseDefaultFiles();
     app.UseStaticFiles();

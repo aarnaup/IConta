@@ -73,7 +73,6 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
         LibroFactura Libro, FacturaCalculada Calculo, long EjercicioId, DateOnly FechaContable,
         long PlantillaId, string PlantillaNombre, long DiarioId, string Concepto, IReadOnlyList<ApunteCmd> Apuntes);
 
-    private static readonly HashSet<string> OperacionesSoportadas = ["INTERIOR", "EXENTA", "NO_SUJETA"];
 
     // =====================================================================
     // Preparación común (vista previa y alta): valida, calcula y genera los apuntes
@@ -151,14 +150,12 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 throw new ReglaContableException($"El tipo {t.Codigo} no tiene % vigente el {devengo:dd/MM/yyyy}.");
             if (empresa.ImpuestoIndirecto != "EXENTO" && t.Impuesto != empresa.ImpuestoIndirecto)
                 throw new ReglaContableException($"La empresa usa {empresa.ImpuestoIndirecto}; el tipo {t.Codigo} es de {t.Impuesto}.");
-            if (!OperacionesSoportadas.Contains(l.TipoOperacion))
-                throw new ReglaContableException($"Tipo de operación '{l.TipoOperacion}' pendiente de implementar.",
-                    "Intracomunitarias, importaciones e inversión del sujeto pasivo requieren autorrepercusión.");
+            OperacionesIva.Validar(libro, l.TipoOperacion, empresa.ImpuestoIndirecto);
 
             var interior = l.TipoOperacion == "INTERIOR";
             entradas.Add(new LineaIvaEntrada(
                 t.TipoIvaId, t.VigenciaId, l.TipoOperacion, l.Base,
-                interior ? t.Porcentaje.Value : 0m,
+                OperacionesIva.LlevaCuota(libro, l.TipoOperacion) ? t.Porcentaje.Value : 0m,
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
                 l.ReglaDeduccion, l.PorcentajeDeduccion, l.EsBienInversion));
         }
