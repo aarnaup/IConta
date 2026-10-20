@@ -200,3 +200,33 @@ public class GeneradorLiquidacionIvaTests
         Cuadra(apuntes);
     }
 }
+
+public class TraspasoPatrimonioNetoTests
+{
+    [Theory]
+    [InlineData("94000000", "1300")]
+    [InlineData("84000000", "1300")]
+    [InlineData("80000000", "1330")]
+    [InlineData("91000000", "1340")]
+    [InlineData("82100000", "1350")]
+    [InlineData("95000000", "1150")]
+    [InlineData("83700000", "1371")]
+    [InlineData("97000000", null)]
+    public void Destino_por_cuenta(string codigo, string? destino) => Assert.Equal(destino, Contabilidad.Domain.Cierre.GeneradorCierre.DestinoPatrimonioNeto(codigo));
+
+    [Fact]
+    public void Salda_8_y_9_contra_su_cuenta_del_13_por_canal()
+    {
+        // Subvención de 10.000 (940, acreedora) con su efecto impositivo (830, deudora 2.500) y transferencia a resultados (840, deudora 1.000)
+        var saldos = new[]
+        {
+            new Contabilidad.Domain.Cierre.SaldoCuenta(1, "94000000", 5, -10000), new(2, "83010000", 5, 2500), new(3, "84000000", 5, 1000),
+            new(4, "90000000", 6, -300),
+        };
+        var a = Contabilidad.Domain.Cierre.GeneradorCierre.TraspasoPatrimonioNeto(saldos, new Dictionary<string, long> { ["1300"] = 130, ["1330"] = 133 });
+        Assert.Equal(a.Sum(x => x.Debe), a.Sum(x => x.Haber));
+        Assert.Equal(6500m, a.Single(x => x.CuentaId == 130).Haber);    // 10.000 − 2.500 − 1.000
+        Assert.Equal(300m, a.Single(x => x.CuentaId == 133 && x.CanalId == 6).Haber);
+        Assert.Equal(10000m, a.Single(x => x.CuentaId == 1).Debe);
+    }
+}
