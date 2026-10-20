@@ -169,6 +169,7 @@ try
     app.MapBienesInversion();
     app.MapCriterioCaja();
     app.MapAnalitica();
+    app.MapNominas();
 
     app.Run();
 }

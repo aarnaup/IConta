@@ -201,8 +201,8 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
-  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, nominas: cargaNominas, fiscal: cargaFiscal, pendientes: cargaPendientes,
                   inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
                   cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
@@ -476,15 +476,88 @@ async function imprimeFactura(id) {
 $('#tCrear').onclick = async () => {
   const tipo = $('#tTipo').value;
   try {
-    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE',
+    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo === 'CLIENTE' || tipo === 'AMBOS',
+      esProveedor: tipo === 'PROVEEDOR' || tipo === 'AMBOS', esEmpleado: tipo === 'EMPLEADO',
       codigoPostal: $('#tCp').value || null, pais: $('#tPais').value || 'ES', tipoDocumento: ($('#tPais').value || 'ES') === 'ES' ? 'NIF' : 'VIES',
-      criterioCaja: tipo !== 'CLIENTE' && $('#tCaja').checked });
+      criterioCaja: (tipo === 'PROVEEDOR' || tipo === 'AMBOS') && $('#tCaja').checked });
     $('#tCaja').checked = false;
     msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = ''; $('#tCp').value = '';
     await cargaFacturas();
   } catch (e) { msg($('#tMsg'), e.message, 'err-texto'); }
 };
 
+
+// ------------------------------------------------------------ nóminas
+const NO = { nominas: [], empleados: [] };
+const impNomina = () => {
+  const bruto = num($('#noBruto').value), pct = $('#noPct').value.trim();
+  const ret = $('#noRet').value.trim() ? num($('#noRet').value) : (pct ? Math.round(bruto * num(pct)) / 100 : 0);
+  return { bruto, retencion: ret, ssTrabajador: num($('#noSsT').value), ssEmpresa: num($('#noSsE').value), anticipos: num($('#noAnt').value),
+           especie: num($('#noEsp').value), ingresoACuenta: num($('#noIc').value), ingresoRepercutido: $('#noRep').checked };
+};
+function pintaLiquidoNomina() {
+  const n = impNomina();
+  const liq = n.bruto - n.retencion - n.ssTrabajador - n.anticipos - (n.ingresoRepercutido ? n.ingresoACuenta : 0);
+  $('#noLiquido').textContent = n.bruto || n.especie ? `Retención ${fmt(n.retencion)} · líquido a percibir ${fmt(liq)} · coste para la empresa ${fmt(n.bruto + n.ssEmpresa + (n.ingresoRepercutido ? 0 : n.ingresoACuenta))}` : '';
+}
+['#noBruto', '#noPct', '#noRet', '#noSsT', '#noSsE', '#noAnt', '#noEsp', '#noIc'].forEach(i => $(i).addEventListener('input', pintaLiquidoNomina));
+$('#noRep').addEventListener('change', pintaLiquidoNomina);
+$('#noPct').addEventListener('input', () => { $('#noRet').value = ''; });
+
+async function cargaNominas() {
+  const [terceros, nominas, empleados] = await Promise.all([api(urlE('/terceros')), api(urlX('/nominas')), api(urlE('/empleados'))]);
+  NO.nominas = nominas; NO.empleados = empleados;
+  const sel = $('#noTercero').value;
+  $('#noTercero').innerHTML = terceros.map(t => `<option value="${t.id}">${esc(t.nombre)} (${esc(t.nif || '')})</option>`).join('');
+  if (sel) $('#noTercero').value = sel;
+  $('#noCanal').innerHTML = canalOpts($('#noCanal').value || (S.canales.find(c => c.codigo === 'A') || S.canales[0] || {}).id);
+  if (!$('#noFecha').value) $('#noFecha').value = S.ejercicio.fechaFin < new Date().toISOString().slice(0, 10) ? S.ejercicio.fechaFin : new Date().toISOString().slice(0, 10);
+  const directo = permitido('CONTABILIDAD_DIRECTO');
+  $('#noLista').innerHTML = nominas.map(n => `<tr class="${n.estado === 'ANULADA' ? 'estado-cerrado' : ''}"><td>${fechaES(n.fecha)}</td><td>${esc(n.empleado)}</td>
+      <td>${esc(n.periodo || '')}</td><td class="num">${fmt(n.bruto)}</td><td class="num">${fmt(n.retencion)} <small>(${fmt(n.porcentajeRetencion)} %)</small></td>
+      <td class="num">${fmt(n.ssTrabajador)}</td><td class="num">${fmt(n.ssEmpresa)}</td><td class="num">${n.especie ? fmt(n.especie) : ''}</td>
+      <td class="num">${fmt(n.liquido)}</td><td>${n.estado === 'ANULADA' ? 'anulada' : (n.asientoNumero ? 'nº ' + n.asientoNumero : '')}</td>
+      <td>${directo && n.estado !== 'ANULADA' ? `<button class="btn" type="button" data-anula="${n.id}">Anular</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="11" class="vacio">Todavía no hay nóminas en este ejercicio.</td></tr>';
+  const escribe = permitido('CONTABILIDAD:ESCRITURA');
+  const sit = v => [1, 2, 3].map(x => `<option ${x === v ? 'selected' : ''}>${x}</option>`).join('');
+  $('#noEmpleados').innerHTML = empleados.map(e => `<tr data-id="${e.terceroId}"><td>${esc(e.nombre)}</td><td>${esc(e.nif)}</td>
+      <td><input data-f="anioNacimiento" inputmode="numeric" style="width:6em" value="${e.anioNacimiento ?? ''}"></td>
+      <td><select data-f="situacionFamiliar">${sit(e.situacionFamiliar)}</select></td>
+      <td><input data-f="nifConyuge" maxlength="9" style="width:8em" value="${esc(e.nifConyuge || '')}"></td>
+      <td><select data-f="discapacidad">${[0, 1, 2, 3].map(x => `<option ${x === e.discapacidad ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+      <td><select data-f="contrato">${[1, 2, 3, 4].map(x => `<option ${x === e.contrato ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+      <td><input type="checkbox" data-f="movilidadGeografica" ${e.movilidadGeografica ? 'checked' : ''}></td>
+      <td>${escribe ? '<button class="btn" type="button" data-guarda-emp>Guardar</button>' : ''}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="vacio">Los trabajadores aparecen aquí con su primera nómina.</td></tr>';
+  pintaLiquidoNomina();
+}
+
+$('#noGuardar').onclick = async () => {
+  try {
+    const n = await post(urlX('/nominas'), { terceroId: +$('#noTercero').value, canalId: +$('#noCanal').value, fecha: $('#noFecha').value,
+      periodo: $('#noPeriodo').value || null, ...impNomina() });
+    msg($('#noMsg'), `Nómina contabilizada: asiento nº ${n.asientoNumero}, líquido ${fmt(n.liquido)}.`, 'ok-texto');
+    ['#noBruto', '#noPct', '#noRet', '#noSsT', '#noSsE', '#noPeriodo'].forEach(i => $(i).value = '');
+    ['#noAnt', '#noEsp', '#noIc'].forEach(i => $(i).value = '0');
+    await cargaNominas();
+  } catch (e) { msg($('#noMsg'), e.message, 'err-texto'); }
+};
+$('#noLista').addEventListener('click', async e => {
+  const b = e.target.closest('[data-anula]'); if (!b || !confirm('¿Anular la nómina y su asiento?')) return;
+  try { await api(urlX(`/nominas/${b.dataset.anula}`), { method: 'DELETE' }); await cargaNominas(); msg($('#noListaMsg'), 'Nómina anulada.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#noListaMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#noEmpleados').addEventListener('click', async e => {
+  const b = e.target.closest('[data-guarda-emp]'); if (!b) return;
+  const tr = b.closest('tr'), v = f => tr.querySelector(`[data-f=${f}]`);
+  try {
+    await put(urlE(`/empleados/${tr.dataset.id}`), { anioNacimiento: v('anioNacimiento').value ? +v('anioNacimiento').value : null,
+      situacionFamiliar: +v('situacionFamiliar').value, nifConyuge: v('nifConyuge').value || null, discapacidad: +v('discapacidad').value,
+      contrato: +v('contrato').value, movilidadGeografica: v('movilidadGeografica').checked });
+    msg($('#noEmpMsg'), 'Datos del trabajador guardados.', 'ayuda ok-texto');
+  } catch (err) { msg($('#noEmpMsg'), err.message, 'ayuda err-texto'); }
+});
 
 // ------------------------------------------------------------ tesorería
 const TES = { venc: [], bancos: [], liq: null };

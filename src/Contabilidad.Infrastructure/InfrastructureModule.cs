@@ -21,6 +21,7 @@ public sealed class InfrastructureModule(string connectionString, SiiOpciones? s
 
         builder.RegisterType<CatalogoRepositorio>().As<ICatalogoRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<CatalogosAdminRepositorio>().As<ICatalogosAdminRepositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<NominaRepositorio>().As<INominaRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<CatalogoFacturacionRepositorio>().As<ICatalogoFacturacionRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<TerceroRepositorio>().As<ITerceroRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<FacturaRepositorio>().As<IFacturaRepositorio>().InstancePerLifetimeScope();

@@ -194,6 +194,7 @@
     <button data-tab="diario" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Diario</button>
     <button data-tab="mayor" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Mayor</button>
     <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
+    <button data-tab="nominas" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Nóminas</button>
     <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
     <button data-tab="inmovilizado" data-req="INMOVILIZADO:LECTURA" aria-pressed="false">Inmovilizado</button>
@@ -295,7 +296,7 @@
           <div class="cab2">
             <label>NIF / CIF <input id="tNif"></label>
             <label>Nombre <input id="tNombre"></label>
-            <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option></select></label>
+            <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option><option value="EMPLEADO">Trabajador (nóminas)</option></select></label>
             <label>Código postal <input id="tCp" inputmode="numeric" maxlength="10"></label>
             <label>País <input id="tPais" maxlength="2" value="ES" style="width:4em" title="Código ISO de 2 letras (FR, DE, IE…)"></label>
             <label><input type="checkbox" id="tCaja"> Proveedor en criterio de caja</label>
@@ -311,6 +312,48 @@
       <h2>Últimos asientos del ejercicio</h2>
       <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
       <tbody id="diarioBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-nominas" hidden>
+    <div class="panel" data-req="CONTABILIDAD_DIRECTO">
+      <h2>Nueva nómina</h2>
+      <div class="cab2">
+        <label>Trabajador <select id="noTercero"></select></label>
+        <label>Fecha de devengo <input type="date" id="noFecha"></label>
+        <label>Periodo <input id="noPeriodo" maxlength="60" placeholder="Octubre 2026, paga extra…"></label>
+        <label>Canal <select id="noCanal"></select></label>
+        <label>Bruto dinerario <input id="noBruto" inputmode="decimal"></label>
+        <label>Retención IRPF (%) <input id="noPct" inputmode="decimal" placeholder="o el importe abajo"></label>
+        <label>Retención IRPF (importe) <input id="noRet" inputmode="decimal"></label>
+        <label>Seguridad Social del trabajador <input id="noSsT" inputmode="decimal"></label>
+        <label>Seguridad Social de la empresa <input id="noSsE" inputmode="decimal"></label>
+        <label>Anticipos descontados <input id="noAnt" inputmode="decimal" value="0"></label>
+        <label>Retribución en especie <input id="noEsp" inputmode="decimal" value="0"></label>
+        <label>Ingreso a cuenta de la especie <input id="noIc" inputmode="decimal" value="0"></label>
+        <label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" id="noRep" checked> El ingreso a cuenta se descuenta al trabajador</label>
+      </div>
+      <p class="ayuda" id="noLiquido"></p>
+      <div class="acciones"><button class="btn primario" id="noGuardar" type="button">Contabilizar nómina</button><span id="noMsg" role="status"></span></div>
+      <p class="ayuda">Asiento: 640 por el bruto y 642 por la Seguridad Social de la empresa, contra 4751 (retención e ingreso a cuenta), 476
+        (cuotas del trabajador y de la empresa), 460 (anticipos) y 465 (líquido a pagar). Las retenciones van al 111 del trimestre y al 190.
+        El trabajador es un tercero con su NIF (créalo en Facturas → Terceros si no existe).</p>
+    </div>
+    <div class="panel">
+      <h2>Nóminas del ejercicio</h2>
+      <table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Periodo</th><th class="num">Bruto</th><th class="num">IRPF</th><th class="num">SS trab.</th>
+        <th class="num">SS emp.</th><th class="num">Especie</th><th class="num">Líquido</th><th>Asiento</th><th></th></tr></thead>
+      <tbody id="noLista"></tbody></table>
+      <span id="noListaMsg" role="status"></span>
+    </div>
+    <div class="panel">
+      <h2>Trabajadores (datos del modelo 190)</h2>
+      <table><thead><tr><th>Trabajador</th><th>NIF</th><th>Año de nacimiento</th><th>Situación familiar</th><th>NIF del cónyuge</th><th>Discapacidad</th>
+        <th>Contrato</th><th>Movilidad geográfica</th><th></th></tr></thead>
+      <tbody id="noEmpleados"></tbody></table>
+      <p class="ayuda">Situación familiar: 1 sin cónyuge con hijos a cargo, 2 con cónyuge a cargo, 3 resto. Discapacidad: 0 no, 1 del 33 al 65 %,
+        2 con movilidad reducida o ayuda de terceros, 3 del 65 % o más. Contrato: 1 general, 2 inferior al año, 3 relación especial, 4 esporádico.</p>
+      <span id="noEmpMsg" role="status"></span>
     </div>
   </section>
 

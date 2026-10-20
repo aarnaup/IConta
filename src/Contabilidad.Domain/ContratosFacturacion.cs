@@ -89,6 +89,8 @@ public sealed class CrearTerceroCmd
     public string Nombre { get; set; } = "";
     public bool EsCliente { get; set; }
     public bool EsProveedor { get; set; }
+    /// <summary>Trabajador por cuenta ajena (nóminas): puede ser solo esto, sin cuenta de cliente ni de proveedor.</summary>
+    public bool EsEmpleado { get; set; }
     public bool RecargoEquivalencia { get; set; }
     /// <summary>Proveedor acogido al criterio de caja: su IVA se deduce al pagarle.</summary>
     public bool CriterioCaja { get; set; }

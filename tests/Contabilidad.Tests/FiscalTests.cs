@@ -209,7 +209,7 @@ public class CalculadorImpuestoIndirectoTests
             G("EMITIDAS", 0, 400, 0, op: "INVERSION_SUJETO_PASIVO"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
         Assert.Equal((800m, 168m, 5000m, 1050m), (d["32"], d["33"], d["34"], d["35"]));
         Assert.Equal((3000m, 700m, 400m), (d["59"], d["60"], d["122"]));
-        Assert.False(d.Casillas.Any(c => c.Clave is "120" or "123"));
+        Assert.DoesNotContain(d.Casillas, c => c.Clave is "120" or "123");
         Assert.Equal(21m, d["27"]);
         Assert.Equal(21m - 1218m, d["46"]);
     }

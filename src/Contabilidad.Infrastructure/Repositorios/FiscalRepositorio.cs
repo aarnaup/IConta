@@ -596,6 +596,38 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal Base { get; set; }
         public decimal Retencion { get; set; }
     }
+    private sealed class TrabajoFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public decimal Dinerario { get; set; }
+        public decimal Retencion { get; set; }
+        public decimal Especie { get; set; }
+        public decimal IngresoACuenta { get; set; }
+    }
+
+    private sealed class TrabajoAnualFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string Pais { get; set; } = "";
+        public string? Provincia { get; set; }
+        public decimal Dinerario { get; set; }
+        public decimal Retencion { get; set; }
+        public decimal Especie { get; set; }
+        public decimal IngresoACuenta { get; set; }
+        public decimal IngresoRepercutido { get; set; }
+        public decimal GastosDeducibles { get; set; }
+        public short? AnioNacimiento { get; set; }
+        public short SituacionFamiliar { get; set; }
+        public string? NifConyuge { get; set; }
+        public short Discapacidad { get; set; }
+        public short Contrato { get; set; }
+        public bool MovilidadGeografica { get; set; }
+    }
+
     private sealed class TrimestralFila { public decimal? Importe { get; set; } public int Presentados { get; set; } }
 
     private static async Task CalcularResumenRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
@@ -618,6 +650,29 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct)))
             .Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje, f.Base, f.Retencion)).ToList();
 
+        List<TrabajoAnual>? trabajo = null;
+        if (modelo.Codigo == "190")
+            trabajo = (await cn.QueryAsync<TrabajoAnualFila>(new CommandDefinition("""
+                SELECT n.tercero_id, ni.numero AS nif, t.nombre, pa.iso2 AS pais, pr.codigo AS provincia,
+                       SUM(n.bruto) AS dinerario, SUM(n.retencion) AS retencion,
+                       SUM(n.especie + CASE WHEN n.ingreso_repercutido THEN 0 ELSE n.ingreso_a_cuenta END) AS especie,
+                       SUM(n.ingreso_a_cuenta) AS ingreso_a_cuenta, SUM(CASE WHEN n.ingreso_repercutido THEN n.ingreso_a_cuenta ELSE 0 END) AS ingreso_repercutido,
+                       SUM(n.ss_trabajador) AS gastos_deducibles,
+                       e.anio_nacimiento, COALESCE(e.situacion_familiar, 3) AS situacion_familiar, e.nif_conyuge, COALESCE(e.discapacidad, 0) AS discapacidad,
+                       COALESCE(e.contrato, 1) AS contrato, COALESCE(e.movilidad_geografica, false) AS movilidad_geografica
+                FROM conta.nomina n
+                JOIN conta.tercero t ON t.id = n.tercero_id
+                JOIN core.nif ni ON ni.id = t.nif_id
+                JOIN cat.pais pa ON pa.id = ni.pais_id
+                LEFT JOIN cat.provincia pr ON pr.id = ni.provincia_id
+                LEFT JOIN conta.empleado e ON e.tercero_id = n.tercero_id
+                WHERE n.empresa_id = @empresaId AND n.estado = 'CONTABILIZADA' AND n.fecha BETWEEN @inicio AND @fin
+                GROUP BY 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17
+                """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+                .Select(x => new TrabajoAnual(x.TerceroId, x.Nif, x.Nombre, x.Pais, x.Provincia, x.Dinerario, x.Retencion, x.Especie, x.IngresoACuenta,
+                    x.IngresoRepercutido, x.GastosDeducibles,
+                    new DatosTrabajador(x.AnioNacimiento, x.SituacionFamiliar, x.NifConyuge, x.Discapacidad, x.Contrato, x.MovilidadGeografica))).ToList();
+
         var mid = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener(trimestral), ct);
         var t = await cn.QuerySingleAsync<TrimestralFila>(new CommandDefinition("""
             SELECT SUM(c.importe) AS importe, COUNT(*) AS presentados FROM fiscal.declaracion d
@@ -625,8 +680,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.anio = @anio AND d.estado = 'PRESENTADA'
               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                     WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
-            """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "09" : "03" }, tx, cancellationToken: ct));
-        CalculadorResumenRetenciones.Calcular(modelo.Codigo, filas, t.Importe, t.Presentados, d);
+            """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "28" : "03" }, tx, cancellationToken: ct));
+        CalculadorResumenRetenciones.Calcular(modelo.Codigo, filas, t.Importe, t.Presentados, d, trabajo);
     }
 
     private static async Task CalcularRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
@@ -661,9 +716,20 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                   AND s.fecha BETWEEN @inicio AND @fin
                 """, new { cuentas, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
 
+        // Nóminas del periodo (rendimientos del trabajo del 111)
+        var trabajo = (await cn.QueryAsync<TrabajoFila>(new CommandDefinition("""
+            SELECT n.tercero_id, ni.numero AS nif, t.nombre, SUM(n.bruto) AS dinerario, SUM(n.retencion) AS retencion,
+                   SUM(n.especie + CASE WHEN n.ingreso_repercutido THEN 0 ELSE n.ingreso_a_cuenta END) AS especie,
+                   SUM(n.ingreso_a_cuenta) AS ingreso_a_cuenta
+            FROM conta.nomina n JOIN conta.tercero t ON t.id = n.tercero_id JOIN core.nif ni ON ni.id = t.nif_id
+            WHERE n.empresa_id = @empresaId AND n.estado = 'CONTABILIZADA' AND n.fecha BETWEEN @inicio AND @fin
+            GROUP BY 1, 2, 3
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+            .Select(x => new PercepcionTrabajo(x.TerceroId, x.Nif, x.Nombre, x.Dinerario, x.Retencion, x.Especie, x.IngresoACuenta)).ToList();
+
         CalculadorRetenciones.Calcular(modelo.Codigo,
             filas.Where(f => f.Modelo == modelo.Codigo).Select(f => new PercepcionRetenida(f.TerceroId, f.Nif, f.Nombre, f.Base, f.Retencion)).ToList(),
-            contable, filas.Sum(f => f.Retencion), d);
+            contable, filas.Sum(f => f.Retencion) + trabajo.Sum(t => t.Retencion + t.IngresoACuenta), d, modelo.Codigo == "111" ? trabajo : null);
     }
 
     // ---------------------------------------------------------------- 349

@@ -163,11 +163,28 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             case "190":
             {
                 var lineas = det.Deserialize<List<PerceptorResumen>>(Json) ?? [];
-                r["registros"] = lineas.Select(l => new RegistroAeat
+                r["registros"] = lineas.Select(l =>
                 {
-                    ["nif"] = NifEspanol(l.Nif), ["nombre"] = l.Nombre, ["provincia"] = l.Provincia, ["clave"] = l.Clave,
-                    ["subclave"] = l.Subclave ?? "00", ["signoBase"] = l.Base < 0 ? "N" : " ", ["base"] = Math.Abs(l.Base),
-                    ["retencion"] = Math.Abs(l.Retencion),
+                    var reg = new RegistroAeat
+                    {
+                        ["nif"] = NifEspanol(l.Nif), ["nombre"] = l.Nombre, ["provincia"] = l.Provincia, ["clave"] = l.Clave,
+                        ["subclave"] = l.Subclave ?? "00", ["signoBase"] = l.Base < 0 ? "N" : " ", ["base"] = Math.Abs(l.Base),
+                        ["retencion"] = Math.Abs(l.Retencion),
+                        ["signoEspecie"] = l.Especie < 0 ? "N" : " ", ["especie"] = Math.Abs(l.Especie),
+                        ["ingresoCuenta"] = l.IngresoACuenta, ["ingresoCuentaRepercutido"] = l.IngresoRepercutido,
+                    };
+                    // Datos adicionales: solo para los trabajadores (clave A)
+                    if (l.Datos is { } t)
+                    {
+                        reg["anioNacimiento"] = (decimal)(t.AnioNacimiento ?? 0);
+                        reg["situacionFamiliar"] = (decimal)t.SituacionFamiliar;
+                        reg["nifConyuge"] = t.NifConyuge ?? "";
+                        reg["discapacidad"] = (decimal)t.Discapacidad;
+                        reg["contrato"] = (decimal)t.Contrato;
+                        reg["movilidad"] = t.MovilidadGeografica ? 1m : 0m;
+                        reg["gastosDeducibles"] = l.GastosDeducibles;
+                    }
+                    return reg;
                 }).ToList();
                 break;
             }
