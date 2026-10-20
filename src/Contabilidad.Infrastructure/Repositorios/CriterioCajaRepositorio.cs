@@ -147,9 +147,8 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
     public async Task<ConfiguracionFiscalDto> GuardarConfiguracionAsync(long empresaId, GuardarConfiguracionFiscalCmd cmd, CancellationToken ct)
     {
         var regimen = (cmd.RegimenIva ?? "").Trim().ToUpperInvariant();
-        if (regimen is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA"))
-            throw new ReglaContableException("Régimen no disponible: GENERAL, CRITERIO_CAJA, SIMPLIFICADO o RECARGO_EQUIVALENCIA.",
-                "El régimen especial de la agricultura, ganadería y pesca está pendiente.");
+        if (regimen is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP"))
+            throw new ReglaContableException("Régimen no disponible: GENERAL, CRITERIO_CAJA, SIMPLIFICADO, RECARGO_EQUIVALENCIA o AGRICULTURA_GYP.");
         var irpf = cmd.RegimenIrpf?.Trim().ToUpperInvariant();
         if (irpf is not (null or "" or "DIRECTA_NORMAL" or "DIRECTA_SIMPLIFICADA" or "OBJETIVA"))
             throw new ReglaContableException("Régimen de IRPF no válido: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA (o vacío para sociedades).");
@@ -165,6 +164,11 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
         if (regimen == "SIMPLIFICADO" && irpfFinal != "OBJETIVA")
             throw new ReglaContableException("El régimen simplificado del IVA va con la estimación objetiva del IRPF (módulos).",
                 "Indica también el régimen de IRPF OBJETIVA.");
+        if (regimen == "AGRICULTURA_GYP" && actual.ImpuestoIndirecto != "IVA")
+            throw new ReglaContableException("El régimen especial de la agricultura, ganadería y pesca de la aplicación es el del IVA.");
+        if (regimen == "AGRICULTURA_GYP" && irpfFinal is null)
+            throw new ReglaContableException("El régimen especial de la agricultura, ganadería y pesca es para personas físicas (o entidades en atribución de rentas).",
+                "Indica su régimen de IRPF.");
         if (regimen == "RECARGO_EQUIVALENCIA" && irpfFinal is null)
             throw new ReglaContableException("El recargo de equivalencia es para comerciantes minoristas personas físicas (o entidades en atribución de rentas).",
                 "Indica su régimen de IRPF.");

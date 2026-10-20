@@ -191,6 +191,19 @@ public class CalculadorImpuestoIndirectoTests
     }
 
     [Fact]
+    public void Compensaciones_REAGP_en_la_casilla_42()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("RECIBIDAS", 12, 1000, 120, ded: 120, op: "COMPENSACION_REAGP"), G("RECIBIDAS", 10.5m, -100, -10.5m, ded: -10.5m, rect: true, op: "COMPENSACION_REAGP"),
+            G("RECIBIDAS", 21, 200, 42, ded: 42), G("EMITIDAS", 21, 1000, 210)], 0, 0, false, false), d);
+        Assert.Equal(109.5m, d["42"]);
+        Assert.Equal((200m, 42m), (d["28"], d["29"]));
+        Assert.DoesNotContain(d.Casillas, c => c.Clave is "40" or "41");
+        Assert.Equal(151.5m, d["45"]);
+    }
+
+    [Fact]
     public void Con_prorrata_la_autorrepercusion_deja_cuota_a_ingresar()
     {
         var d = Nueva();

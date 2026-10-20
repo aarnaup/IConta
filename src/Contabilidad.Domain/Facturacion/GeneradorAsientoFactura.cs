@@ -71,8 +71,9 @@ public static class GeneradorAsientoFactura
                     // Criterio de caja: el impuesto interior queda pendiente (4779 / 4729) hasta el cobro o el pago
                     var rol = criterioCaja && l.CuentaId is null && row.TipoOperacion == "INTERIOR" && l.CuentaRol is "IVA_REPERCUTIDO" or "IVA_SOPORTADO"
                         ? l.CuentaRol + "_CAJA" : l.CuentaRol;
-                    if (recargoEquivalencia && libro == LibroFactura.Emitidas && l.CuentaId is null && row.TipoOperacion == "INTERIOR"
-                        && l.CuentaRol == "IVA_REPERCUTIDO")
+                    // En recargo de equivalencia el IVA cobrado y en el REAGP la compensación cobrada son más ingreso
+                    if (libro == LibroFactura.Emitidas && l.CuentaId is null && l.CuentaRol == "IVA_REPERCUTIDO"
+                        && ((recargoEquivalencia && row.TipoOperacion == "INTERIOR") || row.TipoOperacion == "COMPENSACION_REAGP"))
                     {
                         Añade(l, cuentas.Resolver(null, "VENTAS", null), imp);
                         continue;

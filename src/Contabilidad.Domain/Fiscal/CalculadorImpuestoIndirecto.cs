@@ -48,7 +48,7 @@ public static class CalculadorImpuestoIndirecto
         var emitidasRect = e.Grupos.Where(g => g.Libro == "EMITIDAS" && g.Rectificativa && g.TipoOperacion == "INTERIOR").ToList();
         // Deducible: todo lo recibido con cuota (interior, importación y autorrepercutido); las rectificativas van aparte
         var soportado = recibidas.Where(g => !g.Rectificativa).ToList();
-        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS")).ToList();
+        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS" or "COMPENSACION_REAGP")).ToList();
 
         void Add(string clave, string desc, decimal importe) => d.Casillas.Add(new Casilla(clave, desc, importe));
 
@@ -192,6 +192,13 @@ public static class CalculadorImpuestoIndirecto
             var c = recibidasRect.Sum(x => x.CuotaDeducible);
             Add(igic ? "RDC" : "41", "Rectificación de deducciones: cuota", c);
             totalDeducible += c;
+        }
+        // Compensaciones pagadas a agricultores, ganaderos y pescadores del régimen especial (con sus rectificaciones)
+        var reagp = recibidas.Where(g => g.TipoOperacion == "COMPENSACION_REAGP").ToList();
+        if (reagp.Count > 0)
+        {
+            Add("42", "Compensaciones del régimen especial de la agricultura, ganadería y pesca", reagp.Sum(x => x.CuotaDeducible));
+            totalDeducible += reagp.Sum(x => x.CuotaDeducible);
         }
         if (e.RegularizacionBienesInversion != 0)
         {

@@ -112,8 +112,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "SELECT codigo FROM fiscal.modelo_fiscal WHERE NOT activo", cancellationToken: ct))).ToHashSet();
         return ModelosFiscales.Soportados.Where(m => !inactivos.Contains(m.Codigo)).Where(m => m.Impuesto switch
         {
-            // Recargo de equivalencia: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
-            "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva != "RECARGO_EQUIVALENCIA" && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
+            // Recargo de equivalencia y REAGP: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
+            "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP")
+                     && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
             "IGIC" => e.ImpuestoIndirecto == "IGIC",
             "IRPF" => m.Codigo == "131" ? e.RegimenIrpf == "OBJETIVA" : directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",

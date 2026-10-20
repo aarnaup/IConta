@@ -100,6 +100,19 @@ public class SiiTests
     }
 
     [Fact]
+    public void Recibo_de_compensacion_REAGP_con_clave_02()
+    {
+        var doc = Sii.Mensaje("RECIBIDAS", "B12345678", "Mi Empresa", "A0",
+            [F("RECIBIDAS", "RC-1", "12345678Z", "ES", [new LineaSii("COMPENSACION_REAGP", 12, 1000, 120, 0, 0, 120, false)])]);
+        var fr = doc.Descendants(L + "FacturaRecibida").Single();
+        Assert.Equal(("F6", "02"), (fr.Element(I + "TipoFactura")!.Value, fr.Element(I + "ClaveRegimenEspecialOTrascendencia")!.Value));
+        var det = fr.Descendants(I + "DetalleIVA").Single();
+        Assert.Equal(["BaseImponible", "PorcentCompensacionREAGYP", "ImporteCompensacionREAGYP"], det.Elements().Select(e => e.Name.LocalName));
+        Assert.Equal(["1000.00", "12", "120.00"], det.Elements().Select(e => e.Value));
+        Assert.Equal("120.00", fr.Element(I + "CuotaDeducible")!.Value);
+    }
+
+    [Fact]
     public void Lee_la_respuesta_y_los_fallos()
     {
         const string xml = """

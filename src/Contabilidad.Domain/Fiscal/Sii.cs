@@ -204,7 +204,10 @@ public static class Sii
     {
         var tipo = TipoFactura(f);
         var intracom = f.Lineas.Any(l => l.TipoOperacion is "INTRACOM_ADQUISICION" or "INTRACOM_SERVICIOS");
-        var clave = intracom ? "09" : f.CriterioCaja ? "07" : "01";
+        // Clave 02: compras a agricultores, ganaderos o pescadores en régimen especial (el justificante es el recibo de compensación: F6)
+        var reagp = f.Lineas.Count > 0 && f.Lineas.All(l => l.TipoOperacion == "COMPENSACION_REAGP");
+        var clave = reagp ? "02" : intracom ? "09" : f.CriterioCaja ? "07" : "01";
+        if (reagp && tipo == "F1") tipo = "F6";
         var ident = Identificacion(f);
         var detalle = new XElement(Lr + "FacturaRecibida", new XElement(Inf + "TipoFactura", tipo));
         detalle.Add(Rectificacion(f, tipo));
@@ -226,7 +229,8 @@ public static class Sii
             return e;
         }
         var isp = f.Lineas.Where(l => l.TipoOperacion == "INVERSION_SUJETO_PASIVO").ToList();
-        var resto = f.Lineas.Where(l => l.TipoOperacion != "INVERSION_SUJETO_PASIVO").ToList();
+        var compensaciones = f.Lineas.Where(l => l.TipoOperacion == "COMPENSACION_REAGP").ToList();
+        var resto = f.Lineas.Where(l => l.TipoOperacion is not ("INVERSION_SUJETO_PASIVO" or "COMPENSACION_REAGP")).ToList();
         if (isp.Count > 0)
             desglose.Add(new XElement(Inf + "InversionSujetoPasivo",
                 isp.GroupBy(l => (l.Porcentaje, l.PorcentajeRecargo)).Select(g => Detalle(g, true))));
@@ -234,6 +238,15 @@ public static class Sii
             desglose.Add(new XElement(Inf + "DesgloseIVA",
                 resto.GroupBy(l => (l.TipoOperacion is "EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS" ? -1m : l.Porcentaje, l.PorcentajeRecargo))
                     .Select(g => Detalle(g, g.Key.Item1 >= 0))));
+        if (compensaciones.Count > 0)
+        {
+            var dg = desglose.Element(Inf + "DesgloseIVA") ?? new XElement(Inf + "DesgloseIVA");
+            if (dg.Parent is null) desglose.Add(dg);
+            dg.Add(compensaciones.GroupBy(l => l.Porcentaje).Select(g => new XElement(Inf + "DetalleIVA",
+                new XElement(Inf + "BaseImponible", Importe(g.Sum(l => l.Base))),
+                new XElement(Inf + "PorcentCompensacionREAGYP", Pct(g.Key)),
+                new XElement(Inf + "ImporteCompensacionREAGYP", Importe(g.Sum(l => l.Cuota))))));
+        }
         detalle.Add(desglose,
             new XElement(Inf + "Contraparte", new XElement(Inf + "NombreRazon", Corta(f.Nombre, 120)), ident),
             new XElement(Inf + "FechaRegContable", Fecha(f.FechaContable)),

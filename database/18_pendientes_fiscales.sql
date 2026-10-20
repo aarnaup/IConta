@@ -62,3 +62,17 @@ CREATE TABLE IF NOT EXISTS inmov.bien_inversion_porcentaje (
   porcentaje        smallint NOT NULL CHECK (porcentaje BETWEEN 0 AND 100),
   PRIMARY KEY (bien_inversion_id, anio)
 );
+
+-- ---------------------------------------------------------------- régimen especial de la agricultura, ganadería y pesca (REAGP)
+ALTER TABLE fiscal.factura_iva DROP CONSTRAINT IF EXISTS factura_iva_tipo_operacion_check;
+ALTER TABLE fiscal.factura_iva ADD CONSTRAINT factura_iva_tipo_operacion_check
+  CHECK (tipo_operacion IN ('INTERIOR','EXENTA','NO_SUJETA','NO_SUJETA_LOCAL','NO_SUJETA_OSS','INTRACOM_ADQUISICION','INTRACOM_ENTREGA',
+                            'IMPORTACION','EXPORTACION','INVERSION_SUJETO_PASIVO','COMPENSACION_REAGP'));
+-- Porcentajes de compensación (art. 130 LIVA): 12 % agrícolas y forestales, 10,5 % ganaderas y pesqueras
+INSERT INTO cat.tipo_iva (impuesto, codigo, nombre, es_exento, activo)
+VALUES ('IVA', 'REAGP_AGR', 'Compensación REAGP agrícola o forestal', false, true),
+       ('IVA', 'REAGP_GAN', 'Compensación REAGP ganadera o pesquera', false, true)
+ON CONFLICT (codigo) DO NOTHING;
+INSERT INTO cat.tipo_iva_vigencia (tipo_iva_id, porcentaje, recargo_equivalencia, fecha_desde)
+SELECT t.id, v.pct, 0, DATE '2013-01-01' FROM cat.tipo_iva t JOIN (VALUES ('REAGP_AGR', 12.00), ('REAGP_GAN', 10.50)) v(cod, pct) ON v.cod = t.codigo
+WHERE NOT EXISTS (SELECT 1 FROM cat.tipo_iva_vigencia x WHERE x.tipo_iva_id = t.id);

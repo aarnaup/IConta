@@ -156,6 +156,15 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             if (empresa.ImpuestoIndirecto != "EXENTO" && t.Impuesto != empresa.ImpuestoIndirecto)
                 throw new ReglaContableException($"La empresa usa {empresa.ImpuestoIndirecto}; el tipo {t.Codigo} es de {t.Impuesto}.");
             OperacionesIva.Validar(libro, l.TipoOperacion, empresa.ImpuestoIndirecto);
+            if (l.TipoOperacion == "COMPENSACION_REAGP")
+            {
+                if (!t.Codigo.StartsWith("REAGP", StringComparison.Ordinal))
+                    throw new ReglaContableException("La compensación del REAGP va con su tipo (12 % agrícola o forestal, 10,5 % ganadera o pesquera).");
+                if (libro == LibroFactura.Emitidas && empresa.RegimenIva != "AGRICULTURA_GYP")
+                    throw new ReglaContableException("Solo una empresa en el régimen especial de la agricultura, ganadería y pesca cobra la compensación.");
+            }
+            else if (t.Codigo.StartsWith("REAGP", StringComparison.Ordinal))
+                throw new ReglaContableException("El tipo de compensación del REAGP solo se usa con la operación «compensación REAGP».");
 
             var interior = l.TipoOperacion == "INTERIOR";
             entradas.Add(new LineaIvaEntrada(
@@ -163,7 +172,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 OperacionesIva.LlevaCuota(libro, l.TipoOperacion) ? t.Porcentaje.Value : 0m,
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
                 // En recargo de equivalencia el IVA (y el recargo) soportado en las compras interiores no se deduce: es más coste
-                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva == "RECARGO_EQUIVALENCIA" ? "NINGUNA" : l.ReglaDeduccion,
+                // (igual en el REAGP: el agricultor no deduce, se compensa a tanto alzado)
+                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" ? "NINGUNA" : l.ReglaDeduccion,
                 l.PorcentajeDeduccion, l.EsBienInversion));
         }
 
