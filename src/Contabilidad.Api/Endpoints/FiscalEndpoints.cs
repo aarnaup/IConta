@@ -1,5 +1,6 @@
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
+using Contabilidad.Domain.Fiscal;
 using Contabilidad.Domain.Seguridad;
 using Contabilidad.Infrastructure.Repositorios;
 
@@ -41,6 +42,18 @@ public static class FiscalEndpoints
                 new { v.Modelo, v.Anio, v.Periodo, v.Resultado }, ct);
             return Results.Ok(v);
         }).Requiere(Nivel.Escritura, Modulo.Fiscal);
+
+        // ---- Libros registro de IVA/IGIC (por fecha contable) ----
+        f.MapGet("/libros/{libro}", async (long empresaId, string libro, int anio, string periodo, ILibrosRegistroRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.ObtenerAsync(empresaId, libro, anio, periodo, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+
+        f.MapGet("/libros/{libro}/csv", async (long empresaId, string libro, int anio, string periodo, ILibrosRegistroRepositorio r, CancellationToken ct) =>
+        {
+            var l = await r.ObtenerAsync(empresaId, libro, anio, periodo, ct);
+            var nombre = $"libro-{(l.Libro == "EMITIDAS" ? "expedidas" : "recibidas")}-{l.Impuesto.ToLowerInvariant()}-{l.Anio}-{l.Periodo}.csv";
+            return Results.File(LibrosRegistro.Csv(l.Libro, l.Impuesto, l.Lineas), "text/csv; charset=utf-8", nombre);
+        }).Requiere(Nivel.Lectura, Modulo.Fiscal);
 
         f.MapPost("/declaraciones/{id:long}/presentar", async (long empresaId, long id, PresentarDeclaracionCmd cmd, HttpContext http,
             IFiscalRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>

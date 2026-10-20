@@ -401,6 +401,29 @@
       </div>
 
       <div class="panel">
+        <h2>Libros registro</h2>
+        <p class="ayuda">Facturas contabilizadas por fecha contable, una línea por tipo impositivo, con los mismos criterios que la autoliquidación.
+          Las recibidas llevan su número de registro (orden de recepción), que no cambia.</p>
+        <div class="fila-acciones">
+          <label>Libro <select id="lrLibro"><option value="EMITIDAS">Facturas expedidas</option><option value="RECIBIDAS">Facturas recibidas</option></select></label>
+          <label>Año <input id="lrAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Periodo <select id="lrPeriodo"></select></label>
+          <button class="btn primario" id="lrVer" type="button">Ver</button>
+          <button class="btn" id="lrCsv" type="button">Descargar CSV</button>
+        </div>
+        <p id="lrMsg" class="ayuda" role="status"></p>
+        <div id="lrResultado" hidden>
+          <p id="lrResumen" class="ayuda"></p>
+          <ul id="lrAvisos" class="avisos"></ul>
+          <h3>Totales por tipo</h3>
+          <table><thead><tr><th>Operación</th><th class="num">Tipo</th><th class="num">Recargo</th><th class="num">Líneas</th><th class="num">Base</th>
+            <th class="num">Cuota</th><th class="num">Cuota recargo</th><th class="num" id="lrDedCab">Deducible</th></tr></thead><tbody id="lrTotales"></tbody></table>
+          <h3>Detalle</h3>
+          <div style="overflow-x:auto"><table><thead id="lrHead"></thead><tbody id="lrBody"></tbody></table></div>
+        </div>
+      </div>
+
+      <div class="panel">
         <h2>Declaraciones guardadas</h2>
         <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>

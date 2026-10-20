@@ -530,7 +530,52 @@ async function cargaFiscal() {
     pintaPeriodos();
   }
   await cargaDeclaraciones();
+  if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
+  if (!$('#lrPeriodo').options.length)
+    $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+      .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ libros registro de IVA/IGIC
+const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#lrAnio').value}&periodo=${$('#lrPeriodo').value}`;
+$('#lrVer').onclick = async () => {
+  try {
+    const d = await api(urlE(consultaLibro()));
+    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta' };
+    $('#lrResumen').textContent = `${rec ? 'Facturas recibidas' : 'Facturas expedidas'} · ${imp} · del ${fechaES(d.desde)} al ${fechaES(d.hasta)} · ${d.facturas} factura(s). `
+      + `Base ${fmt(d.totalBase)}, cuota ${fmt(d.totalCuota)}${d.totalRecargo ? ', recargo ' + fmt(d.totalRecargo) : ''}${rec ? ', deducible ' + fmt(d.totalCuotaDeducible) : ''}, total ${fmt(d.totalFacturas)}.`;
+    $('#lrAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    $('#lrDedCab').hidden = !rec;
+    $('#lrTotales').innerHTML = d.totales.map(t => `<tr><td>${esc(txt[t.tipoOperacion] || t.tipoOperacion)}</td><td class="num">${fmt(t.porcentaje)} %</td>
+        <td class="num">${t.porcentajeRecargo ? fmt(t.porcentajeRecargo) + ' %' : ''}</td><td class="num">${t.lineas}</td><td class="num">${fmt(t.base)}</td>
+        <td class="num">${fmt(t.cuota)}</td><td class="num">${fmt(t.cuotaRecargo)}</td>${rec ? `<td class="num">${fmt(t.cuotaDeducible)}</td>` : ''}</tr>`).join('')
+      || `<tr><td colspan="${rec ? 8 : 7}" class="vacio">Sin facturas en el periodo.</td></tr>`;
+    $('#lrHead').innerHTML = `<tr>${rec ? '<th>Nº reg.</th><th>Registro</th>' : ''}<th>Expedición</th><th>Factura</th><th>NIF</th><th>Nombre</th><th>Operación</th>
+      <th class="num">Base</th><th class="num">Tipo</th><th class="num">Cuota</th><th class="num">Recargo</th>${rec ? '<th class="num">Deducible</th>' : ''}
+      <th class="num">Retención</th><th class="num">Total</th><th>Asiento</th></tr>`;
+    $('#lrBody').innerHTML = d.lineas.map(l => `<tr>${rec ? `<td>${l.numeroRegistro ?? ''}</td><td>${fechaES(l.fechaContable)}</td>` : ''}
+      <td>${fechaES(l.fechaExpedicion)}</td><td>${esc((l.serie || '') + l.numero)}${l.tipoFactura === 'RECTIFICATIVA' ? ' <small>(rectificativa)</small>' : ''}</td>
+      <td>${esc(l.nif)}</td><td>${esc(l.nombre)}</td><td>${esc(txt[l.tipoOperacion] || l.tipoOperacion)}</td><td class="num">${fmt(l.base)}</td>
+      <td class="num">${fmt(l.porcentaje)} %</td><td class="num">${fmt(l.cuota)}</td><td class="num">${l.cuotaRecargo ? fmt(l.cuotaRecargo) : ''}</td>
+      ${rec ? `<td class="num">${fmt(l.cuotaDeducible)}</td>` : ''}<td class="num">${l.retencion ? fmt(l.retencion) : ''}</td>
+      <td class="num">${l.totalFactura == null ? '' : fmt(l.totalFactura)}</td><td>${l.asientoNumero ? 'nº ' + l.asientoNumero : ''}</td></tr>`).join('')
+      || `<tr><td colspan="15" class="vacio">Sin facturas en el periodo.</td></tr>`;
+    $('#lrResultado').hidden = false; msg($('#lrMsg'), '', 'ayuda');
+  } catch (e) { msg($('#lrMsg'), e.message, 'ayuda err-texto'); }
+};
+// La descarga necesita el token: se pide con fetch y se guarda como fichero
+$('#lrCsv').onclick = async () => {
+  try {
+    const q = consultaLibro().replace('?', '/csv?');
+    const r = await fetch(urlE(q), { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
+    const nombre = (/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || 'libro.csv';
+    const url = URL.createObjectURL(await r.blob());
+    const a = Object.assign(document.createElement('a'), { href: url, download: nombre.replace(/"/g, '') });
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    msg($('#lrMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#lrMsg'), e.message, 'ayuda err-texto'); }
+};
 
 function pintaPeriodos() {
   const m = MF.modelos.find(x => x.codigo === $('#mfModelo').value);
