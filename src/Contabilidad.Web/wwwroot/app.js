@@ -1509,7 +1509,7 @@ $('#inAnularBaja').onclick = async () => {
   catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
 };
 
-const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
+const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', DIGITOS_DECRECIENTE: 'por suma de dígitos decreciente', DIGITOS_CRECIENTE: 'por suma de dígitos creciente', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
 $('#inFGuardar').onclick = async () => {
   if (!IN.ficha) return;
   try {

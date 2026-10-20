@@ -773,7 +773,8 @@
           <label>Valor de adquisición <input id="inValor" inputmode="decimal"></label>
           <label>Valor residual <input id="inResidual" inputmode="decimal" value="0"></label>
           <label>Método <select id="inMetodo"><option value="">El de la categoría</option><option value="LINEAL">Lineal</option>
-            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
+            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="DIGITOS_DECRECIENTE">Suma de dígitos decreciente</option>
+            <option value="DIGITOS_CRECIENTE">Suma de dígitos creciente</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
             <option value="NO_AMORTIZA">No se amortiza</option></select></label>
           <label>Vida útil (meses) <input id="inMeses" inputmode="numeric"></label>
           <label>Coeficiente anual (%) <input id="inCoef" inputmode="decimal" placeholder="Tablas; en degresivo, opcional"></label>
@@ -801,7 +802,8 @@
           <p id="inFiscalResumen" class="ayuda"></p>
           <div class="cab2" data-req="INMOVILIZADO:ESCRITURA">
             <label>Método fiscal <select id="inFMetodo"><option value="">Igual que la contable</option><option value="LINEAL">Lineal</option>
-              <option value="DEGRESIVO">Degresivo</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
+              <option value="DEGRESIVO">Degresivo</option><option value="DIGITOS_DECRECIENTE">Suma de dígitos decreciente</option>
+              <option value="DIGITOS_CRECIENTE">Suma de dígitos creciente</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
               <option value="LIBRE">Libertad de amortización</option></select></label>
             <label>Vida útil fiscal (meses) <input id="inFMeses" inputmode="numeric"></label>
             <label>Coeficiente fiscal (%) <input id="inFCoef" inputmode="decimal"></label>

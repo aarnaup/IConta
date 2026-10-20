@@ -160,4 +160,20 @@ public class MetodosAmortizacionTests
         var f = new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(3000, 0, Ini, null, "LIBRE");
         Assert.Equal(3000m, Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, Ini));
     }
+
+    [Fact]
+    public void Suma_de_digitos_decreciente_y_creciente()
+    {
+        // 4 años: S = 10; decreciente 4/10, 3/10, 2/10, 1/10; creciente al revés
+        var dec = new Contabilidad.Domain.Inmovilizado.FichaAmortizacion(10000, 0, Ini, 48, "DIGITOS_DECRECIENTE");
+        var cre = dec with { Metodo = "DIGITOS_CRECIENTE" };
+        decimal A(Contabilidad.Domain.Inmovilizado.FichaAmortizacion f, DateOnly d) => Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.AcumuladaA(f, d);
+        Assert.Equal(new DateOnly(2029, 12, 31), dec.Fin);
+        Assert.Equal([4000m, 7000m, 9000m, 10000m], new[] { 2026, 2027, 2028, 2029 }.Select(y => A(dec, new DateOnly(y, 12, 31))));
+        Assert.Equal([1000m, 3000m, 6000m, 10000m], new[] { 2026, 2027, 2028, 2029 }.Select(y => A(cre, new DateOnly(y, 12, 31))));
+        Assert.Equal(4000m + Math.Round(3000m * 181 / 365, 2), A(dec, new DateOnly(2027, 6, 30)));      // año en curso, por días
+        var cuadro = Contabilidad.Domain.Inmovilizado.CalculadorAmortizacion.Cuadro(dec, 1);
+        Assert.Equal([4000m, 3000m, 2000m, 1000m], cuadro.Select(t => t.Cuota));
+        Assert.False((dec with { VidaUtilMeses = 30 }).Amortiza);                                         // solo años completos
+    }
 }
