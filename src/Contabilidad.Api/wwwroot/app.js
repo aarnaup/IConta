@@ -435,7 +435,161 @@ const estadoTxt = { PENDIENTE: 'pendiente', PARCIAL: 'parcial', LIQUIDADO: 'liqu
 
 async function cargaTesoreria() {
   await Promise.all([cargaPrevision(), cargaVencimientos(), cargaBancos()]);
+  await cargaConciliacion();
 }
+
+// ------------------------------------------------------------ conciliación bancaria
+const CO = { estado: null, lineas: new Set(), apuntes: new Set(), accion: null };
+const conceptoComun = { '01': 'Talones', '02': 'Abonarés', '03': 'Recibos', '04': 'Transferencias', '05': 'Amortizaciones', '06': 'Remesas',
+  '07': 'Suscripciones', '08': 'Dividendos', '09': 'Operaciones de bolsa', '10': 'Cheques gasolina', '11': 'Cajero', '12': 'Tarjetas',
+  '13': 'Operaciones exterior', '14': 'Devoluciones', '15': 'Nóminas', '16': 'Timbres', '17': 'Intereses', '98': 'Anulaciones', '99': 'Varios' };
+
+async function cargaConciliacion() {
+  const propias = TES.bancos.filter(b => b.activa && b.cuentaContable);
+  $('#coPanel').hidden = !propias.length;
+  if (!propias.length) return;
+  const actual = $('#coBanco').value;
+  $('#coBanco').innerHTML = propias.map(b => `<option value="${b.id}">${esc(b.alias || b.iban)}</option>`).join('');
+  if (propias.some(b => String(b.id) === actual)) $('#coBanco').value = actual;
+  if (!$('#coHasta').value) $('#coHasta').value = hoy();
+  $('#coCanal').innerHTML = S.canales.map(c => `<option value="${c.id}">${esc(c.codigo)}</option>`).join('');
+  await verConciliacion();
+}
+
+async function verConciliacion() {
+  const banco = $('#coBanco').value; if (!banco) return;
+  const [e, extractos] = await Promise.all([
+    api(urlE(`/tesoreria/conciliacion?cuentaBancariaId=${banco}&hasta=${$('#coHasta').value}`)),
+    api(urlE(`/tesoreria/extractos?cuentaBancariaId=${banco}`))]);
+  CO.estado = e; CO.lineas.clear(); CO.apuntes.clear();
+  const escribe = permitido('TESORERIA:ESCRITURA'), directo = permitido('TESORERIA_DIRECTO'), abierto = S.ejercicio.estado === 'ABIERTO';
+  const caja = (n, x, cls) => `<div><span>${n}</span><strong class="${cls || ''}">${x == null ? '—' : fmt(x)}</strong></div>`;
+  $('#coTotales').innerHTML = caja('Saldo banco', e.saldoBanco) + caja('Saldo contable (' + esc(e.cuentaContable) + ')', e.saldoContable)
+    + caja('Pendiente en banco', e.lineasPendientes) + caja('Pendiente en contabilidad', e.apuntesPendientes)
+    + caja('Diferencia', e.diferencia, e.diferencia ? 'estado-mal' : '');
+  $('#coAvisos').innerHTML = e.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#coLineas').innerHTML = e.lineas.map(l => `<tr data-linea="${l.id}">
+      <td>${escribe ? `<input type="checkbox" data-sel-linea="${l.id}" aria-label="Elegir">` : ''}</td><td>${fechaES(l.fecha)}</td>
+      <td>${esc(l.concepto || '')}${l.conceptoComun && conceptoComun[l.conceptoComun] ? ` <small>(${conceptoComun[l.conceptoComun]})</small>` : ''}</td>
+      <td class="num ${l.importe < 0 ? 'estado-mal' : ''}">${fmt(l.importe)}</td>
+      <td class="fila-acciones">${directo ? `<button class="btn" data-asiento="${l.id}" ${abierto ? '' : 'disabled'}>Contabilizar</button>
+        <button class="btn" data-liquidar="${l.id}" ${abierto ? '' : 'disabled'}>${l.importe > 0 ? 'Cobro' : 'Pago'}</button>` : ''}
+        ${escribe ? `<button class="btn" data-ignorar="${l.id}" title="Línea duplicada o errónea">Ignorar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Nada pendiente.</td></tr>';
+  $('#coApuntes').innerHTML = e.apuntes.map(a => `<tr data-apunte="${a.apunteId}">
+      <td>${escribe ? `<input type="checkbox" data-sel-apunte="${a.apunteId}" aria-label="Elegir">` : ''}</td><td>${fechaES(a.fecha)}</td>
+      <td>${esc(a.concepto || '')} <small>${esc(a.diario)} nº ${a.numero} · ${esc(a.ejercicio)}</small></td>
+      <td class="num ${a.importe < 0 ? 'estado-mal' : ''}">${fmt(a.importe)}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="vacio">Nada pendiente.</td></tr>';
+  $('#coRecientes').innerHTML = e.recientes.map(c => `<tr><td>${new Date(c.creadoEn).toLocaleString('es-ES')}</td>
+      <td>${{ AUTOMATICA: 'Automática', MANUAL: 'Manual', ASIENTO: 'Contabilizada' }[c.tipo] || esc(c.tipo)}</td><td class="num">${fmt(c.importe)}</td>
+      <td>${esc(c.lineas || '')}</td><td>${esc(c.apuntes || '')}</td>
+      <td class="fila-acciones">${escribe ? `<button class="btn" data-deshacer="${c.id}">Deshacer</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">Ninguna.</td></tr>';
+  $('#coExtractos').innerHTML = extractos.map(x => `<tr><td>${esc(x.fichero || x.formato)}</td><td>${fechaES(x.fechaDesde)} – ${fechaES(x.fechaHasta)}</td>
+      <td class="num">${x.saldoInicial == null ? '' : fmt(x.saldoInicial)}</td><td class="num">${x.saldoFinal == null ? '' : fmt(x.saldoFinal)}</td>
+      <td class="num">${x.lineas}</td><td class="num">${x.conciliadas}</td>
+      <td class="fila-acciones">${escribe && !x.conciliadas ? `<button class="btn" data-borrar="${x.id}">Eliminar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">Ninguno.</td></tr>';
+  pintaSeleccion();
+}
+$('#coVer').onclick = () => verConciliacion().catch(e => msg($('#coMsg'), e.message, 'ayuda err-texto'));
+$('#coBanco').onchange = $('#coVer').onclick;
+
+function pintaSeleccion() {
+  const e = CO.estado; if (!e) return;
+  const sb = e.lineas.filter(l => CO.lineas.has(l.id)).reduce((a, l) => a + l.importe, 0);
+  const sl = e.apuntes.filter(a => CO.apuntes.has(a.apunteId)).reduce((a, x) => a + x.importe, 0);
+  const n = CO.lineas.size + CO.apuntes.size;
+  $('#coSeleccion').textContent = n ? `Banco ${fmt(sb)} · contabilidad ${fmt(sl)}${Math.abs(sb - sl) < 0.005 ? ' · cuadra' : ' · diferencia ' + fmt(sb - sl)}` : '';
+  $('#coConciliar').disabled = !CO.lineas.size || !CO.apuntes.size || Math.abs(sb - sl) >= 0.005;
+  $$('#coLineas tr[data-linea]').forEach(tr => tr.classList.toggle('elegida', CO.lineas.has(+tr.dataset.linea)));
+  $$('#coApuntes tr[data-apunte]').forEach(tr => tr.classList.toggle('elegida', CO.apuntes.has(+tr.dataset.apunte)));
+}
+$('#coApuntes').addEventListener('change', e => {
+  const id = e.target.dataset.selApunte; if (!id) return;
+  e.target.checked ? CO.apuntes.add(+id) : CO.apuntes.delete(+id); pintaSeleccion();
+});
+$('#coLineas').addEventListener('change', e => {
+  const id = e.target.dataset.selLinea; if (!id) return;
+  e.target.checked ? CO.lineas.add(+id) : CO.lineas.delete(+id); pintaSeleccion();
+});
+
+$('#coConciliar').onclick = async () => {
+  try {
+    await post(urlE('/tesoreria/conciliacion'), { cuentaBancariaId: +$('#coBanco').value, lineaIds: [...CO.lineas], apunteIds: [...CO.apuntes] });
+    await verConciliacion(); msg($('#coMsg'), 'Conciliado.', 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#coAuto').onclick = async () => {
+  try {
+    const r = await post(urlE('/tesoreria/conciliacion/automatica'), { cuentaBancariaId: +$('#coBanco').value, diasMargen: 5 });
+    await verConciliacion();
+    msg($('#coMsg'), `${r.conciliadas} movimiento(s) conciliados automáticamente. Quedan ${r.lineasPendientes} en el banco y ${r.apuntesPendientes} en la contabilidad.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// El fichero se envía en base64 dentro del JSON
+$('#coImportar').onclick = async () => {
+  const f = $('#coFichero').files[0];
+  if (!f) return msg($('#coMsg'), 'Elige el fichero del extracto.', 'ayuda err-texto');
+  try {
+    const b64 = await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = mal; r.readAsDataURL(f); });
+    const csv = /\.csv$/i.test(f.name);
+    const r = await post(urlE('/tesoreria/extractos'), { nombre: f.name, contenido: b64, cuentaBancariaId: csv ? +$('#coBanco').value : null });
+    $('#coFichero').value = '';
+    await verConciliacion();
+    msg($('#coMsg'), `Importado (${r.formato}): ` + r.extractos.map(x => `${x.cuenta}, ${x.nuevas} línea(s) nuevas${x.repetidas ? ', ' + x.repetidas + ' ya importadas' : ''}`).join('; ')
+      + (r.avisos.length ? '. ' + r.avisos.join(' ') : '.'), 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+
+$('#coLineas').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const id = +(b.dataset.asiento || b.dataset.liquidar || b.dataset.ignorar);
+  const l = CO.estado.lineas.find(x => x.id === id); if (!l) return;
+  try {
+    if (b.dataset.ignorar) { await post(urlE(`/tesoreria/extractos/lineas/${id}/ignorar`)); await verConciliacion(); msg($('#coMsg'), 'Línea ignorada.', 'ayuda'); return; }
+    CO.accion = { tipo: b.dataset.asiento ? 'asiento' : 'liquidar', linea: l };
+    $('#coAccionTitulo').textContent = `${fechaES(l.fecha)} · ${l.concepto || ''} · ${fmt(l.importe)}`;
+    $('#coAsientoForm').hidden = CO.accion.tipo !== 'asiento'; $('#coLiquidarForm').hidden = CO.accion.tipo !== 'liquidar';
+    if (CO.accion.tipo === 'asiento') { $('#coCuenta').value = ''; $('#coConcepto').value = l.concepto || ''; }
+    else {
+      const tipo = l.importe > 0 ? 'COBRO' : 'PAGO', imp = Math.abs(l.importe);
+      const vs = (await api(urlE(`/tesoreria/vencimientos?tipo=${tipo}`))).filter(v => ['PENDIENTE', 'PARCIAL'].includes(v.estado) && v.importePendiente >= imp - 0.005)
+        .sort((a, c) => Math.abs(a.importePendiente - imp) - Math.abs(c.importePendiente - imp));
+      if (!vs.length) throw new Error(`No hay ${tipo === 'COBRO' ? 'cobros' : 'pagos'} pendientes de al menos ${fmt(imp)}.`);
+      $('#coVenc').innerHTML = vs.map(v => `<option value="${v.id}">${esc(v.tercero)} · ${esc(v.factura || '')} · vence ${fechaES(v.fechaVencimiento)} · pendiente ${fmt(v.importePendiente)}</option>`).join('');
+    }
+    $('#coAccion').hidden = false; $('#coAccion').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  } catch (err) { msg($('#coMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#coAccionNo').onclick = () => { CO.accion = null; $('#coAccion').hidden = true; };
+$('#coAccionOk').onclick = async () => {
+  const a = CO.accion; if (!a) return;
+  try {
+    let r;
+    if (a.tipo === 'asiento') {
+      const c = S.cuentas.find(x => x.codigo === $('#coCuenta').value.trim());
+      if (!c) throw new Error('Elige la cuenta de contrapartida de la lista.');
+      r = await post(urlX(`/tesoreria/extractos/lineas/${a.linea.id}/asiento`), { cuentaId: c.id, canalId: +$('#coCanal').value, concepto: $('#coConcepto').value || null });
+    } else r = await post(urlX(`/tesoreria/extractos/lineas/${a.linea.id}/liquidar`), { vencimientoId: +$('#coVenc').value });
+    CO.accion = null; $('#coAccion').hidden = true;
+    await Promise.all([verConciliacion(), cargaVencimientos(), cargaPrevision()]);
+    msg($('#coMsg'), `Contabilizado (asiento nº ${r.asientoNumero}) y conciliado.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+
+$('#coRecientes').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-deshacer]'); if (!b || !confirm('¿Deshacer esta conciliación? Los asientos no se tocan.')) return;
+  try { await api(urlE('/tesoreria/conciliacion/' + b.dataset.deshacer), { method: 'DELETE' }); await verConciliacion(); msg($('#coMsg'), 'Conciliación deshecha.', 'ayuda'); }
+  catch (err) { msg($('#coMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#coExtractos').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-borrar]'); if (!b || !confirm('¿Eliminar este extracto y sus líneas?')) return;
+  try { await api(urlE('/tesoreria/extractos/' + b.dataset.borrar), { method: 'DELETE' }); await verConciliacion(); msg($('#coMsg'), 'Extracto eliminado.', 'ayuda'); }
+  catch (err) { msg($('#coMsg'), err.message, 'ayuda err-texto'); }
+});
 
 async function cargaPrevision() {
   const filas = await api(urlE('/tesoreria/prevision?meses=6'));

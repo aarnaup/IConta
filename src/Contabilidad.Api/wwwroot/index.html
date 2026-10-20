@@ -317,6 +317,59 @@
         <p id="liqMsg" class="ayuda" role="status"></p>
       </div>
 
+      <div class="panel" id="coPanel">
+        <h2>Conciliación bancaria</h2>
+        <p class="ayuda">Importa el extracto del banco (Norma 43 o CSV) y cásalo con los apuntes de la cuenta contable del banco.
+          Lo que el banco tiene y la contabilidad no se puede contabilizar desde aquí.</p>
+        <div class="fila-acciones">
+          <label>Cuenta <select id="coBanco"></select></label>
+          <label>Hasta <input type="date" id="coHasta"></label>
+          <button class="btn" id="coVer" type="button">Ver</button>
+          <button class="btn primario" id="coAuto" data-req="TESORERIA:ESCRITURA" type="button">Conciliar automáticamente</button>
+        </div>
+        <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
+          <label>Extracto <input type="file" id="coFichero" accept=".n43,.aeb,.txt,.csv,.q43"></label>
+          <button class="btn" id="coImportar" type="button">Importar</button>
+        </div>
+        <p id="coMsg" class="ayuda" role="status"></p>
+        <div class="totales" id="coTotales"></div>
+        <ul id="coAvisos" class="avisos"></ul>
+        <div class="grid2">
+          <div>
+            <h3>En el banco y no en la contabilidad</h3>
+            <table><thead><tr><th></th><th>Fecha</th><th>Concepto</th><th class="num">Importe</th><th></th></tr></thead><tbody id="coLineas"></tbody></table>
+          </div>
+          <div>
+            <h3>En la contabilidad y no en el banco</h3>
+            <table><thead><tr><th></th><th>Fecha</th><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody id="coApuntes"></tbody></table>
+          </div>
+        </div>
+        <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
+          <span id="coSeleccion" class="ayuda"></span>
+          <button class="btn primario" id="coConciliar" type="button" disabled>Conciliar lo seleccionado</button>
+        </div>
+        <div class="panel" id="coAccion" hidden>
+          <h3 id="coAccionTitulo"></h3>
+          <div class="cab2" id="coAsientoForm">
+            <label>Contrapartida <input id="coCuenta" list="dl-cuentas" placeholder="626…, 662…, 430…"></label>
+            <label>Canal <select id="coCanal"></select></label>
+            <label>Concepto <input id="coConcepto" maxlength="250"></label>
+          </div>
+          <div class="cab2" id="coLiquidarForm">
+            <label>Vencimiento <select id="coVenc"></select></label>
+          </div>
+          <div class="fila-acciones">
+            <button class="btn primario" id="coAccionOk" data-guarda type="button">Contabilizar y conciliar</button>
+            <button class="btn" id="coAccionNo" type="button">Cancelar</button>
+          </div>
+        </div>
+        <h3>Últimas conciliaciones</h3>
+        <table><thead><tr><th>Cuándo</th><th>Tipo</th><th class="num">Importe</th><th>Banco</th><th>Asientos</th><th></th></tr></thead><tbody id="coRecientes"></tbody></table>
+        <h3>Extractos importados</h3>
+        <table><thead><tr><th>Fichero</th><th>Periodo</th><th class="num">Saldo inicial</th><th class="num">Saldo final</th><th class="num">Líneas</th><th class="num">Conciliadas</th><th></th></tr></thead>
+        <tbody id="coExtractos"></tbody></table>
+      </div>
+
       <div class="panel">
         <h2>Cuentas bancarias</h2>
         <table><thead><tr><th>Alias</th><th>IBAN</th><th>Banco</th><th>Cuenta contable</th><th class="num">Saldo según movimientos</th></tr></thead>
