@@ -151,4 +151,23 @@ public class GeneradorAsientoFacturaTests
         Cuadra(b);
         Assert.Equal(210m, b.Single(x => x.CuentaId == 4729).Debe);
     }
+
+    [Fact]
+    public void Recargo_de_equivalencia_lleva_el_iva_de_las_ventas_a_ingresos_y_el_de_las_compras_a_coste()
+    {
+        var v = FacturaCalculadora.Calcular(LibroFactura.Emitidas, [L(1000m, 21m)], null, null);
+        var a = GeneradorAsientoFactura.Generar(LibroFactura.Emitidas, v, Venta, Resolutor(), 9, null, 5, "C", "F-1", new DateOnly(2026, 1, 1), null,
+            recargoEquivalencia: true);
+        Cuadra(a);
+        Assert.Equal(1210m, a.Where(x => x.CuentaId == 700).Sum(x => x.Haber));
+        Assert.DoesNotContain(a, x => x.CuentaId == 477);
+
+        // Compra con IVA y recargo no deducibles (regla NINGUNA): todo al coste
+        var c = FacturaCalculadora.Calcular(LibroFactura.Recibidas, [new LineaIvaEntrada(1, 1, "INTERIOR", 1000m, 21m, 5.2m, "NINGUNA", null, false)], null, null);
+        var plantilla = Compra.Append(new LineaPlantilla(6, null, "COMPRAS", "DEBE", "RECARGO", null, false, null, null)).ToArray();
+        var b = GeneradorAsientoFactura.Generar(LibroFactura.Recibidas, c, plantilla, Resolutor(), 9, null, 5, "P", "P-1", new DateOnly(2026, 1, 1), null);
+        Cuadra(b);
+        Assert.Equal(1262m, b.Where(x => x.CuentaId == 600).Sum(x => x.Debe));
+        Assert.DoesNotContain(b, x => x.CuentaId == 472);
+    }
 }

@@ -19,7 +19,9 @@ public sealed record EntradaImpuestoIndirecto(
     /// <summary>Regularización de bienes de inversión (anual en el último periodo, o por venta en el periodo de la venta).</summary>
     decimal RegularizacionBienesInversion = 0,
     /// <summary>Información adicional del criterio de caja (operaciones del periodo por la regla general de devengo).</summary>
-    InformacionCaja? Caja = null);
+    InformacionCaja? Caja = null,
+    /// <summary>Cuota del régimen simplificado del trimestre (ingreso a cuenta o resultado del 4T), que se suma al régimen general.</summary>
+    decimal CuotaSimplificado = 0);
 
 /// <summary>Bases y cuotas de las facturas en criterio de caja con fecha en el periodo (casillas 62/63 y 74/75 del 303).</summary>
 public sealed record InformacionCaja(decimal BaseEntregas, decimal CuotaEntregas, decimal BaseAdquisiciones, decimal CuotaAdquisiciones);
@@ -238,9 +240,10 @@ public static class CalculadorImpuestoIndirecto
         else
         {
             Add("46", "Resultado régimen general (27 − 45)", resultadoRG);
-            Add("64", "Suma de resultados", resultadoRG);
+            Add("64", e.CuotaSimplificado != 0 ? "Suma de resultados (régimen general + simplificado)" : "Suma de resultados",
+                resultadoRG + e.CuotaSimplificado);
             Add("65", "% de atribución a la Administración del Estado", 100m);
-            var atribuible = R(resultadoRG);
+            var atribuible = R(resultadoRG + e.CuotaSimplificado);
             Add("66", "Cuota atribuible a la Administración del Estado", atribuible);
             if (atribuible > 0) aplicada = Math.Min(atribuible, e.CompensacionPendiente);
             Add("77", "IVA a la importación liquidado por la Aduana pendiente de ingreso", 0m);

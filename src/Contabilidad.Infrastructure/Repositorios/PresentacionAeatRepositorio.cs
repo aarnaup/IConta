@@ -73,6 +73,9 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
                     "Anótalo al marcarla como presentada: la complementaria o sustitutiva tiene que llevarlo.");
         }
 
+        if (v.Modelo == "303" && e.RegimenIva == "SIMPLIFICADO")
+            throw new ReglaContableException("El fichero del 303 no incluye todavía la parte del régimen simplificado.",
+                "Presenta el 303 rellenando el formulario de la Sede con las casillas calculadas.");
         var registros = await RegistrosAsync(cn, v, ct);
         var hay347 = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
             SELECT EXISTS (SELECT 1 FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id

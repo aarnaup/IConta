@@ -104,9 +104,10 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var directa = e.RegimenIrpf is "DIRECTA_NORMAL" or "DIRECTA_SIMPLIFICADA";
         return ModelosFiscales.Soportados.Where(m => m.Impuesto switch
         {
-            "IVA" => e.ImpuestoIndirecto == "IVA",
+            // Recargo de equivalencia: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
+            "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva != "RECARGO_EQUIVALENCIA" && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
             "IGIC" => e.ImpuestoIndirecto == "IGIC",
-            "IRPF" => directa,
+            "IRPF" => m.Codigo == "131" ? e.RegimenIrpf == "OBJETIVA" : directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
             "INTRACOM" => e.ImpuestoIndirecto == "IVA",
             "RETENCIONES" => true,
@@ -147,6 +148,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         {
             case "IVA" or "IGIC":
                 await CalcularImpuestoIndirectoAsync(cn, tx, empresaId, empresa, modelo, p, cmd, d, ct);
+                break;
+            case "IRPF" when modelo.Codigo == "131":
+                await Calcular131Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
             case "IRPF":
                 await Calcular130Async(cn, tx, empresaId, empresa, modelo, p, d, ct);
@@ -194,9 +198,13 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
     {
         if (empresa.ImpuestoIndirecto != modelo.Impuesto)
             throw new ReglaContableException($"El modelo {modelo.Codigo} es de {modelo.Impuesto} y la empresa tributa por {empresa.ImpuestoIndirecto}.");
-        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA"))
-            throw new ReglaContableException($"El régimen {empresa.RegimenIva} todavía no está soportado en {modelo.Codigo}.",
-                "Régimen general y criterio de caja. Simplificado, agricultura y recargo de equivalencia como régimen de la empresa están pendientes.");
+        if (empresa.RegimenIva == "RECARGO_EQUIVALENCIA")
+            throw new ReglaContableException($"En el recargo de equivalencia no se presenta el {modelo.Codigo}: el IVA se paga a los proveedores con el recargo.",
+                "Solo las adquisiciones intracomunitarias y las operaciones con inversión del sujeto pasivo se declaran, en el modelo 309.");
+        if (empresa.RegimenIva == "SIMPLIFICADO" && modelo.Codigo == "390")
+            throw new ReglaContableException("Quien tributa solo en el régimen simplificado está exonerado del 390.");
+        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO"))
+            throw new ReglaContableException($"El régimen {empresa.RegimenIva} todavía no está soportado en {modelo.Codigo}.");
 
         var igic = modelo.Impuesto == "IGIC";
         var grupos = (await cn.QueryAsync<GrupoFila>(new CommandDefinition("""
@@ -302,8 +310,35 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             return;
         }
 
+        // Régimen simplificado: lo devengado por las ventas interiores y lo soportado en operaciones corrientes van en los módulos;
+        // por el régimen general quedan las adquisiciones intracomunitarias, la inversión del sujeto pasivo y los bienes de inversión
+        decimal cuotaSimplificado = 0;
+        if (empresa.RegimenIva == "SIMPLIFICADO")
+        {
+            grupos = grupos.Where(g => g.Libro == "EMITIDAS"
+                    ? g.TipoOperacion != "INTERIOR"
+                    : g.EsBienInversion || g.TipoOperacion is "INTRACOM_ADQUISICION" or "INTRACOM_SERVICIOS" or "INVERSION_SUJETO_PASIVO").ToList();
+            var modulos = await ModulosRepositorio.DelAnioAsync(cn, tx, empresaId, p.Anio, ct);
+            decimal anteriores = 0;
+            if (p.EsUltimoDelAnio)
+            {
+                var mid303 = await ModeloIdAsync(cn, tx, modelo, ct);
+                anteriores = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+                    SELECT COALESCE(SUM(c.importe), 0) FROM fiscal.declaracion d
+                    JOIN fiscal.declaracion_casilla c ON c.declaracion_id = d.id AND c.casilla = 'RS'
+                    WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid303 AND d.anio = @anio AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
+                      AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                            WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+                    """, new { empresaId, mid303, anio = (short)p.Anio, inicio = p.Inicio }, tx, cancellationToken: ct));
+            }
+            cuotaSimplificado = CalculadorModulos.Simplificado303(modulos, p.EsUltimoDelAnio, anteriores, d);
+            d.Avisos.Add("Régimen simplificado: la cuota sale de los módulos del año; las ventas interiores y las compras corrientes no van en el 303. " +
+                         "El fichero de presentación no lleva la parte del simplificado: complétala en el formulario.");
+        }
+
         CalculadorImpuestoIndirecto.Calcular(igic,
-            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio, regBienes, infoCaja), d);
+            new EntradaImpuestoIndirecto(grupos, regularizacion, pendiente, cmd.SolicitaDevolucion, p.EsUltimoDelAnio, regBienes, infoCaja,
+                cuotaSimplificado), d);
 
         if (anual)
         {
@@ -332,6 +367,32 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     : $"NO cuadra: resultado anual {anualAntes:N2} frente a {suma:N2} en las {presentadas.Count} autoliquidaciones {baseModelo.Codigo} presentadas. Hay facturas contabilizadas después de presentar o periodos sin presentar.");
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 131
+    private static async Task Calcular131Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa,
+        PeriodoFiscal p, DeclaracionCalculada d, CancellationToken ct)
+    {
+        if (empresa.RegimenIrpf != "OBJETIVA")
+            throw new ReglaContableException("El modelo 131 es para empresarios en estimación objetiva (módulos).",
+                "Esta empresa no tiene configurado ese régimen de IRPF.");
+        var modulos = await ModulosRepositorio.DelAnioAsync(cn, tx, empresaId, p.Anio, ct);
+        // Volumen de ingresos del trimestre de las actividades agrícolas (las facturas de su actividad o, si todas lo son, todas)
+        var agricolas = modulos.Where(m => m.Agricola).Select(m => m.ActividadId).ToList();
+        var todasAgricolas = modulos.Count > 0 && modulos.All(m => m.Agricola);
+        var ids = agricolas.Where(x => x is not null).Select(x => x!.Value).ToArray();
+        var volumen = agricolas.Count == 0 ? 0m : await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(base_total), 0) FROM fiscal.factura
+            WHERE empresa_id = @empresaId AND libro = 'EMITIDAS' AND estado = 'CONTABILIZADA' AND fecha_contable BETWEEN @inicio AND @fin
+              AND (@todas OR actividad_id = ANY(@ids))
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, todas = todasAgricolas, ids }, tx, cancellationToken: ct));
+        var retenciones = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(retencion_total), 0) FROM fiscal.factura
+            WHERE empresa_id = @empresaId AND libro = 'EMITIDAS' AND estado = 'CONTABILIZADA' AND fecha_contable BETWEEN @inicio AND @fin
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
+        CalculadorModulos.Calcular131(modulos, volumen, retenciones, d);
+        if (agricolas.Count > 0 && !todasAgricolas && ids.Length == 0)
+            d.Avisos.Add("Las actividades agrícolas no están enlazadas a una actividad de la empresa: su volumen de ingresos va a cero.");
     }
 
     // ---------------------------------------------------------------- 130

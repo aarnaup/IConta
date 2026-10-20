@@ -73,6 +73,13 @@ public static class FiscalEndpoints
             return Results.File(contenido, "text/plain; charset=iso-8859-1", nombre);
         }).Requiere(Nivel.Lectura, Modulo.Fiscal);
 
+        // ---- Módulos (estimación objetiva del IRPF y régimen simplificado del IVA) de cada año ----
+        f.MapGet("/modulos/{anio:int}", (long empresaId, int anio, IModulosRepositorio r, CancellationToken ct) => r.ListarAsync(empresaId, anio, ct))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+        f.MapPut("/modulos/{anio:int}", async (long empresaId, int anio, List<ModulosDto> actividades, IModulosRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.GuardarAsync(empresaId, anio, actividades, ct)))
+            .Requiere(Nivel.Escritura, Modulo.Fiscal);
+
         // ---- SII: estado de las facturas, mensaje XML, envío (si hay certificado) y registro de respuestas de otra herramienta ----
         f.MapGet("/sii/facturas", async (long empresaId, string libro, int anio, int? mes, ISiiRepositorio r, CancellationToken ct)
             => Results.Ok(new { envioConfigurado = r.EnvioConfigurado, facturas = await r.FacturasAsync(empresaId, libro, anio, mes, ct) }))

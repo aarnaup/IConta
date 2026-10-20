@@ -12,6 +12,7 @@ public static class ModelosFiscales
         new("ATC",  "420", "IGIC - Autoliquidación",                 "IGIC", ["1T", "2T", "3T", "4T", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]),
         new("ATC",  "425", "IGIC - Resumen anual (simplificado)",    "IGIC", ["0A"]),
         new("AEAT", "130", "IRPF - Pago fraccionado estimación directa", "IRPF", ["1T", "2T", "3T", "4T"]),
+        new("AEAT", "131", "IRPF - Pago fraccionado estimación objetiva (módulos)", "IRPF", ["1T", "2T", "3T", "4T"]),
         new("AEAT", "347", "Operaciones con terceras personas",      "TERCEROS", ["0A"]),
         new("AEAT", "349", "Declaración recapitulativa de operaciones intracomunitarias", "INTRACOM",
             ["1T", "2T", "3T", "4T", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]),

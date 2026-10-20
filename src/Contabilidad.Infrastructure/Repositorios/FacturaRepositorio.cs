@@ -160,7 +160,9 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 t.TipoIvaId, t.VigenciaId, l.TipoOperacion, l.Base,
                 OperacionesIva.LlevaCuota(libro, l.TipoOperacion) ? t.Porcentaje.Value : 0m,
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
-                l.ReglaDeduccion, l.PorcentajeDeduccion, l.EsBienInversion));
+                // En recargo de equivalencia el IVA (y el recargo) soportado en las compras interiores no se deduce: es más coste
+                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva == "RECARGO_EQUIVALENCIA" ? "NINGUNA" : l.ReglaDeduccion,
+                l.PorcentajeDeduccion, l.EsBienInversion));
         }
 
         // --- Prorrata (año natural + sector diferenciado de la actividad) ---
@@ -270,7 +272,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
         var numeroCompleto = string.IsNullOrWhiteSpace(cmd.Serie) ? cmd.Numero : $"{cmd.Serie}{cmd.Numero}";
 
         var apuntes = GeneradorAsientoFactura.Generar(libro, calculo, lineasPlantilla, resolutor,
-            cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo, criterioCaja);
+            cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo, criterioCaja,
+            empresa.RegimenIva == "RECARGO_EQUIVALENCIA");
         if (apuntes.Count < 2)
             throw new ReglaContableException("La plantilla no generó apuntes suficientes para esta factura.");
 

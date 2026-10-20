@@ -134,20 +134,37 @@ public sealed class CriterioCajaRepositorio(IConexionFactory conexiones, IAsient
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         return await cn.QuerySingleOrDefaultAsync<ConfiguracionFiscalDto>(new CommandDefinition(
-                   "SELECT regimen_iva, impuesto_indirecto FROM core.empresa WHERE id = @empresaId", new { empresaId }, cancellationToken: ct))
+                   "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii FROM core.empresa WHERE id = @empresaId", new { empresaId }, cancellationToken: ct))
                ?? throw new ReglaContableException("La empresa no existe.");
     }
 
     public async Task<ConfiguracionFiscalDto> GuardarConfiguracionAsync(long empresaId, GuardarConfiguracionFiscalCmd cmd, CancellationToken ct)
     {
         var regimen = (cmd.RegimenIva ?? "").Trim().ToUpperInvariant();
-        if (regimen is not ("GENERAL" or "CRITERIO_CAJA"))
-            throw new ReglaContableException("Régimen no disponible: GENERAL o CRITERIO_CAJA.",
-                "Simplificado, agricultura y recargo de equivalencia como régimen de la empresa están pendientes.");
+        if (regimen is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA"))
+            throw new ReglaContableException("Régimen no disponible: GENERAL, CRITERIO_CAJA, SIMPLIFICADO o RECARGO_EQUIVALENCIA.",
+                "El régimen especial de la agricultura, ganadería y pesca está pendiente.");
+        var irpf = cmd.RegimenIrpf?.Trim().ToUpperInvariant();
+        if (irpf is not (null or "" or "DIRECTA_NORMAL" or "DIRECTA_SIMPLIFICADA" or "OBJETIVA"))
+            throw new ReglaContableException("Régimen de IRPF no válido: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA (o vacío para sociedades).");
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
-        await cn.ExecuteAsync(new CommandDefinition("UPDATE core.empresa SET regimen_iva = @regimen WHERE id = @empresaId",
-            new { regimen, empresaId }, tx, cancellationToken: ct));
+        var actual = await cn.QuerySingleAsync<ConfiguracionFiscalDto>(new CommandDefinition(
+            "SELECT regimen_iva, impuesto_indirecto, regimen_irpf, sii FROM core.empresa WHERE id = @empresaId FOR UPDATE",
+            new { empresaId }, tx, cancellationToken: ct));
+        if (actual.ImpuestoIndirecto == "IGIC" && regimen is "SIMPLIFICADO" or "RECARGO_EQUIVALENCIA")
+            throw new ReglaContableException("En el IGIC solo se admiten el régimen general y el criterio de caja.",
+                "El régimen simplificado y el de comerciante minorista del IGIC están pendientes.");
+        var irpfFinal = irpf is null ? actual.RegimenIrpf : irpf.Length == 0 ? null : irpf;
+        if (regimen == "SIMPLIFICADO" && irpfFinal != "OBJETIVA")
+            throw new ReglaContableException("El régimen simplificado del IVA va con la estimación objetiva del IRPF (módulos).",
+                "Indica también el régimen de IRPF OBJETIVA.");
+        if (regimen == "RECARGO_EQUIVALENCIA" && irpfFinal is null)
+            throw new ReglaContableException("El recargo de equivalencia es para comerciantes minoristas personas físicas (o entidades en atribución de rentas).",
+                "Indica su régimen de IRPF.");
+        await cn.ExecuteAsync(new CommandDefinition(
+            "UPDATE core.empresa SET regimen_iva = @regimen, regimen_irpf = @irpfFinal, sii = COALESCE(@sii, sii) WHERE id = @empresaId",
+            new { regimen, irpfFinal, sii = cmd.Sii, empresaId }, tx, cancellationToken: ct));
         if (regimen == "CRITERIO_CAJA")
             await cn.ExecuteAsync(new CommandDefinition("SELECT fiscal.asegurar_cuentas_caja(@empresaId)", new { empresaId }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);

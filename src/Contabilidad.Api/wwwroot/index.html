@@ -603,12 +603,16 @@
       </div>
 
       <div class="panel">
-        <h2>Régimen de IVA y criterio de caja</h2>
+        <h2>Régimen de IVA, IRPF y criterio de caja</h2>
         <p class="ayuda">En el criterio de caja el impuesto de las operaciones interiores se devenga al cobrar y se deduce al pagar (como tarde, el 31 de
           diciembre del año siguiente). Las facturas lo dejan en 4779 / 4729 y aquí se traspasa a 477 / 472 lo de cada periodo antes de liquidar.
           Las compras a proveedores acogidos al criterio de caja también se deducen al pagar.</p>
         <div class="fila-acciones">
-          <label>Régimen <select id="ccRegimen"><option value="GENERAL">General</option><option value="CRITERIO_CAJA">Criterio de caja</option></select></label>
+          <label>IVA <select id="ccRegimen"><option value="GENERAL">General</option><option value="CRITERIO_CAJA">Criterio de caja</option>
+            <option value="SIMPLIFICADO">Simplificado (módulos)</option><option value="RECARGO_EQUIVALENCIA">Recargo de equivalencia</option></select></label>
+          <label>IRPF <select id="ccIrpf"><option value="">Sociedad (sin IRPF)</option><option value="DIRECTA_NORMAL">Estimación directa normal</option>
+            <option value="DIRECTA_SIMPLIFICADA">Estimación directa simplificada</option><option value="OBJETIVA">Estimación objetiva (módulos)</option></select></label>
+          <label>SII <select id="ccSii"><option value="false">No</option><option value="true">Sí</option></select></label>
           <button class="btn" id="ccGuardar" data-req="FISCAL_DIRECTO" type="button">Guardar régimen</button>
         </div>
         <div class="fila-acciones">
@@ -622,6 +626,23 @@
         <tbody id="ccLista"></tbody></table>
         <div id="ccAsientos" class="fila-acciones"></div>
         <p id="ccMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="moPanel">
+        <h2>Módulos (estimación objetiva y régimen simplificado)</h2>
+        <p class="ayuda">Importes de la orden de módulos del año para cada actividad: rendimiento neto previo del IRPF (modelo 131: 4 % con más de un
+          asalariado, 3 % con uno y 2 % sin asalariados; las agrícolas pagan el 2 % del volumen de ingresos del trimestre) y, en el simplificado del IVA,
+          la cuota devengada y la soportada por operaciones corrientes, el % de ingreso a cuenta trimestral de la actividad y el % de cuota mínima.</p>
+        <div class="fila-acciones">
+          <label>Año <input id="moAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="moVer" type="button">Ver</button>
+          <button class="btn" id="moAnadir" type="button">Añadir actividad</button>
+          <button class="btn primario" id="moGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar módulos</button>
+        </div>
+        <div style="overflow-x:auto"><table class="presupuesto"><thead><tr><th>Actividad</th><th class="num">Rendimiento neto IRPF</th>
+          <th class="num">Asalariados</th><th>Agrícola</th><th class="num">IVA devengado</th><th class="num">IVA soportado</th>
+          <th class="num">% ingreso a cuenta</th><th class="num">% cuota mínima</th><th></th></tr></thead><tbody id="moLista"></tbody></table></div>
+        <p id="moMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">

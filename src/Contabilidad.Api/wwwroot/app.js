@@ -943,6 +943,32 @@ async function cargaFiscal() {
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
 
+// ------------------------------------------------------------ módulos
+let MO = [];
+const campoMo = (i, k, v, tipo) => tipo === 'bool'
+  ? `<td><input type="checkbox" data-i="${i}" data-k="${k}" ${v ? 'checked' : ''} aria-label="${k}"></td>`
+  : `<td><input data-i="${i}" data-k="${k}" ${tipo === 'n' ? 'class="num" inputmode="decimal"' : ''} value="${tipo === 'n' ? (v ? String(v).replace('.', ',') : '') : esc(v || '')}" aria-label="${k}"></td>`;
+function pintaModulos() {
+  $('#moLista').innerHTML = MO.map((m, i) => `<tr>${campoMo(i, 'descripcion', m.descripcion)}${campoMo(i, 'rendimientoNetoIrpf', m.rendimientoNetoIrpf, 'n')}
+    ${campoMo(i, 'personasAsalariadas', m.personasAsalariadas, 'n')}${campoMo(i, 'agricola', m.agricola, 'bool')}
+    ${campoMo(i, 'cuotaIvaDevengada', m.cuotaIvaDevengada, 'n')}${campoMo(i, 'cuotaIvaSoportada', m.cuotaIvaSoportada, 'n')}
+    ${campoMo(i, 'porcentajeIngresoIva', m.porcentajeIngresoIva, 'n')}${campoMo(i, 'porcentajeCuotaMinima', m.porcentajeCuotaMinima, 'n')}
+    <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="9" class="vacio">Sin actividades para este año.</td></tr>';
+}
+async function verModulos() { MO = await api(urlE('/fiscal/modulos/' + (+$('#moAnio').value))); pintaModulos(); }
+$('#moVer').onclick = () => verModulos().catch(e => msg($('#moMsg'), e.message, 'ayuda err-texto'));
+$('#moAnadir').onclick = () => { MO.push({ descripcion: '', agricola: false }); pintaModulos(); };
+$('#moLista').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.i === undefined) return;
+  MO[+t.dataset.i][t.dataset.k] = t.type === 'checkbox' ? t.checked : t.dataset.k === 'descripcion' ? t.value : num(t.value);
+});
+$('#moLista').addEventListener('click', e => { if (e.target.dataset.del !== undefined) { MO.splice(+e.target.dataset.del, 1); pintaModulos(); } });
+$('#moGuardar').onclick = async () => {
+  try { MO = await put(urlE('/fiscal/modulos/' + (+$('#moAnio').value)), MO); pintaModulos(); msg($('#moMsg'), 'Módulos guardados.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#moMsg'), e.message, 'ayuda err-texto'); }
+};
+
 // ------------------------------------------------------------ SII
 const SII = { facturas: [] };
 const estadoSii = { PENDIENTE: 'Pendiente', ACEPTADA: 'Aceptada', ACEPTADA_CON_ERRORES: 'Aceptada con errores', RECHAZADA: 'Rechazada' };
@@ -999,7 +1025,13 @@ $('#siiRegistrar').onclick = async () => {
 // ------------------------------------------------------------ régimen de IVA y criterio de caja
 async function cargaCriterioCaja() {
   const c = await api(urlE('/fiscal/configuracion'));
-  $('#ccRegimen').value = c.regimenIva === 'CRITERIO_CAJA' ? 'CRITERIO_CAJA' : 'GENERAL';
+  $('#ccRegimen').value = c.regimenIva;
+  $('#ccIrpf').value = c.regimenIrpf || '';
+  $('#ccSii').value = String(!!c.sii);
+  [...$('#ccRegimen').options].forEach(o => o.hidden = c.impuestoIndirecto === 'IGIC' && ['SIMPLIFICADO', 'RECARGO_EQUIVALENCIA'].includes(o.value));
+  if (!$('#moAnio').value) $('#moAnio').value = $('#mfAnio').value;
+  $('#moPanel').hidden = !(c.regimenIva === 'SIMPLIFICADO' || c.regimenIrpf === 'OBJETIVA');
+  if (!$('#moPanel').hidden) await verModulos();
   if (!$('#ccAnio').value) $('#ccAnio').value = $('#mfAnio').value;
   if (!$('#ccPeriodo').options.length)
     $('#ccPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
@@ -1020,9 +1052,14 @@ async function verCriterioCaja() {
 $('#ccVer').onclick = () => verCriterioCaja().catch(e => msg($('#ccMsg'), e.message, 'ayuda err-texto'));
 $('#ccGuardar').onclick = async () => {
   try {
-    const c = await api(urlE('/fiscal/configuracion'), { method: 'PUT', body: JSON.stringify({ regimenIva: $('#ccRegimen').value }) });
-    msg($('#ccMsg'), c.regimenIva === 'CRITERIO_CAJA' ? 'Empresa en criterio de caja: las facturas que se contabilicen desde ahora lo aplican.'
-      : 'Empresa en régimen general. Las facturas ya contabilizadas en criterio de caja lo siguen aplicando.', 'ayuda ok-texto');
+    const c = await api(urlE('/fiscal/configuracion'), { method: 'PUT', body: JSON.stringify({ regimenIva: $('#ccRegimen').value,
+      regimenIrpf: $('#ccIrpf').value, sii: $('#ccSii').value === 'true' }) });
+    msg($('#ccMsg'), {
+      CRITERIO_CAJA: 'Empresa en criterio de caja: las facturas que se contabilicen desde ahora lo aplican.',
+      SIMPLIFICADO: 'Empresa en el régimen simplificado: indica los módulos del año para calcular el 303 y el 131.',
+      RECARGO_EQUIVALENCIA: 'Empresa en recargo de equivalencia: las compras llevan recargo y su IVA va al coste; el IVA de las ventas va a ingresos. No presenta 303.',
+    }[c.regimenIva] || 'Empresa en régimen general. Las facturas ya contabilizadas en criterio de caja lo siguen aplicando.', 'ayuda ok-texto');
+    MF.modelos = []; await cargaFiscal();
   } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
 };
 $('#ccTraspasar').onclick = async () => {

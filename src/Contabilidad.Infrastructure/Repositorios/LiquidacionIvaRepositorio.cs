@@ -158,6 +158,10 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
             throw new ReglaContableException($"El modelo {d.Modelo} no genera asiento de liquidación (solo 303 y 420).");
         if (PeriodoFiscal.Resolver(d.Anio, d.Periodo).EsAnual)
             throw new ReglaContableException("Los resúmenes anuales no generan asiento de liquidación.");
+        if (await cn.ExecuteScalarAsync<string>(new CommandDefinition("SELECT regimen_iva FROM core.empresa WHERE id = @empresaId",
+                new { empresaId }, tx, cancellationToken: ct)) == "SIMPLIFICADO")
+            throw new ReglaContableException("En el régimen simplificado el asiento de liquidación se hace a mano.",
+                "La cuota sale de los módulos y no coincide con el IVA repercutido y soportado de las facturas: la diferencia va a resultados.");
         if (d.Estado != "PRESENTADA")
             throw new ReglaContableException("Presenta la declaración antes de contabilizar su liquidación.",
                 "Así las cifras del asiento corresponden a las de la declaración presentada.");

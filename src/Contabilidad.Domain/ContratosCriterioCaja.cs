@@ -2,14 +2,20 @@ namespace Contabilidad.Domain;
 
 public sealed class ConfiguracionFiscalDto
 {
-    /// <summary>GENERAL o CRITERIO_CAJA (los demás regímenes están pendientes).</summary>
+    /// <summary>GENERAL, CRITERIO_CAJA, SIMPLIFICADO (módulos) o RECARGO_EQUIVALENCIA (comercio minorista).</summary>
     public string RegimenIva { get; set; } = "GENERAL";
     public string ImpuestoIndirecto { get; set; } = "";
+    /// <summary>Empresario persona física: DIRECTA_NORMAL, DIRECTA_SIMPLIFICADA u OBJETIVA; null para sociedades.</summary>
+    public string? RegimenIrpf { get; set; }
+    public bool Sii { get; set; }
 }
 
 public sealed class GuardarConfiguracionFiscalCmd
 {
     public string RegimenIva { get; set; } = "GENERAL";
+    /// <summary>Si no se indica, no cambia. Cadena vacía: sin IRPF (sociedad).</summary>
+    public string? RegimenIrpf { get; set; }
+    public bool? Sii { get; set; }
 }
 
 public sealed class TraspasoCajaCmd

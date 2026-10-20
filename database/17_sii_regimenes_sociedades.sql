@@ -27,3 +27,22 @@ CREATE TABLE IF NOT EXISTS fiscal.envio_sii (
   creado_por    bigint REFERENCES core.usuario(id)
 );
 CREATE INDEX IF NOT EXISTS ix_envio_sii ON fiscal.envio_sii (empresa_id, creado_en DESC);
+
+-- ---------------------------------------------------------------- Estimación objetiva y régimen simplificado (módulos)
+-- Datos de la orden de módulos de cada año por actividad: rendimiento neto previo del IRPF (131) y, en el régimen simplificado
+-- del IVA, la cuota devengada y la soportada por operaciones corrientes, el % de ingreso a cuenta y el % de cuota mínima.
+CREATE TABLE IF NOT EXISTS fiscal.modulos (
+  id                      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  empresa_id              bigint NOT NULL REFERENCES core.empresa(id),
+  anio                    smallint NOT NULL,
+  actividad_id            bigint REFERENCES core.empresa_actividad(id),
+  descripcion             varchar(100) NOT NULL,
+  rendimiento_neto_irpf   numeric(18,2) NOT NULL DEFAULT 0,
+  personas_asalariadas    numeric(6,2) NOT NULL DEFAULT 0,
+  agricola                boolean NOT NULL DEFAULT false,
+  cuota_iva_devengada     numeric(18,2) NOT NULL DEFAULT 0,
+  cuota_iva_soportada     numeric(18,2) NOT NULL DEFAULT 0,
+  porcentaje_ingreso_iva  numeric(5,2) NOT NULL DEFAULT 0 CHECK (porcentaje_ingreso_iva BETWEEN 0 AND 100),
+  porcentaje_cuota_minima numeric(5,2) NOT NULL DEFAULT 0 CHECK (porcentaje_cuota_minima BETWEEN 0 AND 100)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_modulos ON fiscal.modulos (empresa_id, anio, descripcion);
