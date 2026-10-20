@@ -1,7 +1,7 @@
 # Contabilidad (.NET 10 · Dapper · Autofac · Serilog · PostgreSQL)
 
 ## Estructura (`Contabilidad.slnx`)
-- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas).
+- `database/` → `01_schema.sql` (esquema completo), `02_demo.sql` (empresa demo, ejercicio partido, canales), `03_facturacion_demo.sql` (IGIC, cuentas automáticas, plantillas de compra/venta, terceros y prorrata de ejemplo), `04_seguridad.sql` (usuarios, permisos por módulo, auditoría, borradores), `05_tesoreria.sql` (restricciones de vencimientos y formas de pago habituales), `06_fiscal.sql` (declaraciones: restricciones y orden de casillas), `07_pgc.sql` (cuadro de cuentas del PGC Normal y PYMES).
 - `src/Contabilidad.Domain` → reglas puras: canales (`RepartidorCanales`, evaluador de fórmulas) y facturación (`FacturaCalculadora`, `ResolutorCuentas`, `GeneradorAsientoFactura`).
 - `src/Contabilidad.Infrastructure` → Dapper + Npgsql, repositorios y módulo Autofac.
 - `src/Contabilidad.Api` → API minimal + Serilog + UI estática (`wwwroot/index.html`).
@@ -16,6 +16,7 @@ psql contabilidad -f database/03_facturacion_demo.sql
 psql contabilidad -f database/04_seguridad.sql
 psql contabilidad -f database/05_tesoreria.sql
 psql contabilidad -f database/06_fiscal.sql
+psql contabilidad -f database/07_pgc.sql
 
 # clave de firma JWT (mín. 32 caracteres; en Development ya hay una de pruebas)
 export Jwt__Key="<cadena-aleatoria-larga>"
@@ -25,6 +26,15 @@ dotnet run --project src/Contabilidad.Api -- crear-superadmin tu@correo.es "Tu n
 dotnet test Contabilidad.slnx
 dotnet run --project src/Contabilidad.Api    # cadena de conexión en appsettings.json
 ```
+
+## Plan General Contable
+`07_pgc.sql` carga en `cat.cuenta_modelo` el cuadro de cuentas del PGC Normal (RD 1514/2007, 1.218 cuentas) y del PGC de PYMES (RD 1515/2007, 992 cuentas), con las modificaciones de 2016 y 2021, hasta 4 dígitos. Se puede volver a ejecutar sin duplicar.
+
+- Al dar de alta una empresa se copia el plan elegido: grupos, subgrupos y cuentas tal cual; las subcuentas (4 dígitos) se rellenan con ceros hasta los dígitos de la empresa (`4300` → `43000000`) y son las únicas que admiten apuntes.
+- Cada cuenta de 3 dígitos sin subcuentas en el PGC recibe la subcuenta `xxx0` con su mismo nombre (`5720`, `6000`, `7000`...), así siempre hay dónde asentar.
+- La naturaleza (deudora/acreedora/mixta) se asigna por grupo con excepciones para las cuentas correctoras (amortizaciones, deterioros, devoluciones, rappels...).
+- Las subcuentas de clientes y proveedores se numeran dentro de `4300` y `4000` (`43000001`, `40000001`...).
+- La lista se ha escrito a partir del cuadro de cuentas publicado; **conviene contrastarla con el BOE** antes de usarla en producción, sobre todo las diferencias entre Normal y PYMES.
 
 ## Facturas
 `POST /api/empresas/{id}/ejercicios/{ej}/facturas/previsualizar` calcula cuotas y devuelve el asiento previsto sin guardar nada.
@@ -74,7 +84,7 @@ Se calculan desde las facturas contabilizadas (fecha contable dentro del periodo
 - Un tipo de IVA sin casilla (p. ej. 7 % en el 303) o una operación intracomunitaria/importación **detiene el cálculo** con un error en vez de omitirse en silencio.
 
 ## Pendiente
-Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; asiento de liquidación del IVA/IGIC; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; analítica, presupuestos y balances; carga de los datos del PGC en `cat.cuenta_modelo` (hoy vacía); cierre de ejercicios; gestión de catálogos e impresos en la UI de administración.
+Operaciones intracomunitarias, importaciones e inversión del sujeto pasivo (hoy detienen el cálculo del 303/420); modelos 131, 111, 115, 190, 180, 349, 200 y 202; formato oficial de los resúmenes anuales 390/425 y ficheros de presentación; declaraciones complementarias y sustitutivas; asiento de liquidación del IVA/IGIC; regularización de bienes de inversión; criterio de caja, régimen simplificado y recargo de equivalencia como régimen de la empresa; deshacer un cobro/pago (extorno), remesas de recibos y ficheros SEPA, importación y conciliación de extractos bancarios, cuentas bancarias de clientes/proveedores; libros registro; inmovilizado y bienes de inversión; analítica, presupuestos y balances; cierre de ejercicios; gestión de catálogos e impresos en la UI de administración.
 
 ## Estado de verificación
 Compilado con el SDK de .NET 10 (sin errores ni avisos) y los 116 tests de `tests/Contabilidad.Tests` pasan (`dotnet test Contabilidad.slnx`). Con la base cargada desde los scripts 01→06 en PostgreSQL 16 se ha probado la API de punta a punta: login, administración, alta de facturas emitidas y recibidas con su asiento, mayor, vencimientos, cobro parcial y pago total, previsión de tesorería y modelos 420 y 347 (calcular, guardar y presentar). La UI web carga y permite entrar.
