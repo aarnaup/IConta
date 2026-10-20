@@ -2,6 +2,8 @@
 # Set default behavior to automatically normalize line endings.
 ###############################################################################
 * text=auto
+# Los scripts de base de datos se quedan con saltos de línea LF también en Windows
+*.sql text eol=lf
 
 ###############################################################################
 # Set default behavior for command prompt diff.
