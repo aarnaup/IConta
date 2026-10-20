@@ -53,9 +53,11 @@ public static class FacturaCalculadora
         var importeRet = ret?.Importe ?? 0m;
 
         var noDeducible = libro == LibroFactura.Recibidas ? cuotaTotal - deducibleTotal : 0m;
+        // La cuota autorrepercutida (adquisición intracomunitaria, inversión del sujeto pasivo) no se paga al proveedor
+        var autorrepercutida = lineas.Where(l => OperacionesIva.Autorrepercutida(libro, l.TipoOperacion)).Sum(l => l.Cuota);
         var totales = new TotalesFactura(
             baseTotal, cuotaTotal, deducibleTotal, noDeducible, recargoTotal, importeRet,
-            baseTotal + cuotaTotal + recargoTotal - importeRet);
+            baseTotal + cuotaTotal - autorrepercutida + recargoTotal - importeRet, autorrepercutida);
 
         return new FacturaCalculada(lineas, ret, totales);
     }

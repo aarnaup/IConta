@@ -104,4 +104,36 @@ public class GeneradorAsientoFacturaTests
         Assert.Equal(42, a[0].CanalId);
         Assert.Equal(5, a[1].CanalId);
     }
+
+    [Fact]
+    public void Adquisicion_intracomunitaria_se_autorrepercute()
+    {
+        var f = FacturaCalculadora.Calcular(LibroFactura.Recibidas,
+            [new LineaIvaEntrada(1, 1, "INTRACOM_ADQUISICION", 1000m, 21m, 0m, "PRORRATA", null, false)], 80m, null);
+        Assert.Equal((210m, 168m, 210m, 1000m), (f.Totales.Cuota, f.Totales.CuotaDeducible, f.Totales.CuotaAutorrepercutida, f.Totales.Total));
+        var a = Gen(LibroFactura.Recibidas, f, Compra);
+        Cuadra(a);
+        Assert.Equal(1000m, a.Single(x => x.CuentaId == 400).Haber);       // al proveedor solo la base
+        Assert.Equal(168m, a.Single(x => x.CuentaId == 472).Debe);
+        Assert.Equal(210m, a.Single(x => x.CuentaId == 477).Haber);        // cuota devengada
+        Assert.Equal(1042m, a.Where(x => x.CuentaId == 600).Sum(x => x.Debe));   // base + no deducible
+    }
+
+    [Fact]
+    public void Importacion_lleva_la_cuota_de_aduana_y_no_se_autorrepercute()
+    {
+        var f = FacturaCalculadora.Calcular(LibroFactura.Recibidas,
+            [new LineaIvaEntrada(1, 1, "IMPORTACION", 1000m, 21m, 0m, "TOTAL", null, false)], null, null);
+        Assert.Equal((1210m, 0m), (f.Totales.Total, f.Totales.CuotaAutorrepercutida));
+        var a = Gen(LibroFactura.Recibidas, f, Compra);
+        Cuadra(a);
+        Assert.DoesNotContain(a, x => x.CuentaId == 477);
+    }
+
+    [Theory]
+    [InlineData(LibroFactura.Emitidas, "INTRACOM_ADQUISICION", "IVA")]
+    [InlineData(LibroFactura.Recibidas, "EXPORTACION", "IVA")]
+    [InlineData(LibroFactura.Emitidas, "INTRACOM_ENTREGA", "IGIC")]
+    public void Operaciones_no_validas_para_el_libro_o_el_impuesto(LibroFactura libro, string tipo, string impuesto)
+        => Assert.Throws<ReglaContableException>(() => OperacionesIva.Validar(libro, tipo, impuesto));
 }

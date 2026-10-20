@@ -32,16 +32,16 @@ public static class CalculadorImpuestoIndirecto
 
     public static void Calcular(bool igic, EntradaImpuestoIndirecto e, DeclaracionCalculada d)
     {
-        var interiores = e.Grupos.Where(g => g.TipoOperacion == "INTERIOR").ToList();
-        var noSoportadas = e.Grupos.Where(g => g.TipoOperacion is not ("INTERIOR" or "EXENTA" or "NO_SUJETA")).ToList();
-        if (noSoportadas.Count > 0)
-            throw new ReglaContableException("Hay operaciones intracomunitarias, importaciones o con inversión del sujeto pasivo.",
-                "Todavía no se calculan en este modelo; revisa las facturas del periodo.");
+        if (igic && e.Grupos.Any(g => g.TipoOperacion.StartsWith("INTRACOM", StringComparison.Ordinal)))
+            throw new ReglaContableException("Hay operaciones intracomunitarias en una empresa de IGIC.",
+                "Canarias no forma parte del territorio IVA de la UE: revisa el tipo de operación de esas facturas.");
 
-        var devengado = interiores.Where(g => g.Libro == "EMITIDAS" && !g.Rectificativa).ToList();
-        var emitidasRect = interiores.Where(g => g.Libro == "EMITIDAS" && g.Rectificativa).ToList();
-        var soportado = interiores.Where(g => g.Libro == "RECIBIDAS" && !g.Rectificativa).ToList();
-        var recibidasRect = interiores.Where(g => g.Libro == "RECIBIDAS" && g.Rectificativa).ToList();
+        var recibidas = e.Grupos.Where(g => g.Libro == "RECIBIDAS").ToList();
+        var devengado = e.Grupos.Where(g => g.Libro == "EMITIDAS" && !g.Rectificativa && g.TipoOperacion == "INTERIOR").ToList();
+        var emitidasRect = e.Grupos.Where(g => g.Libro == "EMITIDAS" && g.Rectificativa && g.TipoOperacion == "INTERIOR").ToList();
+        // Deducible: todo lo recibido con cuota (interior, importación y autorrepercutido); las rectificativas van aparte
+        var soportado = recibidas.Where(g => !g.Rectificativa).ToList();
+        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA")).ToList();
 
         void Add(string clave, string desc, decimal importe) => d.Casillas.Add(new Casilla(clave, desc, importe));
 
@@ -70,6 +70,13 @@ public static class CalculadorImpuestoIndirecto
                 Add("MODB", "Modificación de bases (rectificativas emitidas)", emitidasRect.Sum(x => x.Base));
                 Add("MODC", "Modificación de cuotas (rectificativas emitidas)", c);
                 totalDevengado += c;
+            }
+            var ispIgic = recibidas.Where(x => x.TipoOperacion == "INVERSION_SUJETO_PASIVO").ToList();
+            if (ispIgic.Count > 0)
+            {
+                Add("ISPB", "Inversión del sujeto pasivo: base", ispIgic.Sum(x => x.Base));
+                Add("ISPC", "Inversión del sujeto pasivo: cuota devengada", ispIgic.Sum(x => x.Cuota));
+                totalDevengado += ispIgic.Sum(x => x.Cuota);
             }
             Add("TDEV", "Total cuota devengada", R(totalDevengado));
         }
@@ -119,25 +126,46 @@ public static class CalculadorImpuestoIndirecto
                     totalDevengado += cRec;
                 }
             }
+            // Autorrepercusión: adquisiciones intracomunitarias (10/11) y otras con inversión del sujeto pasivo (12/13)
+            foreach (var (tipo, cb, cc, txt) in new[] {
+                ("INTRACOM_ADQUISICION", "10", "11", "Adquisiciones intracomunitarias de bienes y servicios"),
+                ("INVERSION_SUJETO_PASIVO", "12", "13", "Otras operaciones con inversión del sujeto pasivo") })
+            {
+                var g = recibidas.Where(x => x.TipoOperacion == tipo).ToList();
+                if (g.Count == 0) continue;
+                Add(cb, $"{txt}: base", g.Sum(x => x.Base));
+                Add(cc, $"{txt}: cuota", g.Sum(x => x.Cuota));
+                totalDevengado += g.Sum(x => x.Cuota);
+            }
             Add("27", "Total cuota devengada", R(totalDevengado));
         }
 
         // ---------------------------------------------------------------- deducible
         decimal totalDeducible = 0;
-        var corr = soportado.Where(x => !x.EsBienInversion).ToList();
-        var inv = soportado.Where(x => x.EsBienInversion).ToList();
-        string kCorrB = igic ? "SCB" : "28", kCorrC = igic ? "SCC" : "29", kInvB = igic ? "SIB" : "30", kInvC = igic ? "SIC" : "31";
-        if (corr.Count > 0)
+        // Interiores (con las de inversión del sujeto pasivo), importaciones y adquisiciones intracomunitarias; corrientes e inversión
+        var grupos = new (Func<GrupoIva, bool> Es, string Nombre, string[] Iva, string[] Igic)[]
         {
-            Add(kCorrB, "Operaciones interiores corrientes: base", corr.Sum(x => x.Base));
-            Add(kCorrC, "Operaciones interiores corrientes: cuota deducible", corr.Sum(x => x.CuotaDeducible));
-            totalDeducible += corr.Sum(x => x.CuotaDeducible);
-        }
-        if (inv.Count > 0)
+            (x => x.TipoOperacion is "INTERIOR" or "INVERSION_SUJETO_PASIVO", "Operaciones interiores", ["28", "29", "30", "31"], ["SCB", "SCC", "SIB", "SIC"]),
+            (x => x.TipoOperacion == "IMPORTACION", "Importaciones", ["32", "33", "34", "35"], ["ICB", "ICC", "IIB", "IIC"]),
+            (x => x.TipoOperacion == "INTRACOM_ADQUISICION", "Adquisiciones intracomunitarias", ["36", "37", "38", "39"], ["", "", "", ""]),
+        };
+        foreach (var (es, nombre, iva, ig) in grupos)
         {
-            Add(kInvB, "Bienes de inversión interiores: base", inv.Sum(x => x.Base));
-            Add(kInvC, "Bienes de inversión interiores: cuota deducible", inv.Sum(x => x.CuotaDeducible));
-            totalDeducible += inv.Sum(x => x.CuotaDeducible);
+            var k = igic ? ig : iva;
+            var corr = soportado.Where(x => es(x) && !x.EsBienInversion && x.TipoOperacion != "EXENTA" && x.TipoOperacion != "NO_SUJETA").ToList();
+            var inv = soportado.Where(x => es(x) && x.EsBienInversion).ToList();
+            if (corr.Count > 0)
+            {
+                Add(k[0], $"{nombre} corrientes: base", corr.Sum(x => x.Base));
+                Add(k[1], $"{nombre} corrientes: cuota deducible", corr.Sum(x => x.CuotaDeducible));
+                totalDeducible += corr.Sum(x => x.CuotaDeducible);
+            }
+            if (inv.Count > 0)
+            {
+                Add(k[2], $"{nombre}, bienes de inversión: base", inv.Sum(x => x.Base));
+                Add(k[3], $"{nombre}, bienes de inversión: cuota deducible", inv.Sum(x => x.CuotaDeducible));
+                totalDeducible += inv.Sum(x => x.CuotaDeducible);
+            }
         }
         if (recibidasRect.Count > 0)
         {
@@ -160,6 +188,16 @@ public static class CalculadorImpuestoIndirecto
             d.Avisos.Add("La regularización por prorrata definitiva se aplica en el último periodo del año.");
 
         Add(igic ? "TDED" : "45", "Total a deducir", R(totalDeducible));
+
+        // Informativas (no cambian el resultado): entregas intracomunitarias, exportaciones e inversión del sujeto pasivo emitidas
+        foreach (var (tipo, iva, ig, txt) in new[] {
+            ("INTRACOM_ENTREGA", "59", "", "Entregas intracomunitarias de bienes y servicios"),
+            ("EXPORTACION", "60", "EXP", "Exportaciones y operaciones asimiladas"),
+            ("INVERSION_SUJETO_PASIVO", "122", "ISPE", "Operaciones sujetas con inversión del sujeto pasivo (emitidas)") })
+        {
+            var g = e.Grupos.Where(x => x.Libro == "EMITIDAS" && x.TipoOperacion == tipo).ToList();
+            if (g.Count > 0) Add(igic ? ig : iva, txt, g.Sum(x => x.Base));
+        }
 
         // ---------------------------------------------------------------- resultado
         var resultadoRG = R(totalDevengado) - R(totalDeducible);
