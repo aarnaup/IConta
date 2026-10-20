@@ -6,7 +6,7 @@ namespace Contabilidad.Domain.Fiscal;
 /// </summary>
 public sealed record GrupoIva(
     string Libro, bool Rectificativa, string TipoOperacion, decimal Porcentaje, decimal PorcentajeRecargo, bool EsBienInversion,
-    decimal Base, decimal Cuota, decimal CuotaRecargo, decimal CuotaDeducible);
+    decimal Base, decimal Cuota, decimal CuotaRecargo, decimal CuotaDeducible, bool CriterioCaja = false);
 
 public sealed record EntradaImpuestoIndirecto(
     IReadOnlyList<GrupoIva> Grupos,
@@ -17,7 +17,14 @@ public sealed record EntradaImpuestoIndirecto(
     bool SolicitaDevolucion,
     bool EsUltimoPeriodo,
     /// <summary>Regularización de bienes de inversión (anual en el último periodo, o por venta en el periodo de la venta).</summary>
-    decimal RegularizacionBienesInversion = 0);
+    decimal RegularizacionBienesInversion = 0,
+    /// <summary>Información adicional del criterio de caja (operaciones del periodo por la regla general de devengo).</summary>
+    InformacionCaja? Caja = null,
+    /// <summary>Cuota del régimen simplificado del trimestre (ingreso a cuenta o resultado del 4T), que se suma al régimen general.</summary>
+    decimal CuotaSimplificado = 0);
+
+/// <summary>Bases y cuotas de las facturas en criterio de caja con fecha en el periodo (casillas 62/63 y 74/75 del 303).</summary>
+public sealed record InformacionCaja(decimal BaseEntregas, decimal CuotaEntregas, decimal BaseAdquisiciones, decimal CuotaAdquisiciones);
 
 /// <summary>
 /// Autoliquidación de IVA (303) o IGIC (420) y resúmenes anuales, sobre facturas ya agrupadas.
@@ -82,35 +89,47 @@ public static class CalculadorImpuestoIndirecto
         }
         else
         {
-            var tramos = new (decimal Pct, string B, string T, string C)[] { (4m, "01", "02", "03"), (10m, "04", "05", "06"), (21m, "07", "08", "09") };
+            // Tipos del régimen general: 4, 10 y 21 % en sus casillas de siempre; 0, 2, 5 y 7,5 % (rebajas temporales de 2023-2024)
+            // en las añadidas en 2023 (150-155 y 165-167). Los tipos de 5 y 7,5 % comparten casilla.
+            var tramos = new (decimal[] Pcts, string B, string T, string C)[] {
+                ([0m], "150", "151", "152"), ([2m], "165", "166", "167"), ([4m], "01", "02", "03"), ([5m, 7.5m], "153", "154", "155"),
+                ([10m], "04", "05", "06"), ([21m], "07", "08", "09") };
             foreach (var t in tramos)
             {
-                var g = devengado.Where(x => x.Porcentaje == t.Pct).ToList();
+                var g = devengado.Where(x => t.Pcts.Contains(x.Porcentaje)).ToList();
                 var b = g.Sum(x => x.Base); var c = g.Sum(x => x.Cuota);
                 if (b == 0 && c == 0) continue;
-                Add(t.B, $"Régimen general: base imponible al {t.Pct} %", b);
-                Add(t.T, "Tipo %", t.Pct);
-                Add(t.C, $"Régimen general: cuota al {t.Pct} %", c);
+                var pct = t.Pcts.Length == 1 ? t.Pcts[0] : g.Select(x => x.Porcentaje).Distinct().Count() == 1 ? g[0].Porcentaje : 0m;
+                Add(t.B, $"Régimen general: base imponible al {string.Join(" / ", t.Pcts.Select(Pct))} %", b);
+                Add(t.T, "Tipo %", pct);
+                Add(t.C, $"Régimen general: cuota al {string.Join(" / ", t.Pcts.Select(Pct))} %", c);
                 totalDevengado += c;
             }
-            var sinCasilla = devengado.Where(x => x.Porcentaje is not (4m or 10m or 21m) && (x.Base != 0 || x.Cuota != 0)).Select(x => x.Porcentaje).Distinct().ToList();
+            var todos = tramos.SelectMany(t => t.Pcts).ToHashSet();
+            var sinCasilla = devengado.Where(x => !todos.Contains(x.Porcentaje) && (x.Base != 0 || x.Cuota != 0)).Select(x => x.Porcentaje).Distinct().ToList();
             if (sinCasilla.Count > 0)
                 throw new ReglaContableException($"Hay facturas emitidas con IVA al {string.Join(", ", sinCasilla.Select(Pct))} %, que no tiene casilla en el 303.",
-                    "Solo se calculan los tipos 4, 10 y 21 %.");
+                    "Tipos admitidos: 0, 2, 4, 5, 7,5, 10 y 21 %.");
 
-            var recargos = new (decimal Pct, string B, string T, string C)[] { (0.5m, "16", "17", "18"), (1.4m, "19", "20", "21"), (5.2m, "22", "23", "24") };
+            // Recargo de equivalencia: 0,5 % (168-170), 1,4 % (19-21), 5,2 % (22-24), 1,75 % (156-158) y los tipos temporales de 0, 0,62 y 1 % (16-18)
+            var recargos = new (decimal[] Pcts, string B, string T, string C)[] {
+                ([0.5m], "168", "169", "170"), ([1.4m], "19", "20", "21"), ([5.2m], "22", "23", "24"), ([1.75m], "156", "157", "158"),
+                ([0.62m, 1m], "16", "17", "18") };
             foreach (var t in recargos)
             {
-                var g = devengado.Where(x => x.PorcentajeRecargo == t.Pct).ToList();
+                var g = devengado.Where(x => t.Pcts.Contains(x.PorcentajeRecargo)).ToList();
                 var b = g.Sum(x => x.Base); var c = g.Sum(x => x.CuotaRecargo);
                 if (b == 0 && c == 0) continue;
-                Add(t.B, $"Recargo de equivalencia: base al {t.Pct} %", b);
-                Add(t.T, "Tipo %", t.Pct);
-                Add(t.C, $"Recargo de equivalencia: cuota al {t.Pct} %", c);
+                var pct = t.Pcts.Length == 1 ? t.Pcts[0] : g.Select(x => x.PorcentajeRecargo).Distinct().Count() == 1 ? g[0].PorcentajeRecargo : 0m;
+                Add(t.B, $"Recargo de equivalencia: base al {string.Join(" / ", t.Pcts.Select(Pct))} %", b);
+                Add(t.T, "Tipo %", pct);
+                Add(t.C, $"Recargo de equivalencia: cuota al {string.Join(" / ", t.Pcts.Select(Pct))} %", c);
                 totalDevengado += c;
             }
-            if (devengado.Any(x => x.PorcentajeRecargo > 0 && x.PorcentajeRecargo is not (0.5m or 1.4m or 5.2m)))
-                throw new ReglaContableException("Hay un recargo de equivalencia con un tipo distinto de 0,5, 1,4 o 5,2 %.");
+            var todosRec = recargos.SelectMany(t => t.Pcts).ToHashSet();
+            if (devengado.Any(x => x.PorcentajeRecargo > 0 && !todosRec.Contains(x.PorcentajeRecargo)))
+                throw new ReglaContableException("Hay un recargo de equivalencia con un tipo sin casilla en el 303.",
+                    "Tipos admitidos: 0,5, 0,62, 1, 1,4, 1,75 y 5,2 %.");
 
             if (emitidasRect.Count > 0)
             {
@@ -131,7 +150,7 @@ public static class CalculadorImpuestoIndirecto
                 ("INTRACOM_ADQUISICION", "10", "11", "Adquisiciones intracomunitarias de bienes y servicios"),
                 ("INVERSION_SUJETO_PASIVO", "12", "13", "Otras operaciones con inversión del sujeto pasivo") })
             {
-                var g = recibidas.Where(x => x.TipoOperacion == tipo).ToList();
+                var g = recibidas.Where(x => x.TipoOperacion == tipo || (tipo == "INTRACOM_ADQUISICION" && x.TipoOperacion == "INTRACOM_SERVICIOS")).ToList();
                 if (g.Count == 0) continue;
                 Add(cb, $"{txt}: base", g.Sum(x => x.Base));
                 Add(cc, $"{txt}: cuota", g.Sum(x => x.Cuota));
@@ -145,7 +164,7 @@ public static class CalculadorImpuestoIndirecto
         // Interiores (con las de inversión del sujeto pasivo), importaciones y adquisiciones intracomunitarias; corrientes e inversión
         var grupos = new (Func<GrupoIva, bool> Es, string Nombre, string[] Iva, string[] Igic)[]
         {
-            (x => x.TipoOperacion is "INTERIOR" or "INVERSION_SUJETO_PASIVO", "Operaciones interiores", ["28", "29", "30", "31"], ["SCB", "SCC", "SIB", "SIC"]),
+            (x => x.TipoOperacion is "INTERIOR" or "INVERSION_SUJETO_PASIVO" or "INTRACOM_SERVICIOS", "Operaciones interiores", ["28", "29", "30", "31"], ["SCB", "SCC", "SIB", "SIC"]),
             (x => x.TipoOperacion == "IMPORTACION", "Importaciones", ["32", "33", "34", "35"], ["ICB", "ICC", "IIB", "IIC"]),
             (x => x.TipoOperacion == "INTRACOM_ADQUISICION", "Adquisiciones intracomunitarias", ["36", "37", "38", "39"], ["", "", "", ""]),
         };
@@ -198,6 +217,13 @@ public static class CalculadorImpuestoIndirecto
             var g = e.Grupos.Where(x => x.Libro == "EMITIDAS" && x.TipoOperacion == tipo).ToList();
             if (g.Count > 0) Add(igic ? ig : iva, txt, g.Sum(x => x.Base));
         }
+        if (e.Caja is { } cj)
+        {
+            Add(igic ? "CCEB" : "62", "Criterio de caja: entregas del periodo por la regla general (base)", cj.BaseEntregas);
+            Add(igic ? "CCEC" : "63", "Criterio de caja: entregas del periodo por la regla general (cuota)", cj.CuotaEntregas);
+            Add(igic ? "CCAB" : "74", "Criterio de caja: adquisiciones del periodo (base)", cj.BaseAdquisiciones);
+            Add(igic ? "CCAC" : "75", "Criterio de caja: adquisiciones del periodo (cuota soportada)", cj.CuotaAdquisiciones);
+        }
 
         // ---------------------------------------------------------------- resultado
         var resultadoRG = R(totalDevengado) - R(totalDeducible);
@@ -214,16 +240,19 @@ public static class CalculadorImpuestoIndirecto
         else
         {
             Add("46", "Resultado régimen general (27 − 45)", resultadoRG);
-            Add("64", "Suma de resultados", resultadoRG);
+            Add("64", e.CuotaSimplificado != 0 ? "Suma de resultados (régimen general + simplificado)" : "Suma de resultados",
+                resultadoRG + e.CuotaSimplificado);
             Add("65", "% de atribución a la Administración del Estado", 100m);
-            var atribuible = R(resultadoRG);
+            var atribuible = R(resultadoRG + e.CuotaSimplificado);
             Add("66", "Cuota atribuible a la Administración del Estado", atribuible);
             if (atribuible > 0) aplicada = Math.Min(atribuible, e.CompensacionPendiente);
-            Add("110", "Cuotas a compensar de periodos anteriores (pendientes)", e.CompensacionPendiente);
-            Add("68", "Cuotas a compensar de periodos anteriores aplicadas", aplicada);
+            Add("77", "IVA a la importación liquidado por la Aduana pendiente de ingreso", 0m);
+            Add("110", "Cuotas a compensar pendientes de periodos anteriores", e.CompensacionPendiente);
+            Add("78", "Cuotas a compensar de periodos anteriores aplicadas en este periodo", aplicada);
             resultado = atribuible - aplicada;
-            Add("69", "Resultado", resultado);
-            Add("71", "Resultado de la liquidación", resultado);
+            Add("69", "Resultado de la autoliquidación (66 + 77 − 78 + 68)", resultado);
+            Add("70", "A deducir: resultados a ingresar de autoliquidaciones anteriores del periodo", 0m);
+            Add("71", "Resultado de la liquidación (69 − 70)", resultado);
         }
 
         d.Resultado = resultado;
@@ -235,6 +264,6 @@ public static class CalculadorImpuestoIndirecto
             if (e.SolicitaDevolucion) d.Avisos.Add("La devolución solo se puede solicitar en el último periodo del año; el saldo se compensa.");
         }
         var pendienteSiguiente = (e.CompensacionPendiente - aplicada) + d.ACompensar;
-        Add(igic ? "PEND_SIG" : "87", "Cuotas a compensar pendientes para periodos posteriores", pendienteSiguiente);
+        Add(igic ? "PEND_SIG" : "87", "Cuotas a compensar de periodos previos pendientes para periodos posteriores", pendienteSiguiente);
     }
 }

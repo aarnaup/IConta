@@ -140,6 +140,8 @@ function permitido(req) {
   if (req === 'FISCAL_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.FISCAL] >= ORDEN.ESCRITURA;
   if (req === 'INMOVILIZADO_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.INMOVILIZADO] >= ORDEN.ESCRITURA;
   if (req === 'BALANCES') return ['BALANCES', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
+  if (req === 'ANALITICA') return ['ANALITICA', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
+  if (req === 'PRESUPUESTOS') return ['PRESUPUESTOS', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
   if (req === 'CONTABILIDAD_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.CONTABILIDAD] >= ORDEN.ESCRITURA;
   if (req === 'REVISOR')
     return S.acceso.puedeContabilizarDirecto && ['CONTABILIDAD', 'FACTURACION'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.ESCRITURA);
@@ -170,8 +172,10 @@ async function entrarEmpresa(empresa, ejercicio) {
   $('#dl-cuentas').innerHTML = S.cuentas.map(c => `<option value="${esc(c.codigo)}">${esc(c.nombre)}</option>`).join('');
   $('#diario').innerHTML = S.diarios.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
   $('#mayorCanal').innerHTML = '<option value="">Todos los canales</option>' + baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  await cargaDimensiones().catch(() => { ANA.dims = []; });
   S.lineas = [nuevaLinea(), nuevaLinea()];
   fst.lineas = [];
+  PR.actual = null; $('#ppPanel').hidden = true; ANA.informe = null; $('#anBody').innerHTML = ''; $('#anDesde').value = ''; $('#anCanal').innerHTML = '';
   MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
   $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
@@ -194,15 +198,16 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
   const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
-                  inmovilizado: cargaInmovilizado, balances: cargaBalances, cierre: cargaCierre }[nombre];
+                  inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
+                  cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
 }
 $('#navApp').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTab(b.dataset.tab); });
 
 // ------------------------------------------------------------ nuevo asiento
-const nuevaLinea = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', canalId: null, debe: '', haber: '' });
+const nuevaLinea = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', canalId: null, debe: '', haber: '', analitica: '' });
 const canalOpts = sel => S.canales.map(c => `<option value="${c.id}" ${String(sel) === String(c.id) ? 'selected' : ''}>${esc(c.codigo)}</option>`).join('');
 
 function pintaLineas() {
@@ -213,6 +218,7 @@ function pintaLineas() {
       <td><input data-f="cuenta" list="dl-cuentas" value="${esc(l.cuenta)}" aria-label="Cuenta apunte ${i + 1}"></td>
       <td class="nombre">${esc(l.nombre) || '<span style="opacity:.6">—</span>'}</td>
       <td><select data-f="canalId" aria-label="Canal apunte ${i + 1}">${canalOpts(l.canalId)}</select></td>
+      ${$('#thAnalitica').hidden ? '' : `<td><input data-f="analitica" value="${esc(l.analitica)}" placeholder="por defecto" aria-label="Analítica apunte ${i + 1}"></td>`}
       <td><input data-f="debe" class="num" inputmode="decimal" value="${esc(l.debe)}" aria-label="Debe apunte ${i + 1}"></td>
       <td><input data-f="haber" class="num" inputmode="decimal" value="${esc(l.haber)}" aria-label="Haber apunte ${i + 1}"></td>
       <td><button class="x" type="button" data-del="${i}" aria-label="Quitar apunte ${i + 1}">×</button></td>
@@ -270,8 +276,12 @@ async function guardarAsiento(borrador) {
   const lineas = S.lineas.filter(l => l.cuentaId && (num(l.debe) || num(l.haber)));
   if (S.lineas.some(l => (l.cuenta.trim() || num(l.debe) || num(l.haber)) && !l.cuentaId))
     return msg($('#msg'), 'Hay una cuenta que no existe en el plan de la empresa. Elige una de la lista.', 'err');
-  const cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
-    apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto || null })) };
+  let cmd;
+  try {
+    cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
+      apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto || null,
+                                  analitica: parseAnalitica(l.analitica) })) };
+  } catch (e) { return msg($('#msg'), e.message, 'err'); }
   try {
     const r = await post(urlX('/asientos'), cmd);
     msg($('#msg'), r.estado === 'CONTABILIZADO' ? `Asiento ${r.numero} contabilizado.`
@@ -364,6 +374,7 @@ function pintaFL() {
       </td>
       <td><button class="x" type="button" data-fdel="${i}" aria-label="Quitar línea ${i + 1}">×</button></td>
     </tr>`).join('');
+  pinta349();
 }
 
 $('#fLineas').addEventListener('input', e => {
@@ -371,7 +382,7 @@ $('#fLineas').addEventListener('input', e => {
   const f = e.target.dataset.f;
   fst.lineas[+tr.dataset.i][f] = f === 'tipoIvaId' ? +e.target.value : f === 'inv' ? e.target.checked : e.target.value;
 });
-$('#fLineas').addEventListener('change', e => { if (e.target.dataset.f === 'regla') pintaFL(); });
+$('#fLineas').addEventListener('change', e => { if (e.target.dataset.f === 'regla') pintaFL(); if (e.target.dataset.f === 'op') pinta349(); });
 $('#fLineas').addEventListener('click', e => {
   const d = e.target.dataset.fdel; if (d === undefined) return;
   fst.lineas.splice(+d, 1); if (!fst.lineas.length) fst.lineas.push(nuevaFL()); pintaFL();
@@ -380,11 +391,21 @@ $('#fAdd').onclick = () => { const l = nuevaFL(); l.tipoIvaId = (fst.tipos[0] ||
 $('#fLibro').onchange = () => { fst.lineas.forEach(l => { l.regla = 'TOTAL'; l.op = ''; l.inv = false; }); $('#fPreview').hidden = true; cargaFacturas().catch(e => setF(e.message, 'err')); };
 $('#fFecha').onchange = () => cargaFacturas().catch(e => setF(e.message, 'err'));
 
+const CLAVES_349 = { EMITIDAS: [['E', 'E · Entregas de bienes'], ['S', 'S · Servicios prestados'], ['T', 'T · Operación triangular']],
+                     RECIBIDAS: [['A', 'A · Adquisiciones de bienes'], ['I', 'I · Servicios recibidos']] };
+function pinta349() {
+  const hay = fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')), lib = $('#fLibro').value;
+  $('#f349Label').hidden = !hay;
+  if ($('#f349').dataset.libro !== lib) {
+    $('#f349').innerHTML = CLAVES_349[lib].map(([v, n]) => `<option value="${v}">${esc(n)}</option>`).join(''); $('#f349').dataset.libro = lib;
+  }
+}
 function cmdFactura(borrador) {
   return {
     libro: $('#fLibro').value, tipoFactura: 'ORDINARIA', numero: $('#fNumero').value.trim(),
     terceroId: +$('#fTercero').value || 0, formaPagoId: +$('#fForma').value || null, canalId: +$('#fCanal').value || 0,
     fechaExpedicion: $('#fFecha').value, tipoRetencionId: +$('#fRet').value || null, borrador,
+    clave349: fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')) ? $('#f349').value : null,
     lineas: fst.lineas.filter(l => l.tipoIvaId && num(l.base)).map(l => {
       const t = fst.tipos.find(x => x.id === l.tipoIvaId);
       return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: l.op || (t && t.esExento ? 'EXENTA' : 'INTERIOR'),
@@ -429,15 +450,33 @@ async function listaFacturas() {
   $('#fLista').innerHTML = filas.length ? filas.map(f => `<tr><td>${f.libro === 'EMITIDAS' ? 'Emitida' : 'Recibida'}</td><td>${esc((f.serie || '') + f.numero)}</td>
     <td>${fechaES(f.fecha)}</td><td>${esc(f.tercero)}</td>
     <td class="num">${fmt(f.baseImponible)}</td><td class="num">${fmt(f.cuota)}</td><td class="num">${f.retencion ? fmt(f.retencion) : ''}</td>
-    <td class="num">${fmt(f.total)}</td><td>${f.asientoNumero ? 'asiento ' + f.asientoNumero : esc(f.estado.toLowerCase())}</td></tr>`).join('')
-    : '<tr><td colspan="9" class="vacio">Todavía no hay facturas en este ejercicio.</td></tr>';
+    <td class="num">${fmt(f.total)}</td><td>${f.asientoNumero ? 'asiento ' + f.asientoNumero : esc(f.estado.toLowerCase())}</td>
+    <td>${f.libro === 'EMITIDAS' && f.estado !== 'ANULADA' ? `<button type="button" class="btn" data-impreso="${f.id}">Imprimir</button>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="10" class="vacio">Todavía no hay facturas en este ejercicio.</td></tr>';
+  $('#fLista').querySelectorAll('[data-impreso]').forEach(b => b.onclick = () => imprimeFactura(b.dataset.impreso));
+}
+
+// Impreso de la factura: se abre en otra ventana y se lanza el diálogo de imprimir (desde ahí se guarda en PDF)
+async function imprimeFactura(id) {
+  const w = window.open('', '_blank');
+  try {
+    const r = await fetch(urlX(`/facturas/${id}/impreso`), { headers: { Authorization: 'Bearer ' + S.token } });
+    if (!r.ok) { let m = r.statusText; try { m = (await r.json()).error || m; } catch { /* sin cuerpo */ } throw new Error(m); }
+    const url = URL.createObjectURL(new Blob([await r.text()], { type: 'text/html' }));
+    if (!w) { location.assign(url); return; }
+    w.location = url;
+    w.addEventListener('load', () => { w.focus(); w.print(); }, { once: true });
+  } catch (e) { if (w) w.close(); alert(e.message); }
 }
 
 $('#tCrear').onclick = async () => {
   const tipo = $('#tTipo').value;
   try {
-    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE' });
-    msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = '';
+    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE',
+      codigoPostal: $('#tCp').value || null, pais: $('#tPais').value || 'ES', tipoDocumento: ($('#tPais').value || 'ES') === 'ES' ? 'NIF' : 'VIES',
+      criterioCaja: tipo !== 'CLIENTE' && $('#tCaja').checked });
+    $('#tCaja').checked = false;
+    msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = ''; $('#tCp').value = '';
     await cargaFacturas();
   } catch (e) { msg($('#tMsg'), e.message, 'err-texto'); }
 };
@@ -625,6 +664,7 @@ async function cargaConciliacion() {
 
 async function verConciliacion() {
   const banco = $('#coBanco').value; if (!banco) return;
+  cargaReglasConciliacion().catch(e => msg($('#coMsg'), e.message, 'ayuda err-texto'));
   const [e, extractos] = await Promise.all([
     api(urlE(`/tesoreria/conciliacion?cuentaBancariaId=${banco}&hasta=${$('#coHasta').value}`)),
     api(urlE(`/tesoreria/extractos?cuentaBancariaId=${banco}`))]);
@@ -693,6 +733,41 @@ $('#coAuto').onclick = async () => {
     const r = await post(urlE('/tesoreria/conciliacion/automatica'), { cuentaBancariaId: +$('#coBanco').value, diasMargen: 5 });
     await verConciliacion();
     msg($('#coMsg'), `${r.conciliadas} movimiento(s) conciliados automáticamente. Quedan ${r.lineasPendientes} en el banco y ${r.apuntesPendientes} en la contabilidad.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ---- Reglas de conciliación por concepto
+const signoTxt = { CARGO: 'Cargos', ABONO: 'Abonos', AMBOS: 'Ambos' };
+async function cargaReglasConciliacion() {
+  const reglas = await api(urlE('/tesoreria/reglas-conciliacion')), escribe = permitido('TESORERIA:ESCRITURA');
+  $('#rcLista').innerHTML = reglas.map(r => `<tr><td>${esc(r.texto)}</td><td>${signoTxt[r.signo]}</td><td>${esc(r.cuenta)} ${esc(r.cuentaNombre)}</td>
+      <td>${esc(r.concepto || '')}</td><td class="num">${r.orden}</td>
+      <td class="fila-acciones">${escribe ? `<button class="btn" data-borrar-regla="${r.id}">Quitar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">Sin reglas.</td></tr>';
+  if (!$('#rcCanal').options.length) $('#rcCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+}
+$('#rcCrear').onclick = async () => {
+  try {
+    const cuenta = cuentaPorCodigo($('#rcCuenta').value); if (!cuenta) throw new Error('Elige una cuenta existente.');
+    await post(urlE('/tesoreria/reglas-conciliacion'), { texto: $('#rcTexto').value, signo: $('#rcSigno').value, cuentaId: cuenta, canalId: +$('#rcCanal').value,
+      concepto: $('#rcConcepto').value || null, orden: parseInt($('#rcOrden').value, 10) || 100 });
+    ['#rcTexto', '#rcCuenta', '#rcConcepto'].forEach(i => $(i).value = '');
+    await cargaReglasConciliacion(); msg($('#coMsg'), 'Regla añadida.', 'ayuda ok-texto');
+  } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#rcLista').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-borrar-regla]'); if (!b) return;
+  try { await api(urlE('/tesoreria/reglas-conciliacion/' + b.dataset.borrarRegla), { method: 'DELETE' }); await cargaReglasConciliacion(); }
+  catch (err) { msg($('#coMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#coReglas').onclick = async () => {
+  try {
+    const cuenta = +$('#coBanco').value;
+    const s = await post(urlX('/tesoreria/conciliacion/reglas'), { cuentaBancariaId: cuenta, simular: true });
+    if (!s.lineas.length) { msg($('#coMsg'), s.avisos.join(' ') || 'Ninguna línea coincide con las reglas.', 'ayuda'); return; }
+    if (!confirm(`Se contabilizarán y conciliarán ${s.lineas.length} línea(s):\n` + s.lineas.map(l => `${fechaES(l.fecha)} ${l.concepto} ${fmt(l.importe)} → ${l.cuenta}`).join('\n'))) return;
+    const a = await post(urlX('/tesoreria/conciliacion/reglas'), { cuentaBancariaId: cuenta });
+    await verConciliacion(); msg($('#coMsg'), `${a.aplicadas} línea(s) contabilizadas y conciliadas con las reglas.`, 'ayuda ok-texto');
   } catch (e) { msg($('#coMsg'), e.message, 'ayuda err-texto'); }
 };
 
@@ -777,13 +852,37 @@ async function cargaVencimientos() {
       <td>${esc(v.tercero)}</td><td>${esc(v.factura || '—')}</td><td>${v.numPlazo}/${v.totalPlazos}</td>
       <td class="num">${fmt(v.importe)}</td><td class="num">${fmt(v.importePendiente)}</td><td>${estadoTxt[v.estado] || esc(v.estado)}</td>
       <td class="fila-acciones">${abierto && directo ? `<button class="btn primario" data-liq="${v.id}" ${S.ejercicio.estado !== 'ABIERTO' ? 'disabled' : ''}>${v.tipo === 'COBRO' ? 'Cobrar' : 'Pagar'}</button>` : ''}
-        ${v.estado === 'PENDIENTE' && v.importePendiente === v.importe && directo ? `<button class="btn" data-anul="${v.id}">Anular</button>` : ''}</td></tr>`;
+        ${v.estado === 'PENDIENTE' && v.importePendiente === v.importe && directo ? `<button class="btn" data-anul="${v.id}">Anular</button>` : ''}
+        ${v.importePendiente < v.importe && v.estado !== 'ANULADO' ? `<button class="btn" data-cobros="${v.id}">${v.tipo === 'COBRO' ? 'Cobros' : 'Pagos'}</button>` : ''}</td></tr>`;
   }).join('') : '<tr><td colspan="9" class="vacio">No hay vencimientos con ese filtro.</td></tr>';
 }
+// Cobros o pagos de un vencimiento, con la opción de deshacerlos (extorno)
+async function verCobros(v) {
+  if (!v) return;
+  TES.cobrosDe = v;
+  const filas = await api(urlE(`/tesoreria/vencimientos/${v.id}/cobros`)), directo = permitido('TESORERIA_DIRECTO');
+  $('#vCobrosTitulo').textContent = `${v.tipo === 'COBRO' ? 'Cobros' : 'Pagos'} de ${v.tercero}${v.factura ? ' · factura ' + v.factura : ''}`;
+  $('#vCobrosBody').innerHTML = filas.map(c => `<tr><td>${fechaES(c.fecha)}</td><td class="num">${fmt(c.importe)}</td>
+      <td>${c.asientoNumero ? 'nº ' + c.asientoNumero + ' (' + esc(c.ejercicio || '') + ')' : ''}</td>
+      <td>${c.enRemesa ? 'en remesa' : c.conciliado ? 'conciliado' : ''}</td>
+      <td class="fila-acciones">${directo && !c.enRemesa && !c.conciliado ? `<button class="btn" data-extornar="${c.id}">Deshacer</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Sin cobros ni pagos registrados.</td></tr>';
+  $('#vCobros').hidden = false;
+}
+$('#vCobrosBody').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-extornar]'); if (!b || !confirm('¿Deshacer este cobro o pago? Se anula su asiento y el importe vuelve a quedar pendiente.')) return;
+  try {
+    await post(urlX(`/tesoreria/cobros/${b.dataset.extornar}/extornar`));
+    msg($('#vMsg'), 'Cobro o pago deshecho: el importe vuelve a estar pendiente.', 'ayuda ok-texto');
+    await cargaVencimientos(); await verCobros(TES.venc.find(x => x.id === TES.cobrosDe.id) || TES.cobrosDe);
+  } catch (err) { msg($('#vMsg'), err.message, 'ayuda err-texto'); }
+});
+
 $('#vTipo').onchange = $('#vEstado').onchange = () => cargaVencimientos().catch(e => msg($('#vMsg'), e.message, 'ayuda err-texto'));
 
 $('#vBody').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.cobros) { verCobros(TES.venc.find(x => String(x.id) === b.dataset.cobros)).catch(err => msg($('#vMsg'), err.message, 'ayuda err-texto')); return; }
   if (b.dataset.anul) {
     if (!confirm('¿Anular este vencimiento? No se podrá cobrar ni pagar.')) return;
     try { await post(urlE(`/tesoreria/vencimientos/${b.dataset.anul}/anular`)); await cargaTesoreria(); }
@@ -840,7 +939,8 @@ $('#bCrear').onclick = async () => {
 // ------------------------------------------------------------ modelos fiscales
 const MF = { modelos: [], actual: null, presentando: null, liq: null };
 const estadoDecl = { CALCULADA: 'calculada', PRESENTADA: 'presentada', SIN_GUARDAR: 'sin guardar', BORRADOR: 'borrador' };
-const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre' }[p] || 'Mes ' + p);
+const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre',
+  '1P': '1.er pago (abril)', '2P': '2.º pago (octubre)', '3P': '3.er pago (diciembre)' }[p] || 'Mes ' + p);
 
 async function cargaFiscal() {
   if (!$('#mfAnio').value) $('#mfAnio').value = new Date().getFullYear();
@@ -851,12 +951,186 @@ async function cargaFiscal() {
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
     pintaPeriodos();
   }
-  await Promise.all([cargaDeclaraciones(), listaProrratas()]);
+  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja()]);
+  cargaSii();
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
     $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ Impuesto sobre Sociedades
+let IS = null;
+async function verSociedades() {
+  IS = await api(urlE('/fiscal/sociedades/' + S.ejercicio.id));
+  $('#isTitulo').textContent = `Impuesto sobre Sociedades · periodo impositivo ${S.ejercicio.codigo} (${fechaES(S.ejercicio.fechaInicio)} – ${fechaES(S.ejercicio.fechaFin)})`;
+  for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores'])
+    $('#is_' + k).value = IS[k] ? String(IS[k]).replace('.', ',') : '';
+  pintaAjustesIs();
+}
+function pintaAjustesIs() {
+  $('#isAjustes').innerHTML = IS.ajustes.map((a, i) => `<tr><td><input data-i="${i}" data-k="concepto" value="${esc(a.concepto)}" aria-label="Concepto"></td>
+    <td><input class="num" data-i="${i}" data-k="importe" inputmode="decimal" value="${String(a.importe).replace('.', ',')}" aria-label="Importe"></td>
+    <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="3" class="vacio">Sin ajustes extracontables.</td></tr>';
+  $('#isSugerencias').innerHTML = IS.sugerencias.map((a, i) => `<li>${esc(a.concepto)}: ${fmt(a.importe)}
+    <button class="btn" type="button" data-sug="${i}">Añadir</button></li>`).join('');
+}
+$('#isAjustes').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.i === undefined) return;
+  IS.ajustes[+t.dataset.i][t.dataset.k] = t.dataset.k === 'importe' ? num(t.value) : t.value;
+});
+$('#isAjustes').addEventListener('click', e => { if (e.target.dataset.del !== undefined) { IS.ajustes.splice(+e.target.dataset.del, 1); pintaAjustesIs(); } });
+$('#isSugerencias').addEventListener('click', e => {
+  const i = e.target.dataset.sug; if (i === undefined) return;
+  IS.ajustes.push({ ...IS.sugerencias[+i] }); pintaAjustesIs();
+});
+$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0 }); pintaAjustesIs(); };
+$('#isGuardar').onclick = async () => {
+  try {
+    const cuerpo = { ...IS };
+    for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores']) cuerpo[k] = num($('#is_' + k).value);
+    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs();
+    msg($('#isMsg'), 'Datos del Impuesto sobre Sociedades guardados. Calcula el 200 en la lista de modelos.', 'ayuda ok-texto');
+  } catch (e) { msg($('#isMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ------------------------------------------------------------ módulos
+let MO = [];
+const campoMo = (i, k, v, tipo) => tipo === 'bool'
+  ? `<td><input type="checkbox" data-i="${i}" data-k="${k}" ${v ? 'checked' : ''} aria-label="${k}"></td>`
+  : `<td><input data-i="${i}" data-k="${k}" ${tipo === 'n' ? 'class="num" inputmode="decimal"' : ''} value="${tipo === 'n' ? (v ? String(v).replace('.', ',') : '') : esc(v || '')}" aria-label="${k}"></td>`;
+function pintaModulos() {
+  $('#moLista').innerHTML = MO.map((m, i) => `<tr>${campoMo(i, 'descripcion', m.descripcion)}${campoMo(i, 'rendimientoNetoIrpf', m.rendimientoNetoIrpf, 'n')}
+    ${campoMo(i, 'personasAsalariadas', m.personasAsalariadas, 'n')}${campoMo(i, 'agricola', m.agricola, 'bool')}
+    ${campoMo(i, 'cuotaIvaDevengada', m.cuotaIvaDevengada, 'n')}${campoMo(i, 'cuotaIvaSoportada', m.cuotaIvaSoportada, 'n')}
+    ${campoMo(i, 'porcentajeIngresoIva', m.porcentajeIngresoIva, 'n')}${campoMo(i, 'porcentajeCuotaMinima', m.porcentajeCuotaMinima, 'n')}
+    <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="9" class="vacio">Sin actividades para este año.</td></tr>';
+}
+async function verModulos() { MO = await api(urlE('/fiscal/modulos/' + (+$('#moAnio').value))); pintaModulos(); }
+$('#moVer').onclick = () => verModulos().catch(e => msg($('#moMsg'), e.message, 'ayuda err-texto'));
+$('#moAnadir').onclick = () => { MO.push({ descripcion: '', agricola: false }); pintaModulos(); };
+$('#moLista').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.i === undefined) return;
+  MO[+t.dataset.i][t.dataset.k] = t.type === 'checkbox' ? t.checked : t.dataset.k === 'descripcion' ? t.value : num(t.value);
+});
+$('#moLista').addEventListener('click', e => { if (e.target.dataset.del !== undefined) { MO.splice(+e.target.dataset.del, 1); pintaModulos(); } });
+$('#moGuardar').onclick = async () => {
+  try { MO = await put(urlE('/fiscal/modulos/' + (+$('#moAnio').value)), MO); pintaModulos(); msg($('#moMsg'), 'Módulos guardados.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#moMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ------------------------------------------------------------ SII
+const SII = { facturas: [] };
+const estadoSii = { PENDIENTE: 'Pendiente', ACEPTADA: 'Aceptada', ACEPTADA_CON_ERRORES: 'Aceptada con errores', RECHAZADA: 'Rechazada' };
+function cargaSii() {
+  const igic = S.empresa && (S.empresa.impuestoIndirecto === 'IGIC');
+  $('#siiPanel').hidden = !!igic;
+  if (!$('#siiAnio').value) $('#siiAnio').value = $('#mfAnio').value;
+  if (!$('#siiMes').options.length)
+    $('#siiMes').innerHTML = '<option value="">Todo el año</option>' + Array.from({ length: 12 }, (_, i) =>
+      `<option value="${i + 1}" ${i === new Date().getMonth() ? 'selected' : ''}>${new Date(2000, i, 1).toLocaleDateString('es-ES', { month: 'long' })}</option>`).join('');
+}
+const siiCmd = (ids) => ({ libro: $('#siiLibro').value, anio: +$('#siiAnio').value, mes: $('#siiMes').value ? +$('#siiMes').value : null,
+  facturaIds: ids && ids.length ? ids : null });
+const siiElegidas = () => $$('#siiLista input[data-f]:checked').map(c => +c.dataset.f);
+async function verSii() {
+  try {
+    const q = new URLSearchParams({ libro: $('#siiLibro').value, anio: $('#siiAnio').value });
+    if ($('#siiMes').value) q.set('mes', $('#siiMes').value);
+    const r = await api(urlE('/fiscal/sii/facturas?' + q));
+    SII.facturas = r.facturas;
+    $('#siiEnviar').title = r.envioConfigurado ? '' : 'El servidor no tiene certificado para el SII: descarga el XML';
+    $('#siiEnviar').disabled = !r.envioConfigurado;
+    $('#siiLista').innerHTML = r.facturas.map(f => `<tr><td><input type="checkbox" data-f="${f.id}" aria-label="Elegir ${esc(f.numSerie)}"></td>
+      <td>${esc(f.numSerie)}</td><td>${fechaES(f.fechaExpedicion)}</td><td>${esc(f.nombre)} <small>${esc(f.nif)}</small></td>
+      <td class="num">${fmt(f.total)}</td><td class="${f.estado === 'RECHAZADA' ? 'estado-mal' : f.estado === 'ACEPTADA' ? 'estado-ok' : ''}">${esc(estadoSii[f.estado] || f.estado)}</td>
+      <td><small>${esc(f.error || f.csv || '')}</small></td></tr>`).join('') || '<tr><td colspan="7" class="vacio">No hay facturas contabilizadas en el periodo.</td></tr>';
+    const pend = r.facturas.filter(f => ['PENDIENTE', 'RECHAZADA'].includes(f.estado)).length;
+    msg($('#siiMsg'), `${r.facturas.length} factura(s); ${pend} pendiente(s) de enviar. Sin marcar ninguna se envían las pendientes y rechazadas del periodo.`, 'ayuda');
+  } catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+}
+$('#siiVer').onclick = verSii;
+$('#siiTodas').onchange = e => $$('#siiLista input[data-f]').forEach(c => c.checked = e.target.checked);
+$('#siiXml').onclick = async () => {
+  try { const n = await descargaPost(urlE('/fiscal/sii/xml'), siiCmd(siiElegidas()), 'sii.xml'); msg($('#siiMsg'), `Descargado ${n}.`, 'ayuda ok-texto'); }
+  catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
+const pintaEnvioSii = envios => {
+  $('#siiResultado').innerHTML = envios.map(e => `<li>${esc(e.tipoComunicacion)} ${esc(e.entorno.toLowerCase())}: ${esc(e.estadoEnvio || '')}
+    ${e.csv ? ' · CSV ' + esc(e.csv) : ''}${e.fallo ? ' · ' + esc(e.fallo) : ''} · ${e.lineas.filter(l => l.estado === 'Correcto').length} correctas,
+    ${e.lineas.filter(l => l.estado === 'AceptadoConErrores').length} con errores, ${e.lineas.filter(l => l.estado === 'Incorrecto').length} rechazadas</li>`).join('');
+};
+$('#siiEnviar').onclick = async () => {
+  if (!confirm('¿Enviar las facturas al SII de la AEAT?')) return;
+  try { pintaEnvioSii(await post(urlE('/fiscal/sii/enviar'), siiCmd(siiElegidas()))); await verSii(); }
+  catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#siiRegistrar').onclick = async () => {
+  try {
+    pintaEnvioSii([await post(urlE('/fiscal/sii/respuesta'), { libro: $('#siiLibro').value, xml: $('#siiRespuesta').value })]);
+    $('#siiRespuesta').value = ''; await verSii();
+  } catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
+
+// ------------------------------------------------------------ régimen de IVA y criterio de caja
+async function cargaCriterioCaja() {
+  const c = await api(urlE('/fiscal/configuracion'));
+  $('#ccRegimen').value = c.regimenIva;
+  $('#ccIrpf').value = c.regimenIrpf || '';
+  $('#ccSii').value = String(!!c.sii);
+  $('#ccIs').value = String(!!c.tributaIs); $('#ccIsTipo').value = c.isTipo || 'GENERAL';
+  $('#ccIsPct').value = c.isPorcentaje == null ? '' : String(c.isPorcentaje).replace('.', ','); $('#ccIs202').value = c.isModalidad202 || 'ART_40_2';
+  $('#isPanel').hidden = !c.tributaIs;
+  if (c.tributaIs) await verSociedades();
+  [...$('#ccRegimen').options].forEach(o => o.hidden = c.impuestoIndirecto === 'IGIC' && ['SIMPLIFICADO', 'RECARGO_EQUIVALENCIA'].includes(o.value));
+  if (!$('#moAnio').value) $('#moAnio').value = $('#mfAnio').value;
+  $('#moPanel').hidden = !(c.regimenIva === 'SIMPLIFICADO' || c.regimenIrpf === 'OBJETIVA');
+  if (!$('#moPanel').hidden) await verModulos();
+  if (!$('#ccAnio').value) $('#ccAnio').value = $('#mfAnio').value;
+  if (!$('#ccPeriodo').options.length)
+    $('#ccPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
+      .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
+}
+async function verCriterioCaja() {
+  const d = await api(urlE(`/fiscal/criterio-caja?anio=${+$('#ccAnio').value}&periodo=${$('#ccPeriodo').value}`));
+  $('#ccAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#ccLista').innerHTML = (d.lineas.map(l => `<tr><td>${l.libro === 'EMITIDAS' ? 'Emitida' : 'Recibida'}</td><td>${esc(l.factura)}</td><td>${esc(l.tercero)}</td>
+      <td class="num">${fmt(l.total)}</td><td class="num">${fmt(l.base)}</td><td class="num">${fmt(l.cuota)}</td>
+      <td>${l.traspasado ? 'asiento nº ' + l.asientoNumero : 'pendiente'}</td></tr>`).join('')
+    + (d.lineas.length ? `<tr class="total"><td colspan="5">Repercutido ${fmt(d.repercutido)} · deducible ${fmt(d.deducible)}</td><td class="num">${fmt(d.pendiente)}</td><td>sin traspasar</td></tr>` : ''))
+    || '<tr><td colspan="7" class="vacio">Nada devengado por criterio de caja en este periodo.</td></tr>';
+  const asientos = new Map(d.lineas.filter(l => l.traspasado).map(l => [l.asientoId, l.asientoNumero]));
+  $('#ccAsientos').innerHTML = permitido('FISCAL_DIRECTO') && S.ejercicio.estado === 'ABIERTO'
+    ? [...asientos].map(([id, n]) => `<button class="btn" data-anular-cc="${id}">Anular el traspaso nº ${n}</button>`).join(' ') : '';
+}
+$('#ccVer').onclick = () => verCriterioCaja().catch(e => msg($('#ccMsg'), e.message, 'ayuda err-texto'));
+$('#ccGuardar').onclick = async () => {
+  try {
+    const c = await api(urlE('/fiscal/configuracion'), { method: 'PUT', body: JSON.stringify({ regimenIva: $('#ccRegimen').value,
+      regimenIrpf: $('#ccIrpf').value, sii: $('#ccSii').value === 'true', tributaIs: $('#ccIs').value === 'true', isTipo: $('#ccIsTipo').value,
+      isPorcentaje: $('#ccIsPct').value ? num($('#ccIsPct').value) : null, isModalidad202: $('#ccIs202').value }) });
+    msg($('#ccMsg'), {
+      CRITERIO_CAJA: 'Empresa en criterio de caja: las facturas que se contabilicen desde ahora lo aplican.',
+      SIMPLIFICADO: 'Empresa en el régimen simplificado: indica los módulos del año para calcular el 303 y el 131.',
+      RECARGO_EQUIVALENCIA: 'Empresa en recargo de equivalencia: las compras llevan recargo y su IVA va al coste; el IVA de las ventas va a ingresos. No presenta 303.',
+    }[c.regimenIva] || 'Empresa en régimen general. Las facturas ya contabilizadas en criterio de caja lo siguen aplicando.', 'ayuda ok-texto');
+    MF.modelos = []; await cargaFiscal();
+  } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#ccTraspasar').onclick = async () => {
+  try {
+    const t = await post(urlX('/fiscal/criterio-caja/traspasar'), { anio: +$('#ccAnio').value, periodo: $('#ccPeriodo').value });
+    await verCriterioCaja();
+    msg($('#ccMsg'), `Traspaso contabilizado (asiento nº ${t.asientoNumero}): repercutido ${fmt(t.repercutido)}, deducible ${fmt(t.deducible)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#ccAsientos').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-anular-cc]'); if (!b || !confirm('¿Anular el traspaso?')) return;
+  try { await api(urlX('/fiscal/criterio-caja/' + b.dataset.anularCc), { method: 'DELETE' }); await verCriterioCaja(); msg($('#ccMsg'), 'Traspaso anulado.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#ccMsg'), err.message, 'ayuda err-texto'); }
+});
 
 // ------------------------------------------------------------ prorrata
 async function listaProrratas() {
@@ -867,7 +1141,32 @@ async function listaProrratas() {
       <td class="num">${p.operacionesTotales != null ? fmt(p.operacionesTotales) : ''}</td></tr>`).join('')
     || '<tr><td colspan="6" class="vacio">Sin prorrata: se deduce todo el impuesto soportado.</td></tr>';
   if (!$('#prAnio').value) $('#prAnio').value = $('#mfAnio').value;
+  if (!$('#prRegAnio').value) $('#prRegAnio').value = $('#mfAnio').value;
 }
+let PR_ASIENTO = null;
+async function verRegProrrata() {
+  const r = await api(urlE(`/fiscal/prorratas/${+$('#prRegAnio').value}/regularizacion`));
+  PR_ASIENTO = r.asientoId;
+  $('#prRegAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#prRegLista').innerHTML = (r.lineas.map(l => `<tr><td>${esc(l.factura)}${l.bienInversion ? ' (bien de inversión)' : ''}</td><td>${esc(l.tercero)}</td>
+      <td>${fechaES(l.fechaContable)}</td><td class="num">${fmt(l.cuota)}</td><td class="num">${fmt(l.porcentajeAplicado)} %</td>
+      <td class="num">${l.porcentajeDefinitivo} %</td><td class="num">${fmt(l.importe)}</td></tr>`).join('')
+    + (r.lineas.length ? `<tr class="total"><td colspan="6">Total${r.asientoNumero ? ' · contabilizado en el asiento nº ' + r.asientoNumero : ' · sin contabilizar'}</td>
+      <td class="num">${fmt(r.importe)}</td></tr>` : '')) || '<tr><td colspan="7" class="vacio">Sin líneas con prorrata en el año.</td></tr>';
+  $('#prRegAnular').hidden = !r.asientoId || !permitido('FISCAL_DIRECTO');
+}
+$('#prRegVer').onclick = () => verRegProrrata().catch(e => msg($('#prRegMsg'), e.message, 'ayuda err-texto'));
+$('#prRegContabilizar').onclick = async () => {
+  try {
+    const r = await post(urlX('/fiscal/prorratas/regularizar'), { anio: +$('#prRegAnio').value });
+    await verRegProrrata(); msg($('#prRegMsg'), `Regularización contabilizada (asiento nº ${r.asientoNumero}) por ${fmt(r.importe)}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#prRegMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#prRegAnular').onclick = async () => {
+  if (!PR_ASIENTO || !confirm('¿Anular el asiento de regularización por prorrata?')) return;
+  try { await api(urlX('/fiscal/prorratas/regularizacion/' + PR_ASIENTO), { method: 'DELETE' }); await verRegProrrata(); msg($('#prRegMsg'), 'Regularización anulada.', 'ayuda ok-texto'); }
+  catch (e) { msg($('#prRegMsg'), e.message, 'ayuda err-texto'); }
+};
 $('#prGuardar').onclick = async () => {
   try {
     const ent = id => $(id).value.trim() ? parseInt($(id).value, 10) : null, dec = id => $(id).value.trim() ? num($(id).value) : null;
@@ -929,25 +1228,85 @@ function pintaPeriodos() {
 }
 $('#mfModelo').onchange = pintaPeriodos;
 
-const peticionModelo = () => ({ modelo: $('#mfModelo').value, anio: +$('#mfAnio').value, periodo: $('#mfPeriodo').value, solicitaDevolucion: $('#mfDevolucion').value === '1' });
+const peticionModelo = () => ({ modelo: $('#mfModelo').value, anio: +$('#mfAnio').value, periodo: $('#mfPeriodo').value, solicitaDevolucion: $('#mfDevolucion').value === '1',
+  tipoDeclaracion: $('#mfTipo').value });
 
 function muestraDeclaracion(v) {
   MF.actual = v;
   const caja = (n, x, cls) => `<div><span>${n}</span><strong class="${cls || ''}">${fmt(x)}</strong></div>`;
-  $('#mfTitulo').textContent = `Modelo ${v.modelo} · ${v.anio} · ${periodoTxt(v.periodo)}`;
+  $('#mfTitulo').textContent = `Modelo ${v.modelo} · ${v.anio} · ${periodoTxt(v.periodo)}` + (v.tipoDeclaracion && v.tipoDeclaracion !== 'ORDINARIA' ? ` · ${v.tipoDeclaracion.toLowerCase()}` : '');
   $('#mfSub').textContent = `${v.nombre}. Estado: ${estadoDecl[v.estado] || v.estado}. Plazo orientativo de presentación: ${fechaES(v.plazoDesde)} – ${fechaES(v.plazoHasta)}.`;
   $('#mfTotales').innerHTML = caja('Resultado', v.resultado, v.resultado < 0 ? 'estado-mal' : '')
     + (v.aIngresar ? caja('A ingresar', v.aIngresar) : '') + (v.aDevolver ? caja('A devolver', v.aDevolver) : '') + (v.aCompensar ? caja('A compensar', v.aCompensar) : '');
   $('#mfAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
   $('#mfCasillas').innerHTML = v.casillas.map(c => `<tr><td>${esc(c.clave)}</td><td>${esc(c.descripcion)}</td><td class="num">${fmt(c.importe)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="vacio">No hay operaciones en este periodo.</td></tr>';
-  const filas = Array.isArray(v.detalle) ? v.detalle : null;
-  $('#mfDetalle').hidden = !filas;
-  $('#mfDetalleBody').innerHTML = filas ? (filas.map(f => `<tr><td>${esc(f.nif)}</td><td>${esc(f.nombre)}</td><td>${esc(f.clave)}</td><td class="num">${fmt(f.total)}</td>
-    <td class="num">${fmt(f.t1)}</td><td class="num">${fmt(f.t2)}</td><td class="num">${fmt(f.t3)}</td><td class="num">${fmt(f.t4)}</td></tr>`).join('')
-    || '<tr><td colspan="8" class="vacio">Ningún tercero supera el umbral.</td></tr>') : '';
+  const det = v.detalle, th = cols => `<tr>${cols.map(c => c.startsWith('#') ? `<th class="num">${esc(c.slice(1))}</th>` : `<th>${esc(c)}</th>`).join('')}</tr>`;
+  let titulo = 'Terceros declarados', cab = '', cuerpo = '', rect = null;
+  if (['111', '115'].includes(v.modelo) && Array.isArray(det)) {
+    titulo = 'Perceptores'; cab = th(['NIF', 'Nombre', '#Base', '#Retención']);
+    cuerpo = det.map(p => `<tr><td>${esc(p.nif)}</td><td>${esc(p.nombre)}</td><td class="num">${fmt(p.base)}</td><td class="num">${fmt(p.retencion)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="vacio">Sin retenciones en el periodo.</td></tr>';
+  } else if (['190', '180'].includes(v.modelo) && Array.isArray(det)) {
+    titulo = 'Perceptores'; cab = th(['NIF', 'Nombre', 'Provincia', 'Clave', '#%', '#Base', '#Retención']);
+    cuerpo = det.map(p => `<tr><td>${esc(p.nif)}</td><td>${esc(p.nombre)}</td><td>${esc(p.provincia || '—')}</td>
+        <td>${esc(p.clave ? p.clave + (p.subclave || '') : '')}</td><td class="num">${fmt(p.porcentaje)}</td><td class="num">${fmt(p.base)}</td>
+        <td class="num">${fmt(p.retencion)}</td></tr>`).join('') || '<tr><td colspan="7" class="vacio">Sin retenciones en el año.</td></tr>';
+  } else if (v.modelo === '349' && det) {
+    titulo = 'Operadores intracomunitarios'; cab = th(['NIF-IVA', 'Nombre', 'Clave', '#Base imponible']);
+    cuerpo = det.operaciones.map(o => `<tr><td>${esc(o.nifComunitario)}</td><td>${esc(o.nombre)}</td><td>${esc(o.clave)}</td><td class="num">${fmt(o.base)}</td></tr>`).join('')
+      || '<tr><td colspan="4" class="vacio">Sin operaciones en el periodo.</td></tr>';
+    rect = det.rectificaciones;
+  } else if (Array.isArray(det)) {
+    cab = th(['NIF', 'Nombre', 'Clave', '#Total', '#1T', '#2T', '#3T', '#4T']);
+    cuerpo = det.map(f => `<tr><td>${esc(f.nif)}</td><td>${esc(f.nombre)}</td><td>${esc(f.clave)}</td><td class="num">${fmt(f.total)}</td>
+      <td class="num">${fmt(f.t1)}</td><td class="num">${fmt(f.t2)}</td><td class="num">${fmt(f.t3)}</td><td class="num">${fmt(f.t4)}</td></tr>`).join('')
+      || '<tr><td colspan="8" class="vacio">Ningún tercero supera el umbral.</td></tr>';
+  }
+  $('#mfDetalle').hidden = !cab;
+  $('#mfDetalleTitulo').textContent = titulo; $('#mfDetalleHead').innerHTML = cab; $('#mfDetalleBody').innerHTML = cuerpo;
+  $('#mfRectificaciones').hidden = !(rect && rect.length);
+  $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
+      <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
+  // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
+  const conFichero = !!v.id && ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
+  $('#mfFichero').hidden = !conFichero;
+  if (conFichero) {
+    const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
+    $('#mfFDomL').hidden = !autoliq || v.resultado <= 0;
+    $('#mfFIbanL').hidden = !autoliq;
+    $('#mfFTelL').hidden = $('#mfFConL').hidden = autoliq;
+    $('#mfFExoL').hidden = !(v.modelo === '303' && ['4T', '12'].includes(v.periodo));
+    msg($('#mfFMsg'), '', 'ayuda');
+  }
   $('#mfResultado').hidden = false;
 }
+
+async function descargaPost(url, cuerpo, porDefecto) {
+  const r = await fetch(url, { method: 'POST', headers: { Authorization: 'Bearer ' + S.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(cuerpo) });
+  if (!r.ok) {
+    let m = r.statusText;
+    try { const j = await r.json(); m = (j.error || m) + (j.detalle ? ' (' + j.detalle + ')' : ''); } catch { /* sin cuerpo */ }
+    throw new Error(m);
+  }
+  const nombre = ((/filename=([^;]+)/.exec(r.headers.get('Content-Disposition') || '') || [])[1] || porDefecto).replace(/"/g, '');
+  const enlace = URL.createObjectURL(await r.blob());
+  const a = Object.assign(document.createElement('a'), { href: enlace, download: nombre });
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(enlace);
+  return nombre;
+}
+
+$('#mfFDescargar').onclick = async () => {
+  const v = MF.actual; if (!v || !v.id) return;
+  try {
+    const nombre = await descargaPost(urlE(`/fiscal/declaraciones/${v.id}/fichero`), {
+      domiciliar: $('#mfFDom').value === 'true' && !$('#mfFDomL').hidden, iban: $('#mfFIban').value || null,
+      telefono: $('#mfFTel').value || null, contacto: $('#mfFCon').value || null,
+      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden }, 'modelo.txt');
+    msg($('#mfFMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
+  } catch (e) { msg($('#mfFMsg'), e.message, 'ayuda err-texto'); }
+};
 
 $('#mfCalcular').onclick = async () => {
   try { muestraDeclaracion(await post(urlE('/fiscal/calcular'), peticionModelo())); msg($('#mfMsg'), '', 'ayuda'); $('#mfResultado').scrollIntoView({ behavior: 'smooth' }); }
@@ -965,7 +1324,7 @@ $('#mfGuardar').onclick = async () => {
 async function cargaDeclaraciones() {
   const filas = await api(urlE('/fiscal/declaraciones?anio=' + ($('#mfAnio').value || new Date().getFullYear())));
   const directo = permitido('FISCAL_DIRECTO'), abierto = S.ejercicio.estado === 'ABIERTO';
-  $('#mfLista').innerHTML = filas.length ? filas.map(d => `<tr><td>${esc(d.modelo)} <small>${esc(d.nombre)}</small></td><td>${d.anio}</td><td>${esc(periodoTxt(d.periodo))}</td>
+  $('#mfLista').innerHTML = filas.length ? filas.map(d => `<tr><td>${esc(d.modelo)} <small>${esc(d.nombre)}</small></td><td>${d.anio}</td><td>${esc(periodoTxt(d.periodo))}${d.numeroPresentacion > 1 ? ` <small>nº ${d.numeroPresentacion} · ${esc((d.tipoDeclaracion || '').toLowerCase())}</small>` : ''}</td>
     <td>${estadoDecl[d.estado] || esc(d.estado)}</td><td class="num">${d.resultado == null ? '' : fmt(d.resultado)}</td>
     <td>${d.fechaPresentacion ? fechaES(d.fechaPresentacion) + (d.justificante ? ' · ' + esc(d.justificante) : '') : ''}</td>
     <td>${d.asientoNumero ? 'nº ' + d.asientoNumero : ''}</td>
@@ -1081,7 +1440,7 @@ $('#inEstado').onchange = () => listaInmovilizado().catch(e => msg($('#inMsg'), 
 $('#inLista').addEventListener('click', e => { const b = e.target.closest('button[data-ver]'); if (b) verFicha(b.dataset.ver).catch(err => msg($('#inMsg'), err.message, 'ayuda err-texto')); });
 
 $('#inNuevoBtn').onclick = () => {
-  ['#inDesc', '#inCodigo', '#inValor', '#inMeses', '#inContra', '#inFIni'].forEach(i => $(i).value = '');
+  ['#inDesc', '#inCodigo', '#inValor', '#inMeses', '#inContra', '#inFIni', '#inCoef'].forEach(i => $(i).value = ''); $('#inMetodo').value = '';
   $('#inResidual').value = '0'; $('#inPrevia').value = '0'; $('#inFAdq').value = dentroEj(hoy());
   msg($('#inNuevoMsg'), '', 'ayuda'); $('#inNuevo').hidden = false; $('#inNuevo').scrollIntoView({ behavior: 'smooth' });
 };
@@ -1094,6 +1453,7 @@ $('#inGuardar').onclick = async () => {
       descripcion: $('#inDesc').value, categoriaId: +$('#inCat').value, canalId: +$('#inCanal').value, codigo: $('#inCodigo').value || null,
       fechaAdquisicion: $('#inFAdq').value, fechaInicioAmortizacion: $('#inFIni').value || null, valorAdquisicion: num($('#inValor').value),
       valorResidual: num($('#inResidual').value), vidaUtilMeses: $('#inMeses').value ? parseInt($('#inMeses').value, 10) : null,
+      metodo: $('#inMetodo').value || null, coeficiente: $('#inCoef').value.trim() ? num($('#inCoef').value) : null,
       amortizacionPrevia: num($('#inPrevia').value), cuentaContrapartidaId: contra ? cuentaPorCodigo(contra) : null
     });
     $('#inNuevo').hidden = true;
@@ -1107,7 +1467,8 @@ function pintaFicha(f) {
   IN.ficha = f; const e = f.elemento;
   $('#inFichaTitulo').textContent = `${e.codigo} · ${e.descripcion}`;
   $('#inFichaSub').textContent = `${e.categoria} · canal ${e.canal} · adquirido el ${fechaES(e.fechaAdquisicion)} por ${fmt(e.valorAdquisicion)}`
-    + (e.metodo === 'LINEAL' ? ` · amortización lineal en ${e.vidaUtilMeses} meses desde el ${fechaES(e.fechaInicioAmortizacion)} hasta el ${fechaES(f.finAmortizacion)}` : ' · no se amortiza')
+    + (e.metodo === 'NO_AMORTIZA' || !f.finAmortizacion ? ' · no se amortiza'
+       : ` · amortización ${metodoTxt[e.metodo] || e.metodo}${e.vidaUtilMeses ? ' en ' + e.vidaUtilMeses + ' meses' : ''}${e.coeficiente ? ' al ' + fmt(e.coeficiente) + ' %' : ''} desde el ${fechaES(e.fechaInicioAmortizacion)} hasta el ${fechaES(f.finAmortizacion)}`)
     + (e.valorResidual ? ` · valor residual ${fmt(e.valorResidual)}` : '') + (e.amortizacionPrevia ? ` · amortización previa ${fmt(e.amortizacionPrevia)}` : '')
     + ` · ${estadoInm[e.estado]}${e.fechaBaja ? ' el ' + fechaES(e.fechaBaja) : ''}.`;
   $('#inCuadro').innerHTML = f.cuadro.map(t => `<tr><td>${fechaES(t.desde)}</td><td>${fechaES(t.hasta)}</td><td class="num">${fmt(t.cuota)}</td>
@@ -1116,6 +1477,10 @@ function pintaFicha(f) {
       <td class="num">${fmt(m.acumulada)}</td><td>${m.asientoNumero ? 'nº ' + m.asientoNumero + ' (' + esc(m.ejercicio) + ')' : ''}</td></tr>`).join('')
     || '<tr><td colspan="4" class="vacio">Todavía no se ha contabilizado amortización.</td></tr>';
   pintaBienInversion(e).catch(err => msg($('#inFichaMsg'), err.message, 'ayuda err-texto'));
+  $('#inFiscalResumen').textContent = e.metodoFiscal
+    ? `Fiscal: ${metodoTxt[e.metodoFiscal] || e.metodoFiscal}${e.vidaUtilMesesFiscal ? ' en ' + e.vidaUtilMesesFiscal + ' meses' : ''}${e.coeficienteFiscal ? ' al ' + fmt(e.coeficienteFiscal) + ' %' : ''}. La diferencia con la contable es un ajuste en el Impuesto sobre Sociedades.`
+    : 'La amortización fiscal es igual que la contable.';
+  $('#inFMetodo').value = e.metodoFiscal || ''; $('#inFMeses').value = e.vidaUtilMesesFiscal || ''; $('#inFCoef').value = e.coeficienteFiscal ? String(e.coeficienteFiscal).replace('.', ',') : '';
   $('#inBFecha').value = dentroEj(hoy()); $('#inBTipo').value = 'BAJA'; $('#inBImporte').value = '0'; $('#inBCobro').value = '';
   $('#inBaja').hidden = e.estado !== 'ALTA'; $('#inAnularBaja').hidden = e.estado === 'ALTA';
   $$('#inBajaForm .cab2').forEach(x => x.hidden = e.estado !== 'ALTA');
@@ -1139,6 +1504,30 @@ $('#inAnularBaja').onclick = async () => {
   if (!IN.ficha || !confirm('¿Anular la baja? El elemento vuelve a estar en alta.')) return;
   try { await api(urlX(`/inmovilizado/${IN.ficha.elemento.id}/baja`), { method: 'DELETE' }); await verFicha(IN.ficha.elemento.id); await listaInmovilizado(); msg($('#inFichaMsg'), 'Baja anulada.', 'ayuda ok-texto'); }
   catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+
+const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
+$('#inFGuardar').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    const f = await api(urlE(`/inmovilizado/${IN.ficha.elemento.id}/amortizacion-fiscal`), { method: 'PUT', body: JSON.stringify({
+      metodo: $('#inFMetodo').value || null, vidaUtilMeses: $('#inFMeses').value ? parseInt($('#inFMeses').value, 10) : null,
+      coeficiente: $('#inFCoef').value.trim() ? num($('#inFCoef').value) : null }) });
+    pintaFicha(f); msg($('#inFichaMsg'), 'Amortización fiscal guardada.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#dfVer').onclick = async () => {
+  try {
+    const d = await api(urlX(`/inmovilizado/diferencias-fiscales?tipo=${num($('#dfTipo').value) || 25}`));
+    $('#dfAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    $('#dfLista').innerHTML = d.elementos.map(x => `<tr><td>${esc(x.codigo)}</td><td>${esc(x.descripcion)}</td>
+        <td>${esc(metodoTxt[x.metodoContable] || x.metodoContable)} / ${esc(metodoTxt[x.metodoFiscal] || x.metodoFiscal)}</td>
+        <td class="num">${fmt(x.contable)}</td><td class="num">${fmt(x.fiscal)}</td><td class="num">${fmt(x.ajuste)}</td><td class="num">${fmt(x.acumulada)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="vacio">Sin diferencias.</td></tr>';
+    const caja = (n, v) => `<div><span>${n}</span><strong>${fmt(v)}</strong></div>`;
+    $('#dfTotales').innerHTML = caja('Aumentos', d.aumentos) + caja('Disminuciones', d.disminuciones) + caja('Activo diferido (4740)', d.activoDiferido)
+      + caja('Pasivo diferido (479)', d.pasivoDiferido);
+  } catch (e) { msg($('#inMsg'), e.message, 'ayuda err-texto'); }
 };
 
 // ---- bienes de inversión (regularización del IVA/IGIC, arts. 107-110 LIVA)
@@ -1265,21 +1654,31 @@ function cargaBalances() {
 }
 
 function pintaControlesBalance() {
-  const inf = $('#baInforme').value;
-  $('#baDesdeL').hidden = inf === 'situacion';
+  const inf = $('#baInforme').value, anual = ['patrimonio-neto', 'flujos-efectivo', 'memoria'].includes(inf);
+  $('#baDesdeL').hidden = inf === 'situacion' || anual;
+  $('#baHasta').parentElement.hidden = anual;
   $('#baNivelL').hidden = $('#baIncluirL').hidden = inf !== 'sumas-saldos';
+  $('#baFormatoL').hidden = !['situacion', 'perdidas-ganancias'].includes(inf);
 }
 $('#baInforme').onchange = () => { pintaControlesBalance(); verBalance(); };
 
 async function verBalance() {
   const inf = $('#baInforme').value;
-  const q = new URLSearchParams({ canalId: $('#baCanal').value, hasta: $('#baHasta').value });
-  if (inf !== 'situacion') q.set('desde', $('#baDesde').value);
+  const anual = ['patrimonio-neto', 'flujos-efectivo', 'memoria'].includes(inf);
+  const q = new URLSearchParams({ canalId: $('#baCanal').value });
+  if (!anual) q.set('hasta', $('#baHasta').value);
+  if (!anual && inf !== 'situacion') q.set('desde', $('#baDesde').value);
   if (inf === 'sumas-saldos') { q.set('nivel', $('#baNivel').value); q.set('incluir', $('#baIncluir').value); }
+  if (['situacion', 'perdidas-ganancias'].includes(inf) && $('#baFormato').value) q.set('formato', $('#baFormato').value);
   try {
     const r = await api(urlX(`/balances/${inf}?${q}`));
     msg($('#baMsg'), '', 'ayuda');
-    if (inf === 'sumas-saldos') pintaSumasSaldos(r); else pintaEstado(r);
+    $('#baTabla').hidden = inf === 'memoria'; $('#baExtra').innerHTML = '';
+    if (inf === 'sumas-saldos') pintaSumasSaldos(r);
+    else if (inf === 'patrimonio-neto') pintaEcpn(r);
+    else if (inf === 'flujos-efectivo') pintaEfe(r);
+    else if (inf === 'memoria') pintaMemoria(r);
+    else pintaEstado(r);
   } catch (e) { msg($('#baMsg'), e.message, 'ayuda err-texto'); }
 }
 $('#baVer').onclick = verBalance;
@@ -1322,11 +1721,379 @@ function pintaEstado(r) {
     }).join('');
   $('#baPista').textContent = 'Pulsa una partida para ver sus cuentas. Solo se muestran las partidas con importe.';
 }
+function cabeceraAnual(titulo, r) {
+  $('#baTitulo').textContent = `${titulo} · ${S.empresa.nombre}`;
+  $('#baSub').textContent = `Ejercicio ${r.ejercicio} (del ${fechaES(r.desde)} al ${fechaES(r.hasta)})` + (r.canal ? ` · canal ${r.canal.codigo}` : '');
+  $('#baAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#baPista').textContent = '';
+}
+const filaLinea = l => `<tr class="partida ${l.esTotal && l.nivel === 0 ? 'total' : ''}"><td style="padding-left:${8 + l.nivel * 18}px">${esc(l.texto)}</td>
+  <td class="num">${l.esTotal || l.importe ? fmt(l.importe) : ''}</td></tr>`;
+function pintaEcpn(r) {
+  cabeceraAnual('Estado de cambios en el patrimonio neto', r);
+  $('#baHead').innerHTML = `<tr><th>A) Estado de ingresos y gastos reconocidos</th><th class="num">${esc(r.ejercicio)}</th></tr>`;
+  $('#baBody').innerHTML = r.ingresosGastos.map(filaLinea).join('');
+  const cols = r.columnas;
+  $('#baExtra').innerHTML = `<h3>B) Estado total de cambios en el patrimonio neto</h3><div style="overflow-x:auto"><table class="balance">
+    <thead><tr><th></th>${cols.map(c => `<th class="num">${esc(c.texto)}</th>`).join('')}</tr></thead>
+    <tbody>${r.cambios.map(f => `<tr class="${f.esTotal ? 'total' : ''}"><td>${esc(f.texto)}</td>${cols.map(c => `<td class="num">${f.importes[c.id] ? fmt(f.importes[c.id]) : ''}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div><p class="ayuda">Patrimonio neto según el balance: ${fmt(r.patrimonioNetoBalance)}.</p>`;
+}
+function pintaEfe(r) {
+  cabeceraAnual('Estado de flujos de efectivo', r);
+  $('#baHead').innerHTML = `<tr><th>Concepto</th><th class="num">${esc(r.ejercicio)}</th></tr>`;
+  $('#baBody').innerHTML = r.lineas.map(filaLinea).join('');
+}
+function pintaMemoria(r) {
+  cabeceraAnual('Memoria (borrador)', { ...r, canal: null });
+  $('#baExtra').innerHTML = `<div class="memoria"><p><strong>${esc(r.empresa)}</strong> · NIF ${esc(r.nif)} · modelo ${r.formato === 'NORMAL' ? 'normal' : 'PYMES/abreviado'}</p>`
+    + r.secciones.map(sec => `<h3>${esc(sec.numero)}. ${esc(sec.titulo)}</h3>${sec.parrafos.map(p => `<p>${esc(p)}</p>`).join('')}`
+      + sec.tablas.map(t => `<table class="balance"><thead><tr>${t.cabecera.map((c, i) => `<th class="${i ? 'num' : ''}">${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${t.filas.map(f => `<tr>${f.map((v, i) => `<td class="${i ? 'num' : ''}">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`).join('')).join('')
+    + '</div>';
+}
+
 $('#baBody').addEventListener('click', e => {
   const tr = e.target.closest('tr[data-abre]'); if (!tr) return;
   const abierta = tr.classList.toggle('abierta');
   $$(`#baBody tr[data-de="${CSS.escape(tr.dataset.abre)}"]`).forEach(d => d.hidden = !abierta);
 });
+
+// ------------------------------------------------------------ analítica
+const ANA = { dims: [], informe: null, sin: [] };
+const elemsAna = () => ANA.dims.flatMap(d => d.elementos.map(e => ({ ...e, dim: d.codigo })));
+
+async function cargaDimensiones() {
+  ANA.dims = permitido('ANALITICA') || permitido('PRESUPUESTOS') ? await api(urlE('/analitica/dimensiones')) : [];
+  const hay = elemsAna().length > 0;
+  $('#thAnalitica').hidden = !hay; $('#ayudaAnalitica').hidden = !hay;
+  $('#pieLineas').colSpan = hay ? 4 : 3;
+}
+
+// «T1», «T1:60 T2:40», «CC/T1:50»: sin porcentaje, lo que falte hasta 100 en su dimensión a partes iguales
+function parseAnalitica(texto) {
+  const t = String(texto || '').trim();
+  if (!t) return null;
+  const els = elemsAna().filter(e => e.activo), filas = [];
+  for (const tok of t.split(/[\s,;]+/).filter(Boolean)) {
+    const [ref, pct] = tok.split(':');
+    const [a, b] = ref.toUpperCase().split('/');
+    const c = b ? els.filter(e => e.dim === a && e.codigo === b) : els.filter(e => e.codigo === a);
+    if (!c.length) throw new Error(`El elemento analítico «${ref}» no existe o está de baja.`);
+    if (c.length > 1) throw new Error(`«${ref}» está en varias dimensiones: escribe DIMENSIÓN/${a}.`);
+    filas.push({ elementoId: c[0].id, dim: c[0].dimensionId, porcentaje: pct === undefined ? null : num(pct) });
+  }
+  for (const dim of new Set(filas.map(f => f.dim))) {
+    const g = filas.filter(f => f.dim === dim), sin = g.filter(f => f.porcentaje === null);
+    if (!sin.length) continue;
+    const resto = 100 - g.reduce((s, f) => s + (f.porcentaje || 0), 0);
+    const cuota = Math.round(resto / sin.length * 10000) / 10000;
+    sin.forEach((f, i) => f.porcentaje = i === sin.length - 1 ? Math.round((resto - cuota * (sin.length - 1)) * 10000) / 10000 : cuota);
+  }
+  return filas.map(f => ({ elementoId: f.elementoId, porcentaje: f.porcentaje }));
+}
+function textoAnalitica(imps) {
+  const els = elemsAna();
+  return (imps || []).map(i => {
+    const repetido = els.filter(e => e.codigo === i.elemento).length > 1;
+    return (repetido ? i.dimension + '/' : '') + i.elemento + (+i.porcentaje === 100 ? '' : ':' + String(+i.porcentaje).replace('.', ','));
+  }).join(' ');
+}
+
+async function cargaAnalitica() {
+  await cargaDimensiones();
+  const dims = ANA.dims.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
+  const sel = $('#anDim').value;
+  $('#anDim').innerHTML = dims || '<option value="">(no hay dimensiones)</option>';
+  if (sel && ANA.dims.some(d => String(d.id) === sel)) $('#anDim').value = sel;
+  $('#anNeDim').innerHTML = dims;
+  if (!$('#anCanal').options.length) $('#anCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  if (!$('#anDesde').value) { $('#anDesde').value = S.ejercicio.fechaInicio; $('#anHasta').value = S.ejercicio.fechaFin; }
+  pintaPadres(); pintaDimensiones();
+  await cargaRepartos();
+  if (ANA.dims.length) await verInforme();
+}
+
+function pintaPadres() {
+  const d = ANA.dims.find(x => String(x.id) === $('#anNeDim').value);
+  $('#anNePadre').innerHTML = '<option value="">(ninguno)</option>' +
+    (d ? d.elementos.map(e => `<option value="${e.id}">${esc(e.codigo)} · ${esc(e.nombre)}</option>`).join('') : '');
+}
+$('#anNeDim').onchange = pintaPadres;
+
+function pintaDimensiones() {
+  const escribe = permitido('ANALITICA:ESCRITURA');
+  if (!ANA.dims.length) { $('#anDims').innerHTML = '<tr><td colspan="4" class="vacio">Todavía no hay dimensiones.</td></tr>'; return; }
+  const filas = [];
+  for (const d of ANA.dims) {
+    filas.push(`<tr class="asiento-cab"><td>${esc(d.codigo)}</td><td>${esc(d.nombre)}</td><td></td>
+      <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-dimdel="${d.id}" type="button">Borrar</button></div>` : ''}</td></tr>`);
+    const hijos = p => d.elementos.filter(e => (e.padreId || null) === p);
+    const recorre = (p, n) => hijos(p).forEach(e => {
+      filas.push(`<tr><td style="padding-left:${12 + n * 18}px">${esc(e.codigo)}</td><td>${esc(e.nombre)}</td>
+        <td>${e.activo ? 'Activo' : '<span class="estado-cerrado">De baja</span>'}</td>
+        <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-elact="${e.id}" type="button">${e.activo ? 'Dar de baja' : 'Reactivar'}</button>
+          <button class="btn" data-eldel="${e.id}" type="button">Borrar</button></div>` : ''}</td></tr>`);
+      recorre(e.id, n + 1);
+    });
+    recorre(null, 0);
+  }
+  $('#anDims').innerHTML = filas.join('');
+}
+
+$('#anDims').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.dimdel) {
+      if (!confirm('¿Borrar la dimensión y sus elementos?')) return;
+      await api(urlE('/analitica/dimensiones/' + b.dataset.dimdel), { method: 'DELETE' });
+    } else if (b.dataset.eldel) {
+      await api(urlE('/analitica/elementos/' + b.dataset.eldel), { method: 'DELETE' });
+    } else if (b.dataset.elact) {
+      const el = elemsAna().find(x => String(x.id) === b.dataset.elact);
+      await put(urlE('/analitica/elementos/' + el.id), { codigo: el.codigo, nombre: el.nombre, padreId: el.padreId, activo: !el.activo });
+    } else return;
+    msg($('#anDimMsg'), 'Hecho.', 'ayuda ok-texto');
+    await cargaAnalitica();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#anNdCrear').onclick = async () => {
+  try {
+    await post(urlE('/analitica/dimensiones'), { codigo: $('#anNdCodigo').value, nombre: $('#anNdNombre').value });
+    $('#anNdCodigo').value = $('#anNdNombre').value = '';
+    msg($('#anDimMsg'), 'Dimensión creada.', 'ayuda ok-texto'); await cargaAnalitica();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+};
+$('#anNeCrear').onclick = async () => {
+  try {
+    const dim = $('#anNeDim').value;
+    await post(urlE(`/analitica/dimensiones/${dim}/elementos`),
+      { codigo: $('#anNeCodigo').value, nombre: $('#anNeNombre').value, padreId: $('#anNePadre').value ? +$('#anNePadre').value : null });
+    $('#anNeCodigo').value = $('#anNeNombre').value = '';
+    msg($('#anDimMsg'), 'Elemento creado.', 'ayuda ok-texto'); await cargaAnalitica(); $('#anNeDim').value = dim; pintaPadres();
+  } catch (err) { msg($('#anDimMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function cargaRepartos() {
+  const rs = await api(urlE('/analitica/repartos'));
+  const escribe = permitido('ANALITICA:ESCRITURA');
+  $('#anRepartos').innerHTML = rs.length ? rs.map(r => `<tr><td>${esc(r.cuenta)}</td><td class="nombre">${esc(r.cuentaNombre)}</td>
+    <td>${r.requiereAnalitica ? 'Sí' : ''}</td><td>${esc(textoAnalitica(r.reparto)) || '—'}</td>
+    <td>${escribe ? `<div class="fila-acciones"><button class="btn" data-rpedit="${esc(r.cuenta)}" type="button">Editar</button>
+      <button class="btn" data-rpdel="${esc(r.cuenta)}" type="button">Quitar</button></div>` : ''}</td></tr>`).join('')
+    : '<tr><td colspan="5" class="vacio">Ninguna cuenta tiene reparto por defecto.</td></tr>';
+  ANA.repartos = rs;
+}
+$('#anRepartos').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.rpedit) {
+    const r = ANA.repartos.find(x => x.cuenta === b.dataset.rpedit);
+    $('#anRpCuenta').value = r.cuenta; $('#anRpReparto').value = textoAnalitica(r.reparto); $('#anRpExige').value = String(r.requiereAnalitica);
+    $('#anRpCuenta').focus();
+  } else if (b.dataset.rpdel) {
+    try { await put(urlE('/analitica/repartos'), { cuenta: b.dataset.rpdel, requiereAnalitica: false, reparto: [] }); await cargaRepartos(); }
+    catch (err) { msg($('#anRpMsg'), err.message, 'ayuda err-texto'); }
+  }
+});
+$('#anRpGuardar').onclick = async () => {
+  try {
+    await put(urlE('/analitica/repartos'), { cuenta: $('#anRpCuenta').value.trim(), requiereAnalitica: $('#anRpExige').value === 'true',
+      reparto: parseAnalitica($('#anRpReparto').value) || [] });
+    msg($('#anRpMsg'), 'Reparto guardado.', 'ayuda ok-texto');
+    $('#anRpCuenta').value = $('#anRpReparto').value = ''; $('#anRpExige').value = 'false';
+    await cargaRepartos();
+  } catch (err) { msg($('#anRpMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function verInforme() {
+  if (!$('#anDim').value) return;
+  try {
+    const q = new URLSearchParams({ dimensionId: $('#anDim').value, canalId: $('#anCanal').value, desde: $('#anDesde').value,
+      hasta: $('#anHasta').value, detalle: $('#anDetalle').value });
+    const r = ANA.informe = await api(urlX('/analitica/informe?' + q));
+    $('#anSub').textContent = `${r.dimension} · canal ${r.canal} · del ${fechaES(r.desde)} al ${fechaES(r.hasta)}`;
+    $('#anAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+    const fila = (f, cls) => `<tr class="${cls}"><td style="padding-left:${6 + f.nivel * 18}px">${esc(f.codigo)} ${esc(f.nombre)}</td>
+      <td class="num">${fmt(f.ingresos)}</td><td class="num">${fmt(f.gastos)}</td><td class="num">${fmt(f.resultado)}</td><td class="num">${f.otros ? fmt(f.otros) : ''}</td></tr>`;
+    $('#anBody').innerHTML = r.filas.map(f => fila(f, f.esCuenta ? 'detalle' : 'partida')).join('')
+      + fila(r.sinAsignar, 'partida') + fila(r.total, 'total');
+    msg($('#anMsg'), '', 'ayuda');
+  } catch (err) { msg($('#anMsg'), err.message, 'ayuda err-texto'); }
+}
+$('#anVer').onclick = verInforme;
+$('#anImprimir').onclick = () => window.print();
+
+$('#anSinVer').onclick = async () => {
+  msg($('#anSinMsg'), '', 'ayuda');
+  await buscaSinImputar();
+};
+async function buscaSinImputar() {
+  try {
+    const q = new URLSearchParams({ dimensionId: $('#anDim').value, desde: $('#anDesde').value, hasta: $('#anHasta').value });
+    ANA.sin = await api(urlX('/analitica/sin-imputar?' + q));
+    const escribe = permitido('ANALITICA:ESCRITURA') || permitido('CONTABILIDAD:ESCRITURA');
+    $('#anSinBody').innerHTML = ANA.sin.length ? ANA.sin.map(a => `<tr data-ap="${a.apunteId}"><td>${fechaES(a.fecha)}</td><td>${a.numero}</td>
+      <td>${esc(a.cuenta)}</td><td class="nombre">${esc(a.concepto)}</td><td class="num">${fmt(a.debe || -a.haber)}</td>
+      <td>${esc(textoAnalitica(a.imputaciones)) || '—'}</td>
+      <td>${escribe ? `<input data-rep value="${esc(textoAnalitica(a.imputaciones))}" aria-label="Nuevo reparto">` : ''}</td>
+      <td>${escribe ? '<button class="btn" data-imputa type="button">Guardar</button>' : ''}</td></tr>`).join('')
+      : '<tr><td colspan="8" class="vacio">Todo está imputado en esta dimensión.</td></tr>';
+    if (ANA.sin.length === 500) msg($('#anSinMsg'), 'Se muestran los 500 primeros.', 'ayuda');
+  } catch (err) { msg($('#anSinMsg'), err.message, 'ayuda err-texto'); }
+}
+$('#anSinBody').addEventListener('click', async e => {
+  if (!e.target.matches('[data-imputa]')) return;
+  const tr = e.target.closest('tr');
+  try {
+    await put(urlE('/analitica/apuntes/' + tr.dataset.ap), parseAnalitica(tr.querySelector('[data-rep]').value) || []);
+    msg($('#anSinMsg'), 'Analítica del apunte guardada.', 'ayuda ok-texto');
+    await buscaSinImputar(); verInforme();
+  } catch (err) { msg($('#anSinMsg'), err.message, 'ayuda err-texto'); }
+});
+
+// ------------------------------------------------------------ presupuestos
+const PR = { lista: [], actual: null };
+
+async function cargaPresupuestos() {
+  await cargaDimensiones();
+  $('#ppNCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+  $('#ppGEj').innerHTML = (S.listaEjercicios || []).filter(x => x.id !== S.ejercicio.id)
+    .map(x => `<option value="${x.id}">${esc(x.codigo)}</option>`).join('');
+  $('#ppGDim').innerHTML = '<option value="">(sin analítica)</option>' + ANA.dims.map(d => `<option value="${d.id}">${esc(d.codigo)}</option>`).join('');
+  PR.lista = await api(urlX('/presupuestos'));
+  $('#ppLista').innerHTML = PR.lista.length ? PR.lista.map(p => `<tr><td>${esc(p.codigo)}</td><td>${p.version}</td><td>${esc(p.nombre)}</td>
+    <td>${esc(p.canal || '')}</td><td>${esc(p.estado)}</td><td class="num">${fmt(p.ingresos)}</td><td class="num">${fmt(p.gastos)}</td>
+    <td class="num">${fmt(p.ingresos - p.gastos)}</td><td><button class="btn" data-pr="${p.id}" type="button">Abrir</button></td></tr>`).join('')
+    : '<tr><td colspan="9" class="vacio">No hay presupuestos en este ejercicio.</td></tr>';
+  if (PR.actual && !PR.lista.some(p => p.id === PR.actual.id)) { PR.actual = null; $('#ppPanel').hidden = true; }
+}
+$('#ppLista').addEventListener('click', e => { const b = e.target.closest('[data-pr]'); if (b) abrePresupuesto(+b.dataset.pr).catch(err => alert(err.message)); });
+
+$('#ppNCrear').onclick = async () => {
+  try {
+    const r = await post(urlX('/presupuestos'), { codigo: $('#ppNCodigo').value, nombre: $('#ppNNombre').value, canalId: +$('#ppNCanal').value });
+    $('#ppNCodigo').value = $('#ppNNombre').value = '';
+    msg($('#ppMsg'), 'Presupuesto creado.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await abrePresupuesto(r.id);
+  } catch (err) { msg($('#ppMsg'), err.message, 'ayuda err-texto'); }
+};
+
+async function abrePresupuesto(id) {
+  pintaPresupuesto(await api(urlE('/presupuestos/' + id)));
+  $('#ppComp').innerHTML = ''; $('#ppTotales').innerHTML = ''; $('#ppAvisos').innerHTML = '';
+  msg($('#ppMsg2'), '', 'ayuda');
+  await comparaPresupuesto();
+}
+
+function pintaPresupuesto(p) {
+  PR.actual = p;
+  const borrador = p.estado === 'BORRADOR', escribe = permitido('PRESUPUESTOS:ESCRITURA') && borrador;
+  $('#ppPanel').hidden = false;
+  $('#ppTitulo').textContent = `${p.codigo} v${p.version} · ${p.nombre} · canal ${p.canal || ''} · ${p.estado.toLowerCase()}`;
+  $('#ppGuardar').hidden = $('#ppAnadir').hidden = $('#ppEliminar').hidden = $('#ppAprobar').hidden = !borrador;
+  $('#ppABorrador').hidden = $('#ppCerrar').hidden = p.estado !== 'APROBADO';
+  $('#ppHead').innerHTML = `<tr><th>Cuenta</th><th>Elemento</th>${p.periodos.map(x => `<th class="num">${esc(x)}</th>`).join('')}<th class="num">Total</th><th></th></tr>`;
+  $('#ppHasta').innerHTML = p.periodos.map((x, i) => `<option value="${i + 1}" ${i === p.periodos.length - 1 ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  PR.filas = p.lineas.map(l => ({ cuenta: l.cuentaPatron, nombre: l.cuentaNombre, elemento: l.elemento ? l.elemento.split('/')[1] : '',
+    elementoTxt: l.elemento || '', importes: l.importes.map(String) }));
+  pintaFilasPresupuesto(escribe);
+}
+
+function pintaFilasPresupuesto(escribe = PR.actual.estado === 'BORRADOR' && permitido('PRESUPUESTOS:ESCRITURA')) {
+  const n = PR.actual.periodos.length;
+  const ro = escribe ? '' : 'readonly';
+  $('#ppLineas').innerHTML = PR.filas.map((f, i) => `<tr data-i="${i}">
+    <td class="cta"><input data-f="cuenta" value="${esc(f.cuenta)}" ${ro} aria-label="Cuenta" title="${esc(f.nombre || '')}"></td>
+    <td class="cta"><input data-f="elemento" value="${esc(f.elementoTxt)}" ${ro} aria-label="Elemento"></td>
+    ${f.importes.map((x, j) => `<td><input class="num" data-m="${j}" inputmode="decimal" value="${num(x) ? fmt(num(x)) : ''}" ${ro} aria-label="Mes ${j + 1}"></td>`).join('')}
+    <td><input class="num" data-f="total" inputmode="decimal" value="${fmt(f.importes.reduce((s, x) => s + num(x), 0))}" ${ro} aria-label="Total"></td>
+    <td>${escribe ? `<button class="x" type="button" data-del="${i}" aria-label="Quitar línea">×</button>` : ''}</td></tr>`).join('')
+    || `<tr><td colspan="${n + 4}" class="vacio">Sin líneas.</td></tr>`;
+  pintaPiePresupuesto();
+}
+function pintaPiePresupuesto() {
+  const n = PR.actual.periodos.length, tot = Array(n).fill(0);
+  const signo = c => c.startsWith('7') ? 1 : c.startsWith('6') ? -1 : 0;
+  PR.filas.forEach(f => f.importes.forEach((x, j) => tot[j] += signo(f.cuenta) * num(x)));
+  $('#ppPie').innerHTML = `<tr><td colspan="2">Resultado (7 − 6)</td>${tot.map(x => `<td class="num">${fmt(x)}</td>`).join('')}
+    <td class="num">${fmt(tot.reduce((s, x) => s + x, 0))}</td><td></td></tr>`;
+}
+const repartoLineal = (total, n) => {
+  const c = Math.round(total / n * 100) / 100, r = Array(n).fill(c);
+  r[n - 1] = Math.round((total - c * (n - 1)) * 100) / 100; return r.map(String);
+};
+$('#ppLineas').addEventListener('change', e => {
+  const tr = e.target.closest('tr'); if (!tr || !PR.filas[+tr.dataset.i]) return;
+  const f = PR.filas[+tr.dataset.i];
+  if (e.target.dataset.m !== undefined) { f.importes[+e.target.dataset.m] = String(num(e.target.value)); pintaFilasPresupuesto(); }
+  else if (e.target.dataset.f === 'total') { f.importes = repartoLineal(num(e.target.value), PR.actual.periodos.length); pintaFilasPresupuesto(); }
+  else if (e.target.dataset.f === 'cuenta') { f.cuenta = e.target.value.trim(); pintaPiePresupuesto(); }
+  else if (e.target.dataset.f === 'elemento') f.elementoTxt = e.target.value.trim();
+});
+$('#ppLineas').addEventListener('click', e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  PR.filas.splice(+d, 1); pintaFilasPresupuesto();
+});
+$('#ppAnadir').onclick = () => {
+  PR.filas.push({ cuenta: '', elementoTxt: '', importes: Array(PR.actual.periodos.length).fill('0') });
+  pintaFilasPresupuesto();
+  $$('#ppLineas tr').at(-1).querySelector('input').focus();
+};
+$('#ppGuardar').onclick = async () => {
+  try {
+    const lineas = PR.filas.filter(f => f.cuenta).map(f => {
+      const a = parseAnalitica(f.elementoTxt);
+      if (a && a.length > 1) throw new Error(`La línea ${f.cuenta} lleva más de un elemento: crea una línea por elemento.`);
+      return { cuentaPatron: f.cuenta, elementoId: a ? a[0].elementoId : null, importes: f.importes.map(num) };
+    });
+    pintaPresupuesto(await put(urlE(`/presupuestos/${PR.actual.id}/lineas`), { lineas }));
+    msg($('#ppMsg2'), 'Líneas guardadas.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await comparaPresupuesto();
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+$('#ppGenerar').onclick = async () => {
+  if (PR.filas.length && !confirm('Se sustituyen las líneas actuales. ¿Seguir?')) return;
+  try {
+    pintaPresupuesto(await post(urlE(`/presupuestos/${PR.actual.id}/desde-real`), { ejercicioOrigenId: +$('#ppGEj').value,
+      incrementoPorcentaje: num($('#ppGInc').value), digitos: +$('#ppGDig').value, dimensionId: $('#ppGDim').value ? +$('#ppGDim').value : null }));
+    msg($('#ppMsg2'), 'Líneas generadas: revísalas y guarda si cambias algo.', 'ayuda ok-texto');
+    await cargaPresupuestos(); await comparaPresupuesto();
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+async function estadoPresupuesto(estado) {
+  try {
+    await post(urlE(`/presupuestos/${PR.actual.id}/estado`), { estado });
+    await cargaPresupuestos(); await abrePresupuesto(PR.actual.id);
+  } catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+}
+$('#ppAprobar').onclick = () => estadoPresupuesto('APROBADO');
+$('#ppABorrador').onclick = () => estadoPresupuesto('BORRADOR');
+$('#ppCerrar').onclick = () => estadoPresupuesto('CERRADO');
+$('#ppVersion').onclick = async () => {
+  try { const r = await post(urlE(`/presupuestos/${PR.actual.id}/nueva-version`)); await cargaPresupuestos(); await abrePresupuesto(r.id); }
+  catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+$('#ppEliminar').onclick = async () => {
+  if (!confirm('¿Eliminar este presupuesto?')) return;
+  try { await api(urlE('/presupuestos/' + PR.actual.id), { method: 'DELETE' }); PR.actual = null; $('#ppPanel').hidden = true; await cargaPresupuestos(); }
+  catch (err) { msg($('#ppMsg2'), err.message, 'ayuda err-texto'); }
+};
+
+async function comparaPresupuesto() {
+  if (!PR.actual) return;
+  const c = await api(urlE(`/presupuestos/${PR.actual.id}/comparativa?hastaPeriodo=${$('#ppHasta').value || ''}`));
+  const caja = (t, v) => `<div><span>${t}</span><strong>${fmt(v)}</strong></div>`;
+  $('#ppTotales').innerHTML = caja('Ingresos presupuestados', c.ingresosPresupuesto) + caja('Ingresos reales', c.ingresosReal)
+    + caja('Gastos presupuestados', c.gastosPresupuesto) + caja('Gastos reales', c.gastosReal)
+    + caja('Resultado presupuestado', c.resultadoPresupuesto) + caja('Resultado real', c.resultadoReal);
+  $('#ppAvisos').innerHTML = c.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#ppComp').innerHTML = c.filas.map(f => `<tr><td>${esc(f.cuentaPatron)}</td><td class="nombre">${esc(f.cuentaNombre || '')}</td><td>${esc(f.elemento || '')}</td>
+    <td class="num">${fmt(f.presupuesto)}</td><td class="num">${fmt(f.real)}</td>
+    <td class="num ${f.desviacion ? (f.favorable ? 'fav' : 'desf') : ''}">${fmt(f.desviacion)}</td>
+    <td class="num">${f.ejecucion === null ? '—' : fmt(f.ejecucion) + ' %'}</td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">Sin líneas.</td></tr>';
+}
+$('#ppComparar').onclick = () => comparaPresupuesto().catch(err => msg($('#ppMsg2'), err.message, 'ayuda err-texto'));
 
 // ------------------------------------------------------------ cierre del ejercicio
 async function cargaCierre() {
@@ -1492,10 +2259,164 @@ async function entrarAdmin() {
 
 function abreTabAdmin(t) {
   $$('#navAdmin button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === t)));
-  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas';
-  (t === 'usuarios' ? cargaUsuarios : cargaEmpresasAdmin)().catch(e => alert(e.message));
+  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas'; $('#adm-catalogos').hidden = t !== 'catalogos';
+  ({ usuarios: cargaUsuarios, empresas: cargaEmpresasAdmin, catalogos: cargaCatalogos })[t]().catch(e => alert(e.message));
 }
 $('#navAdmin').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTabAdmin(b.dataset.tab); });
+
+// ---- catálogos comunes y formas de pago de cada empresa
+// Cada catálogo: columnas de la tabla, campos del formulario (k, etiqueta, tipo; solo: no editable al modificar) y cómo se guarda.
+const pctVigente = t => { const v = t.vigencias.find(x => !x.fechaHasta) || t.vigencias[t.vigencias.length - 1]; return v ? v : null; };
+// fechaHasta es el día en que empieza la siguiente: se muestra el anterior
+const diaAntes = d => { const x = new Date(d + 'T00:00:00'); x.setDate(x.getDate() - 1); return x.toLocaleDateString('es-ES'); };
+const vigTxt = t => t.vigencias.map(v => `${v.porcentaje} %${v.recargo ? ' (RE ' + v.recargo + ' %)' : ''} desde ${fechaES(v.fechaDesde)}${v.fechaHasta ? ' hasta ' + diaAntes(v.fechaHasta) : ''}`).join('<br>');
+const siNo = b => b ? 'sí' : 'no';
+const CAT = {
+  iva: {
+    url: '/api/admin/catalogos/tipos-iva', ayuda: 'Los tipos no se borran: se dan de baja o se abre una vigencia nueva con el porcentaje que entra en vigor.',
+    cols: ['Impuesto', 'Código', 'Nombre', 'Vigencias', 'Exento', 'Activo'],
+    fila: t => [esc(t.impuesto), esc(t.codigo), esc(t.nombre), vigTxt(t), siNo(t.esExento), siNo(t.activo)],
+    campos: [['impuesto', 'Impuesto', ['IVA', 'IGIC', 'IPSI'], 1], ['codigo', 'Código', 'text', 1], ['nombre', 'Nombre', 'text'],
+      ['porcentaje', 'Porcentaje inicial', 'number', 1], ['recargo', 'Recargo de equivalencia', 'number', 1], ['fechaDesde', 'Se aplica desde', 'date', 1],
+      ['esExento', 'Exento', 'check'], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => id ? put(`/api/admin/catalogos/tipos-iva/${id}`, o) : post('/api/admin/catalogos/tipos-iva', o), vigencias: 'tipos-iva', recargo: true,
+  },
+  ret: {
+    url: '/api/admin/catalogos/tipos-retencion', ayuda: 'El modelo de ingreso (111, 115…) y la clave del resumen anual (190, 180) deciden dónde se declara cada retención.',
+    cols: ['Código', 'Nombre', 'Naturaleza', 'Modelo', 'Clave', 'Vigencias', 'Activo'],
+    fila: t => [esc(t.codigo), esc(t.nombre), esc(t.naturaleza), esc(t.modeloIngreso || ''), esc(t.claveResumen || ''), vigTxt(t), siNo(t.activo)],
+    campos: [['codigo', 'Código', 'text', 1], ['nombre', 'Nombre', 'text'],
+      ['naturaleza', 'Naturaleza', ['PROFESIONAL', 'ARRENDAMIENTO', 'CAPITAL', 'AGRICOLA', 'TRABAJO', 'OTRA']],
+      ['modeloIngreso', 'Modelo de ingreso', ['', '111', '115', '123', '124', '126', '216']], ['claveResumen', 'Clave del resumen anual', 'text'],
+      ['porcentaje', 'Porcentaje inicial', 'number', 1], ['fechaDesde', 'Se aplica desde', 'date', 1], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => id ? put(`/api/admin/catalogos/tipos-retencion/${id}`, o) : post('/api/admin/catalogos/tipos-retencion', o), vigencias: 'tipos-retencion',
+  },
+  mod: {
+    url: '/api/admin/catalogos/modelos-fiscales', ayuda: 'Un modelo desactivado deja de ofrecerse en Modelos fiscales de todas las empresas.', sinForm: true,
+    cols: ['Administración', 'Modelo', 'Nombre', 'Impuesto', 'Activo'],
+    fila: m => [esc(m.administracion), esc(m.codigo), esc(m.nombre), esc(m.impuesto),
+      `<button class="btn" type="button" data-act="${m.id}" data-v="${!m.activo}">${m.activo ? 'Desactivar' : 'Activar'}</button>`],
+  },
+  pais: {
+    url: '/api/admin/catalogos/paises', ayuda: 'El código ISO de 2 letras identifica el país: guardar uno existente lo modifica.', clave: 'iso2',
+    cols: ['ISO 2', 'ISO 3', 'Nombre', 'UE', 'Prefijo VIES'],
+    fila: p => [esc(p.iso2), esc(p.iso3), esc(p.nombre), siNo(p.esUe), esc(p.prefijoVies || '')],
+    campos: [['iso2', 'ISO 2', 'text', 1], ['iso3', 'ISO 3', 'text'], ['nombre', 'Nombre', 'text'], ['prefijoVies', 'Prefijo VIES', 'text'], ['esUe', 'Unión Europea', 'check']],
+    guarda: o => put('/api/admin/catalogos/paises', o),
+  },
+  banco: {
+    url: '/api/admin/catalogos/bancos', ayuda: 'Entidades bancarias (código de 4 dígitos del IBAN español y BIC).',
+    cols: ['Entidad', 'BIC', 'Nombre', 'País', 'Activo'],
+    fila: b => [esc(b.codigoEntidad || ''), esc(b.bic || ''), esc(b.nombre), esc(b.pais || ''), siNo(b.activo)],
+    campos: [['codigoEntidad', 'Código de entidad', 'text'], ['bic', 'BIC', 'text'], ['nombre', 'Nombre', 'text'], ['pais', 'País (ISO 2)', 'text'], ['activo', 'Activo', 'check']],
+    guarda: (o, id) => put('/api/admin/catalogos/bancos', { ...o, id: id || 0 }),
+  },
+  iae: {
+    url: '/api/admin/catalogos/epigrafes', ayuda: 'Sección 1 empresarial, 2 profesional, 3 artística. Se muestran como mucho 300: usa el buscador.', busca: true,
+    cols: ['Sección', 'Código', 'Descripción', 'Profesional'],
+    fila: e => [e.seccion, esc(e.codigo), esc(e.descripcion), siNo(e.esProfesional)],
+    campos: [['seccion', 'Sección', ['1', '2', '3'], 1], ['codigo', 'Código', 'text', 1], ['descripcion', 'Descripción', 'text'], ['esProfesional', 'Actividad profesional', 'check']],
+    guarda: o => put('/api/admin/catalogos/epigrafes', { ...o, seccion: +o.seccion }),
+  },
+  fp: {
+    url: () => `/api/empresas/${$('#caEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
+    cols: ['Código', 'Nombre', 'Tipo', 'Plazos', 'Días al primero', 'Días entre plazos', ''],
+    fila: f => [esc(f.codigo), esc(f.nombre), esc(f.tipo), f.numPlazos, f.diasPrimerPlazo, f.diasEntrePlazos,
+      `<button class="btn" type="button" data-borra="${f.id}">Borrar</button>`],
+    campos: [['codigo', 'Código', 'text'], ['nombre', 'Nombre', 'text'], ['tipo', 'Tipo', ['TRANSFERENCIA', 'RECIBO', 'EFECTIVO', 'TARJETA', 'PAGARE', 'CHEQUE', 'OTRO']],
+      ['numPlazos', 'Número de plazos', 'number'], ['diasPrimerPlazo', 'Días hasta el primero', 'number'], ['diasEntrePlazos', 'Días entre plazos', 'number']],
+    guarda: (o, id) => { const u = `/api/empresas/${$('#caEmpresa').value}/formas-pago`;
+      const c = { ...o, numPlazos: +o.numPlazos || 1, diasPrimerPlazo: +o.diasPrimerPlazo || 0, diasEntrePlazos: +o.diasEntrePlazos || 0 };
+      return id ? put(`${u}/${id}`, c) : post(u, c); },
+  },
+};
+const CA = { filas: [], sel: null };
+
+async function cargaCatalogos() {
+  if (!$('#caEmpresa').options.length) {
+    const emps = await api('/api/admin/empresas');
+    $('#caEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
+  }
+  await pintaCatalogo();
+}
+
+async function pintaCatalogo() {
+  const c = CAT[$('#caTipo').value];
+  $('#caEmpresaL').hidden = !c.empresa; $('#caBuscaL').hidden = !c.busca;
+  $('#caAyuda').textContent = c.ayuda; msg($('#caMsg'), ''); msg($('#caFormMsg'), '');
+  $('#caFormPanel').hidden = !!c.sinForm; $('#caVigPanel').hidden = true;
+  let url = typeof c.url === 'function' ? c.url() : c.url;
+  if (c.busca && $('#caBusca').value.trim()) url += '?q=' + encodeURIComponent($('#caBusca').value.trim());
+  if (c.empresa && !$('#caEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
+  $('#caHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
+  $('#caBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
+    : `<td><button class="btn" type="button" data-edita="${i}">Modificar</button></td>`}</tr>`).join('')
+    || `<tr><td colspan="${c.cols.length + 1}" class="vacio">No hay registros.</td></tr>`;
+  if (!c.sinForm) formCatalogo(null);
+}
+
+function formCatalogo(fila) {
+  const c = CAT[$('#caTipo').value];
+  CA.sel = fila;
+  $('#caFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
+  $('#caForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
+      const v = fila ? fila[k] : (tipo === 'check' ? k === 'activo' : '');
+      const bloquea = fila && soloAlta ? ' disabled' : '';
+      if (fila && c.vigencias && ['porcentaje', 'recargo', 'fechaDesde'].includes(k)) return '';
+      if (Array.isArray(tipo)) return `<label>${etq} <select data-k="${k}"${bloquea}>${tipo.map(o => `<option value="${o}"${String(v ?? '') === o ? ' selected' : ''}>${o || '—'}</option>`).join('')}</select></label>`;
+      if (tipo === 'check') return `<label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" data-k="${k}"${v ? ' checked' : ''}> ${etq}</label>`;
+      return `<label>${etq} <input data-k="${k}" type="${tipo}"${tipo === 'number' ? ' step="0.01"' : ''} value="${esc(v ?? '')}"${bloquea}></label>`;
+    }).join('');
+  $('#caVigPanel').hidden = !(fila && c.vigencias);
+  if (fila && c.vigencias) {
+    $('#caVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
+    $('#caVigRecL').hidden = !c.recargo; $('#caVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#caVigDesde').value = '';
+    msg($('#caVigMsg'), '');
+  }
+}
+
+$('#caTipo').onchange = () => pintaCatalogo().catch(e => msg($('#caMsg'), e.message, 'ayuda err-texto'));
+$('#caEmpresa').onchange = $('#caTipo').onchange;
+$('#caBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#caTipo').onchange(); });
+$('#caNuevo').onclick = () => formCatalogo(null);
+$('#caBody').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const c = CAT[$('#caTipo').value];
+  try {
+    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#caFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (b.dataset.act) { await put(`/api/admin/catalogos/modelos-fiscales/${b.dataset.act}/activo`, { activo: b.dataset.v === 'true' }); }
+    if (b.dataset.borra) {
+      if (!confirm('¿Borrar la forma de pago?')) return;
+      await api(`${c.url()}/${b.dataset.borra}`, { method: 'DELETE' });
+    }
+    await pintaCatalogo();
+    msg($('#caMsg'), 'Hecho.', 'ayuda ok-texto');
+  } catch (err) { msg($('#caMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#caGuardar').onclick = async () => {
+  const c = CAT[$('#caTipo').value];
+  const o = { ...(CA.sel || {}) };
+  $$('#caForm [data-k]').forEach(el => {
+    o[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : (el.value === '' ? null : el.value);
+  });
+  if ('recargo' in o && o.recargo == null) o.recargo = 0;
+  try {
+    await c.guarda(o, CA.sel?.id);
+    await pintaCatalogo();
+    msg($('#caFormMsg'), 'Guardado.', 'ok-texto');
+  } catch (err) { msg($('#caFormMsg'), err.message, 'err-texto'); }
+};
+$('#caVigGuardar').onclick = async () => {
+  const c = CAT[$('#caTipo').value];
+  try {
+    await post(`/api/admin/catalogos/${c.vigencias}/${CA.sel.id}/vigencias`,
+      { porcentaje: +$('#caVigPct').value, recargo: +$('#caVigRec').value || 0, fechaDesde: $('#caVigDesde').value || null });
+    const id = CA.sel.id;
+    await pintaCatalogo();
+    formCatalogo(CA.filas.find(f => f.id === id));
+    msg($('#caVigMsg'), 'Vigencia abierta.', 'ok-texto');
+  } catch (err) { msg($('#caVigMsg'), err.message, 'err-texto'); }
+};
 
 // ---- usuarios
 async function cargaUsuarios() {

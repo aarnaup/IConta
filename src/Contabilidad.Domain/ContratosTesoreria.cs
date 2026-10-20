@@ -96,3 +96,16 @@ public sealed class PrevisionDto
     public decimal Pagos { get; set; }
     public decimal Neto => Cobros - Pagos;
 }
+
+/// <summary>Cobro o pago registrado de un vencimiento.</summary>
+public sealed class CobroPagoDto
+{
+    public long Id { get; set; }
+    public DateOnly Fecha { get; set; }
+    public decimal Importe { get; set; }
+    public long? AsientoId { get; set; }
+    public int? AsientoNumero { get; set; }
+    public string? Ejercicio { get; set; }
+    public bool Conciliado { get; set; }
+    public bool EnRemesa { get; set; }
+}

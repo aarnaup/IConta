@@ -10,6 +10,8 @@ public sealed class CalcularModeloCmd
     public string Periodo { get; set; } = "";
     /// <summary>Si el resultado es a favor del contribuyente en el último periodo: pedir devolución en vez de compensar.</summary>
     public bool SolicitaDevolucion { get; set; }
+    /// <summary>ORDINARIA, COMPLEMENTARIA o SUSTITUTIVA (las dos últimas, sobre una presentada).</summary>
+    public string TipoDeclaracion { get; set; } = "ORDINARIA";
 }
 
 public sealed class PresentarDeclaracionCmd
@@ -26,6 +28,7 @@ public sealed class DeclaracionResumenDto
     public int Anio { get; set; }
     public string Periodo { get; set; } = "";
     public short NumeroPresentacion { get; set; }
+    public string TipoDeclaracion { get; set; } = "";
     public string Estado { get; set; } = "";
     public decimal? Resultado { get; set; }
     public decimal? AIngresar { get; set; }
@@ -42,7 +45,8 @@ public sealed class DeclaracionResumenDto
 public sealed record DeclaracionVista(
     long? Id, string Modelo, string Nombre, string Estado, int Anio, string Periodo, DateOnly FechaInicio, DateOnly FechaFin,
     IReadOnlyList<Casilla> Casillas, decimal Resultado, decimal AIngresar, decimal ADevolver, decimal ACompensar,
-    IReadOnlyList<string> Avisos, object? Detalle, DateOnly PlazoDesde, DateOnly PlazoHasta);
+    IReadOnlyList<string> Avisos, object? Detalle, DateOnly PlazoDesde, DateOnly PlazoHasta,
+    short NumeroPresentacion = 1, string TipoDeclaracion = "ORDINARIA");
 
 /// <summary>Libro registro de facturas expedidas o recibidas de un periodo (por fecha contable, como las autoliquidaciones).</summary>
 public sealed record LibroRegistroDto(

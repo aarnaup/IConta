@@ -143,4 +143,20 @@ public class FormatoAeatTests
         Assert.Equal("3", r.Cell("N8").GetString());
         Assert.Equal(210m, (decimal)r.Cell("AD8").GetDouble());
     }
+
+    [Fact]
+    public void Criterio_de_caja_lleva_los_cobros()
+    {
+        var l = L(21, 1000, 210);
+        l.CriterioCaja = true;
+        l.Cobros = [new(new DateOnly(2026, 6, 1), 605, "01", "ES9121000418450200051332"), new(new DateOnly(2026, 7, 1), 605, "05", null)];
+        var cols = FormatoAeat.Expedidas;
+        var f = FormatoAeat.Filas("EMITIDAS", 2026, "2T", [l]);
+        Assert.Equal(2, f.Count);
+        Assert.Equal("01/06/2026", Col(cols, f[0], "Cobro (Operación Criterio de Caja)", "Fecha"));
+        Assert.Equal(605m, Col(cols, f[0], "Cobro (Operación Criterio de Caja)", "Importe"));
+        Assert.Equal("05", Col(cols, f[1], "Cobro (Operación Criterio de Caja)", "Medio Utilizado"));
+        Assert.Equal("0007", Col(cols, f[1], "Identificación de la Factura", "Número"));   // la fila extra repite la factura
+        Assert.Null(Col(cols, f[1], "Base Imponible"));
+    }
 }

@@ -67,6 +67,7 @@
   <nav aria-label="Administración" id="navAdmin">
     <button data-tab="usuarios" aria-pressed="true">Usuarios</button>
     <button data-tab="empresas" aria-pressed="false">Empresas</button>
+    <button data-tab="catalogos" aria-pressed="false">Catálogos</button>
   </nav>
 
   <div id="adm-usuarios" class="stack">
@@ -147,6 +148,39 @@
       <p class="ayuda">Un ejercicio partido va, por ejemplo, del 01/07/2026 al 30/06/2027. No puede solaparse con otro de la misma empresa.</p>
     </div>
   </div>
+
+  <div id="adm-catalogos" class="stack" hidden>
+    <div class="panel">
+      <h2>Catálogos</h2>
+      <div class="cab2">
+        <label>Catálogo <select id="caTipo">
+          <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
+          <option value="mod">Modelos fiscales</option><option value="pais">Países</option><option value="banco">Bancos</option>
+          <option value="iae">Epígrafes del IAE</option><option value="fp">Formas de pago de una empresa</option></select></label>
+        <label id="caEmpresaL" hidden>Empresa <select id="caEmpresa"></select></label>
+        <label id="caBuscaL" hidden>Buscar <input id="caBusca" placeholder="código o descripción"></label>
+      </div>
+      <p class="ayuda" id="caAyuda"></p>
+      <table><thead id="caHead"></thead><tbody id="caBody"></tbody></table>
+      <span id="caMsg" role="status"></span>
+    </div>
+    <div class="panel" id="caFormPanel">
+      <h2 id="caFormTitulo">Nuevo</h2>
+      <div class="cab2" id="caForm"></div>
+      <div class="acciones"><button class="btn primario" id="caGuardar" type="button">Guardar</button>
+        <button class="btn" id="caNuevo" type="button">Limpiar</button><span id="caFormMsg" role="status"></span></div>
+    </div>
+    <div class="panel" id="caVigPanel" hidden>
+      <h2 id="caVigTitulo">Nueva vigencia</h2>
+      <div class="cab2">
+        <label>Porcentaje <input id="caVigPct" type="number" step="0.01" min="0" max="100"></label>
+        <label id="caVigRecL">Recargo de equivalencia <input id="caVigRec" type="number" step="0.01" min="0" max="100" value="0"></label>
+        <label>Se aplica desde <input id="caVigDesde" type="date"></label>
+      </div>
+      <div class="acciones"><button class="btn" id="caVigGuardar" type="button">Abrir vigencia</button><span id="caVigMsg" role="status"></span></div>
+      <p class="ayuda">La vigencia anterior se cierra en esa fecha: las facturas anteriores siguen con su porcentaje.</p>
+    </div>
+  </div>
 </section>
 
 <!-- ===================== PORTAL DE EMPRESA ===================== -->
@@ -164,6 +198,8 @@
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
     <button data-tab="inmovilizado" data-req="INMOVILIZADO:LECTURA" aria-pressed="false">Inmovilizado</button>
     <button data-tab="balances" data-req="BALANCES" aria-pressed="false">Balances</button>
+    <button data-tab="analitica" data-req="ANALITICA" aria-pressed="false">Analítica</button>
+    <button data-tab="presupuestos" data-req="PRESUPUESTOS" aria-pressed="false">Presupuestos</button>
     <button data-tab="cierre" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Cierre</button>
   </nav>
 
@@ -179,11 +215,12 @@
         <table>
           <thead><tr>
             <th style="width:130px">Cuenta</th><th>Descripción</th><th style="width:90px">Canal</th>
+            <th id="thAnalitica" style="width:150px" hidden>Analítica</th>
             <th class="num" style="width:110px">Debe</th><th class="num" style="width:110px">Haber</th><th style="width:28px"></th>
           </tr></thead>
           <tbody id="lineas"></tbody>
           <tfoot><tr>
-            <td colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
+            <td id="pieLineas" colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
             <td class="num" id="totDebe" style="border:0;font-weight:600">0,00</td>
             <td class="num" id="totHaber" style="border:0;font-weight:600">0,00</td><td style="border:0"></td>
           </tr></tfoot>
@@ -194,7 +231,8 @@
           <button class="btn" id="borrador" data-guarda type="button">Guardar borrador</button>
           <span id="msg" role="status" aria-live="polite"></span>
         </div>
-        <p class="ayuda">Importes con coma decimal (1234,56). Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
+        <p class="ayuda">Importes con coma decimal (1234,56). <span id="ayudaAnalitica" hidden>Analítica: código del elemento (T1) o reparto
+          (T1:60 T2:40; DIM/T1 si el código se repite en otra dimensión); en blanco se aplica el reparto por defecto de la cuenta.</span> Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
       </div>
       <aside class="panel" aria-label="Reparto por canal">
         <h2>Reparto por canal</h2>
@@ -219,6 +257,7 @@
           <label>Canal <select id="fCanal"></select></label>
           <label>Retención IRPF <select id="fRet"></select></label>
           <label>Forma de pago <select id="fForma"></select></label>
+          <label id="f349Label" hidden>Clave del 349 <select id="f349"></select></label>
         </div>
         <table>
           <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th><th style="width:220px">Operación</th>
@@ -246,7 +285,7 @@
 
       <div class="panel">
         <h2>Facturas del ejercicio</h2>
-        <table><thead><tr><th>Libro</th><th>Número</th><th>Fecha</th><th>Tercero</th><th class="num">Base</th><th class="num">Cuota</th><th class="num">Retención</th><th class="num">Total</th><th>Estado</th></tr></thead>
+        <table><thead><tr><th>Libro</th><th>Número</th><th>Fecha</th><th>Tercero</th><th class="num">Base</th><th class="num">Cuota</th><th class="num">Retención</th><th class="num">Total</th><th>Estado</th><th></th></tr></thead>
         <tbody id="fLista"></tbody></table>
       </div>
 
@@ -257,6 +296,9 @@
             <label>NIF / CIF <input id="tNif"></label>
             <label>Nombre <input id="tNombre"></label>
             <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option></select></label>
+            <label>Código postal <input id="tCp" inputmode="numeric" maxlength="10"></label>
+            <label>País <input id="tPais" maxlength="2" value="ES" style="width:4em" title="Código ISO de 2 letras (FR, DE, IE…)"></label>
+            <label><input type="checkbox" id="tCaja"> Proveedor en criterio de caja</label>
           </div>
           <div class="acciones"><button class="btn" id="tCrear" type="button">Crear tercero</button><span id="tMsg" role="status"></span></div>
         </details>
@@ -303,6 +345,10 @@
         <table><thead><tr><th>Vence</th><th>Tipo</th><th>Tercero</th><th>Factura</th><th>Plazo</th><th class="num">Importe</th><th class="num">Pendiente</th><th>Estado</th><th></th></tr></thead>
         <tbody id="vBody"></tbody></table>
         <p id="vMsg" class="ayuda" role="status"></p>
+        <div id="vCobros" hidden>
+          <h3 id="vCobrosTitulo"></h3>
+          <table><thead><tr><th>Fecha</th><th class="num">Importe</th><th>Asiento</th><th>Estado</th><th></th></tr></thead><tbody id="vCobrosBody"></tbody></table>
+        </div>
       </div>
 
       <div class="panel" id="liqPanel" hidden>
@@ -381,6 +427,7 @@
           <label>Hasta <input type="date" id="coHasta"></label>
           <button class="btn" id="coVer" type="button">Ver</button>
           <button class="btn primario" id="coAuto" data-req="TESORERIA:ESCRITURA" type="button">Conciliar automáticamente</button>
+          <button class="btn" id="coReglas" data-req="TESORERIA_DIRECTO" type="button" title="Contabiliza y concilia las líneas cuyo concepto coincide con una regla">Aplicar reglas</button>
         </div>
         <div class="fila-acciones" data-req="TESORERIA:ESCRITURA">
           <label>Extracto <input type="file" id="coFichero" accept=".n43,.aeb,.txt,.csv,.q43"></label>
@@ -418,6 +465,21 @@
             <button class="btn" id="coAccionNo" type="button">Cancelar</button>
           </div>
         </div>
+        <details>
+          <summary>Reglas por concepto</summary>
+          <p class="ayuda">Si el concepto de una línea pendiente contiene el texto (sin distinguir mayúsculas ni acentos), «Aplicar reglas» la contabiliza
+            contra la cuenta indicada y la concilia. Útil para comisiones, recibos de suministros, cuotas…</p>
+          <table><thead><tr><th>Texto</th><th>Signo</th><th>Cuenta</th><th>Concepto del asiento</th><th class="num">Orden</th><th></th></tr></thead><tbody id="rcLista"></tbody></table>
+          <div class="cab2" data-req="TESORERIA:ESCRITURA">
+            <label>Texto <input id="rcTexto" maxlength="100" placeholder="comision, endesa…"></label>
+            <label>Signo <select id="rcSigno"><option value="CARGO">Cargos (salidas)</option><option value="ABONO">Abonos (entradas)</option><option value="AMBOS">Ambos</option></select></label>
+            <label>Cuenta <input id="rcCuenta" list="dl-cuentas" placeholder="626…, 628…"></label>
+            <label>Canal <select id="rcCanal"></select></label>
+            <label>Concepto del asiento <input id="rcConcepto" maxlength="250" placeholder="El de la línea"></label>
+            <label>Orden <input id="rcOrden" inputmode="numeric" value="100" style="width:6em"></label>
+          </div>
+          <div class="fila-acciones" data-req="TESORERIA:ESCRITURA"><button class="btn" id="rcCrear" type="button">Añadir regla</button></div>
+        </details>
         <h3>Últimas conciliaciones</h3>
         <table><thead><tr><th>Cuándo</th><th>Tipo</th><th class="num">Importe</th><th>Banco</th><th>Asientos</th><th></th></tr></thead><tbody id="coRecientes"></tbody></table>
         <h3>Extractos importados</h3>
@@ -451,6 +513,8 @@
           <label>Modelo <select id="mfModelo"></select></label>
           <label>Año <input id="mfAnio" type="number" min="2000" max="2100"></label>
           <label>Periodo <select id="mfPeriodo"></select></label>
+          <label>Tipo <select id="mfTipo"><option value="ORDINARIA">Ordinaria</option><option value="COMPLEMENTARIA">Complementaria</option>
+            <option value="SUSTITUTIVA">Sustitutiva</option></select></label>
           <label id="mfDevolucionLabel"><span>Resultado a favor</span>
             <select id="mfDevolucion"><option value="0">Compensar en periodos siguientes</option><option value="1">Solicitar devolución (último periodo)</option></select></label>
         </div>
@@ -468,10 +532,27 @@
         <ul id="mfAvisos" class="avisos"></ul>
         <table><thead><tr><th>Casilla</th><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody id="mfCasillas"></tbody></table>
         <div id="mfDetalle" hidden>
-          <h3>Terceros declarados</h3>
-          <table><thead><tr><th>NIF</th><th>Nombre</th><th>Clave</th><th class="num">Total</th><th class="num">1T</th><th class="num">2T</th><th class="num">3T</th><th class="num">4T</th></tr></thead>
-          <tbody id="mfDetalleBody"></tbody></table>
+          <h3 id="mfDetalleTitulo">Terceros declarados</h3>
+          <div style="overflow-x:auto"><table><thead id="mfDetalleHead"></thead><tbody id="mfDetalleBody"></tbody></table></div>
+          <div id="mfRectificaciones" hidden>
+            <h3>Rectificaciones de periodos anteriores</h3>
+            <table><thead><tr><th>NIF-IVA</th><th>Nombre</th><th>Clave</th><th>Periodo</th><th class="num">Base anterior</th><th class="num">Base rectificada</th></tr></thead>
+            <tbody id="mfRectBody"></tbody></table>
+          </div>
         </div>
+        <details class="nuevo" id="mfFichero" hidden><summary>Fichero para la Agencia Tributaria</summary>
+          <p class="ayuda">Fichero con el diseño de registro oficial, para importarlo en el formulario de la Sede electrónica («Importar») o
+            presentarlo por fichero. Revísalo en el formulario antes de presentar.</p>
+          <div class="cab2">
+            <label id="mfFDomL">Pago <select id="mfFDom"><option value="false">Ingreso (NRC del banco)</option><option value="true">Domiciliación</option></select></label>
+            <label id="mfFIbanL">IBAN (domiciliación o devolución) <input id="mfFIban" maxlength="34" placeholder="ES00 0000 0000 0000 0000 0000"></label>
+            <label id="mfFTelL">Teléfono de contacto <input id="mfFTel" maxlength="15"></label>
+            <label id="mfFConL">Persona de contacto <input id="mfFCon" maxlength="40"></label>
+            <label id="mfFExoL">Exonerado del 390 <select id="mfFExo"><option value="false">No (presento el 390)</option><option value="true">Sí (página 4)</option></select></label>
+            <label>&nbsp;<button class="btn primario" id="mfFDescargar" type="button">Descargar fichero</button></label>
+          </div>
+          <p id="mfFMsg" class="ayuda" role="status"></p>
+        </details>
       </div>
 
       <div class="panel" id="mfPresentarPanel" hidden>
@@ -532,6 +613,101 @@
         </div>
       </div>
 
+      <div class="panel" id="siiPanel">
+        <h2>SII · Suministro Inmediato de Información</h2>
+        <p class="ayuda">Envío de los libros de facturas expedidas y recibidas a la AEAT (versión 1.1). Sin certificado configurado en el servidor
+          se descarga el mensaje XML para enviarlo con otra herramienta, y luego se puede registrar aquí la respuesta para marcar las facturas.
+          Las ya aceptadas se vuelven a enviar como modificación (A1).</p>
+        <div class="fila-acciones">
+          <label>Libro <select id="siiLibro"><option value="EMITIDAS">Facturas expedidas</option><option value="RECIBIDAS">Facturas recibidas</option></select></label>
+          <label>Año <input id="siiAnio" type="number" min="2017" max="2100" style="width:7em"></label>
+          <label>Mes <select id="siiMes"></select></label>
+          <button class="btn primario" id="siiVer" type="button">Ver</button>
+          <button class="btn" id="siiXml" type="button">Descargar XML</button>
+          <button class="btn" id="siiEnviar" data-req="FISCAL_DIRECTO" type="button">Enviar a la AEAT</button>
+        </div>
+        <p id="siiMsg" class="ayuda" role="status"></p>
+        <ul id="siiResultado" class="avisos"></ul>
+        <table><thead><tr><th><input type="checkbox" id="siiTodas" aria-label="Elegir todas"></th><th>Factura</th><th>Fecha</th><th>Tercero</th>
+          <th class="num">Total</th><th>Estado</th><th>CSV / error</th></tr></thead><tbody id="siiLista"></tbody></table>
+        <details class="nuevo" data-req="FISCAL_DIRECTO"><summary>Registrar la respuesta de un envío hecho con otra herramienta</summary>
+          <textarea id="siiRespuesta" rows="5" style="width:100%;margin-top:8px" placeholder="Pega aquí el XML de respuesta de la AEAT"></textarea>
+          <div class="fila-acciones"><button class="btn" id="siiRegistrar" type="button">Registrar respuesta</button></div>
+        </details>
+      </div>
+
+      <div class="panel">
+        <h2>Régimen de IVA, IRPF y criterio de caja</h2>
+        <p class="ayuda">En el criterio de caja el impuesto de las operaciones interiores se devenga al cobrar y se deduce al pagar (como tarde, el 31 de
+          diciembre del año siguiente). Las facturas lo dejan en 4779 / 4729 y aquí se traspasa a 477 / 472 lo de cada periodo antes de liquidar.
+          Las compras a proveedores acogidos al criterio de caja también se deducen al pagar.</p>
+        <div class="fila-acciones">
+          <label>IVA <select id="ccRegimen"><option value="GENERAL">General</option><option value="CRITERIO_CAJA">Criterio de caja</option>
+            <option value="SIMPLIFICADO">Simplificado (módulos)</option><option value="RECARGO_EQUIVALENCIA">Recargo de equivalencia</option></select></label>
+          <label>IRPF <select id="ccIrpf"><option value="">Sociedad (sin IRPF)</option><option value="DIRECTA_NORMAL">Estimación directa normal</option>
+            <option value="DIRECTA_SIMPLIFICADA">Estimación directa simplificada</option><option value="OBJETIVA">Estimación objetiva (módulos)</option></select></label>
+          <label>SII <select id="ccSii"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <label>Sociedades <select id="ccIs"><option value="false">No tributa</option><option value="true">Tributa</option></select></label>
+          <label>Tipo de gravamen <select id="ccIsTipo"><option value="GENERAL">General (25 %)</option><option value="REDUCIDA_DIMENSION">Reducida dimensión</option>
+            <option value="MICRO">Microempresa (tramos)</option><option value="NUEVA_CREACION">Nueva creación (15 %)</option><option value="PERSONALIZADO">Otro %</option></select></label>
+          <label>% <input id="ccIsPct" inputmode="decimal" style="width:5em" title="Solo con «Otro %»"></label>
+          <label>Pagos fraccionados <select id="ccIs202"><option value="ART_40_2">Art. 40.2 (18 % cuota anterior)</option>
+            <option value="ART_40_3">Art. 40.3 (base del periodo)</option></select></label>
+          <button class="btn" id="ccGuardar" data-req="FISCAL_DIRECTO" type="button">Guardar régimen</button>
+        </div>
+        <div class="fila-acciones">
+          <label>Año <input id="ccAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Periodo <select id="ccPeriodo"></select></label>
+          <button class="btn" id="ccVer" type="button">Ver lo devengado</button>
+          <button class="btn primario" id="ccTraspasar" data-req="FISCAL_DIRECTO" data-guarda type="button">Contabilizar el traspaso</button>
+        </div>
+        <ul id="ccAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Libro</th><th>Factura</th><th>Tercero</th><th class="num">Total factura</th><th class="num">Base</th><th class="num">Cuota</th><th>Traspaso</th></tr></thead>
+        <tbody id="ccLista"></tbody></table>
+        <div id="ccAsientos" class="fila-acciones"></div>
+        <p id="ccMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="isPanel" hidden>
+        <h2 id="isTitulo">Impuesto sobre Sociedades</h2>
+        <p class="ayuda">El resultado contable sale de los asientos del ejercicio (sin las cuentas 630, 633 y 638 del propio impuesto), las retenciones de la 473
+          y los pagos fraccionados de los 202 presentados. Aquí se indican los ajustes extracontables (positivo aumenta la base, negativo la disminuye) y lo que no
+          sale de la contabilidad. Las bases negativas generadas en los 200 presentados se arrastran solas; las anteriores a la aplicación se indican una vez.
+          Tipos de reducida dimensión y microempresa según la Ley 7/2024: verifícalos.</p>
+        <div class="cab2">
+          <label>Reserva de capitalización <input id="is_reservaCapitalizacion" class="num" inputmode="decimal"></label>
+          <label>Bonificaciones <input id="is_bonificaciones" class="num" inputmode="decimal"></label>
+          <label>Deducciones <input id="is_deducciones" class="num" inputmode="decimal"></label>
+          <label>Importe neto de la cifra de negocios <input id="is_incn" class="num" inputmode="decimal"></label>
+          <label>Bases negativas anteriores a la aplicación <input id="is_binsAnteriores" class="num" inputmode="decimal"></label>
+        </div>
+        <h3>Ajustes extracontables</h3>
+        <table><thead><tr><th>Concepto</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
+        <ul id="isSugerencias" class="avisos"></ul>
+        <div class="fila-acciones">
+          <button class="btn" id="isAnadir" type="button">Añadir ajuste</button>
+          <button class="btn primario" id="isGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar datos</button>
+        </div>
+        <p id="isMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="moPanel">
+        <h2>Módulos (estimación objetiva y régimen simplificado)</h2>
+        <p class="ayuda">Importes de la orden de módulos del año para cada actividad: rendimiento neto previo del IRPF (modelo 131: 4 % con más de un
+          asalariado, 3 % con uno y 2 % sin asalariados; las agrícolas pagan el 2 % del volumen de ingresos del trimestre) y, en el simplificado del IVA,
+          la cuota devengada y la soportada por operaciones corrientes, el % de ingreso a cuenta trimestral de la actividad y el % de cuota mínima.</p>
+        <div class="fila-acciones">
+          <label>Año <input id="moAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="moVer" type="button">Ver</button>
+          <button class="btn" id="moAnadir" type="button">Añadir actividad</button>
+          <button class="btn primario" id="moGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar módulos</button>
+        </div>
+        <div style="overflow-x:auto"><table class="presupuesto"><thead><tr><th>Actividad</th><th class="num">Rendimiento neto IRPF</th>
+          <th class="num">Asalariados</th><th>Agrícola</th><th class="num">IVA devengado</th><th class="num">IVA soportado</th>
+          <th class="num">% ingreso a cuenta</th><th class="num">% cuota mínima</th><th></th></tr></thead><tbody id="moLista"></tbody></table></div>
+        <p id="moMsg" class="ayuda" role="status"></p>
+      </div>
+
       <div class="panel">
         <h2>Prorrata</h2>
         <p class="ayuda">Porcentaje de deducción por año natural. Durante el año se aplica el provisional; en el último periodo se regulariza con el
@@ -547,6 +723,19 @@
           <button class="btn" id="prGuardar" type="button">Guardar</button>
         </div>
         <p id="prMsg" class="ayuda" role="status"></p>
+        <h3>Regularización por prorrata definitiva</h3>
+        <p class="ayuda">Diferencia entre el % aplicado en el año y el definitivo (casilla 44 del 303). Se contabiliza contra 6391/6392 (más deducción)
+          o 6341/6342 (menos) antes de liquidar el último periodo.</p>
+        <div class="fila-acciones">
+          <label>Año <input id="prRegAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <button class="btn" id="prRegVer" type="button">Ver</button>
+          <button class="btn primario" id="prRegContabilizar" data-req="FISCAL_DIRECTO" data-guarda type="button">Contabilizar</button>
+          <button class="btn" id="prRegAnular" data-req="FISCAL_DIRECTO" type="button" hidden>Anular el asiento</button>
+        </div>
+        <ul id="prRegAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Factura</th><th>Proveedor</th><th>Fecha</th><th class="num">Cuota</th><th class="num">% aplicado</th><th class="num">% definitivo</th>
+          <th class="num">Regularización</th></tr></thead><tbody id="prRegLista"></tbody></table>
+        <p id="prRegMsg" class="ayuda" role="status"></p>
       </div>
 
       <div class="panel">
@@ -583,7 +772,11 @@
           <label>Código <input id="inCodigo" maxlength="20" placeholder="Automático"></label>
           <label>Valor de adquisición <input id="inValor" inputmode="decimal"></label>
           <label>Valor residual <input id="inResidual" inputmode="decimal" value="0"></label>
+          <label>Método <select id="inMetodo"><option value="">El de la categoría</option><option value="LINEAL">Lineal</option>
+            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
+            <option value="NO_AMORTIZA">No se amortiza</option></select></label>
           <label>Vida útil (meses) <input id="inMeses" inputmode="numeric"></label>
+          <label>Coeficiente anual (%) <input id="inCoef" inputmode="decimal" placeholder="Tablas; en degresivo, opcional"></label>
           <label>Amortización previa <input id="inPrevia" inputmode="decimal" value="0" title="Lo ya amortizado en otro programa"></label>
           <label>Contabilizar la compra contra <input id="inContra" list="dl-cuentas" placeholder="Vacío si ya está con su factura"></label>
         </div>
@@ -603,6 +796,18 @@
         <h3>Amortización contabilizada</h3>
         <table><thead><tr><th>Periodo</th><th class="num">Importe</th><th class="num">Acumulada</th><th>Asiento</th></tr></thead>
         <tbody id="inMovs"></tbody></table>
+        <div id="inFiscal">
+          <h3>Amortización fiscal</h3>
+          <p id="inFiscalResumen" class="ayuda"></p>
+          <div class="cab2" data-req="INMOVILIZADO:ESCRITURA">
+            <label>Método fiscal <select id="inFMetodo"><option value="">Igual que la contable</option><option value="LINEAL">Lineal</option>
+              <option value="DEGRESIVO">Degresivo</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
+              <option value="LIBRE">Libertad de amortización</option></select></label>
+            <label>Vida útil fiscal (meses) <input id="inFMeses" inputmode="numeric"></label>
+            <label>Coeficiente fiscal (%) <input id="inFCoef" inputmode="decimal"></label>
+          </div>
+          <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inFGuardar" type="button">Guardar amortización fiscal</button></div>
+        </div>
         <div id="inBI">
           <h3>Bien de inversión (IVA/IGIC)</h3>
           <p id="inBIResumen" class="ayuda"></p>
@@ -649,6 +854,20 @@
         <h3>Amortizaciones contabilizadas en este ejercicio</h3>
         <table><thead><tr><th>Asiento</th><th>Fecha</th><th class="num">Elementos</th><th class="num">Total</th><th></th></tr></thead>
         <tbody id="amHechas"></tbody></table>
+      </div>
+
+      <div class="panel">
+        <h2>Diferencias entre amortización contable y fiscal</h2>
+        <p class="ayuda">Elementos con amortización fiscal distinta: ajuste del ejercicio en el Impuesto sobre Sociedades (positivo, aumento; negativo,
+          disminución) y el impuesto diferido acumulado.</p>
+        <div class="fila-acciones">
+          <label>Tipo de gravamen (%) <input id="dfTipo" inputmode="decimal" value="25" style="width:5em"></label>
+          <button class="btn" id="dfVer" type="button">Calcular</button>
+        </div>
+        <ul id="dfAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Código</th><th>Descripción</th><th>Contable / fiscal</th><th class="num">Amort. contable</th><th class="num">Amort. fiscal</th>
+          <th class="num">Ajuste</th><th class="num">Diferencia acumulada</th></tr></thead><tbody id="dfLista"></tbody></table>
+        <div class="totales" id="dfTotales"></div>
       </div>
 
       <div class="panel">
@@ -701,7 +920,12 @@
         <label>Informe <select id="baInforme">
           <option value="situacion">Balance de situación</option>
           <option value="perdidas-ganancias">Pérdidas y ganancias</option>
-          <option value="sumas-saldos">Sumas y saldos</option></select></label>
+          <option value="sumas-saldos">Sumas y saldos</option>
+          <option value="patrimonio-neto">Cambios en el patrimonio neto</option>
+          <option value="flujos-efectivo">Flujos de efectivo</option>
+          <option value="memoria">Memoria (borrador)</option></select></label>
+        <label id="baFormatoL">Formato <select id="baFormato"><option value="">Según el plan de la empresa</option><option value="NORMAL">Normal</option>
+          <option value="PYMES">PYMES / abreviado</option></select></label>
         <label>Canal <select id="baCanal"></select></label>
         <label id="baDesdeL">Desde <input type="date" id="baDesde"></label>
         <label>Hasta <input type="date" id="baHasta"></label>
@@ -720,8 +944,139 @@
       <h2 id="baTitulo"></h2>
       <p id="baSub" class="ayuda"></p>
       <ul id="baAvisos" class="avisos"></ul>
-      <table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table>
+      <div id="baTabla"><table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table></div>
+      <div id="baExtra"></div>
       <p class="ayuda solo-pantalla" id="baPista"></p>
+    </div>
+  </section>
+
+  <section id="tab-analitica" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Informe analítico</h2>
+        <div class="cab2 solo-pantalla">
+          <label>Dimensión <select id="anDim"></select></label>
+          <label>Canal <select id="anCanal"></select></label>
+          <label>Desde <input type="date" id="anDesde"></label>
+          <label>Hasta <input type="date" id="anHasta"></label>
+          <label>Detalle <select id="anDetalle"><option value="false">Solo elementos</option><option value="true">Con las cuentas</option></select></label>
+        </div>
+        <div class="fila-acciones solo-pantalla">
+          <button class="btn primario" id="anVer" type="button">Ver</button>
+          <button class="btn" id="anImprimir" type="button">Imprimir</button>
+        </div>
+        <p id="anMsg" class="ayuda" role="status"></p>
+        <p id="anSub" class="ayuda"></p>
+        <ul id="anAvisos" class="avisos"></ul>
+        <table class="balance"><thead><tr><th>Elemento</th><th class="num">Ingresos</th><th class="num">Gastos</th><th class="num">Resultado</th>
+          <th class="num">Otros</th></tr></thead><tbody id="anBody"></tbody></table>
+        <p class="ayuda">Los padres suman a sus hijos. «Sin asignar» es lo que falta por imputar de los grupos 6 y 7, así que el total es el resultado
+          antes de regularizar. «Otros»: lo imputado a cuentas de otros grupos (debe − haber).</p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Apuntes sin imputar</h2>
+        <p class="ayuda">Gastos e ingresos del periodo sin repartir del todo en la dimensión del informe. El reparto nuevo sustituye la analítica del
+          apunte en todas las dimensiones (T1, o T1:60 T2:40 P1); no cambia el asiento.</p>
+        <div class="fila-acciones"><button class="btn" id="anSinVer" type="button">Buscar</button></div>
+        <table><thead><tr><th>Fecha</th><th>Asiento</th><th>Cuenta</th><th>Concepto</th><th class="num">Importe</th><th>Analítica</th>
+          <th style="width:180px">Nuevo reparto</th><th></th></tr></thead><tbody id="anSinBody"></tbody></table>
+        <p id="anSinMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Dimensiones y elementos</h2>
+        <p class="ayuda">Cada dimensión es un reparto independiente (centros de coste, proyectos, departamentos…): un gasto puede ir a la vez a un
+          centro y a un proyecto. Los elementos pueden colgar de otro para agruparlos en el informe.</p>
+        <table><thead><tr><th>Código</th><th>Nombre</th><th>Estado</th><th></th></tr></thead><tbody id="anDims"></tbody></table>
+        <details class="nuevo" data-req="ANALITICA:ESCRITURA"><summary>Nueva dimensión</summary>
+          <div class="cab2">
+            <label>Código <input id="anNdCodigo" maxlength="10" placeholder="CC"></label>
+            <label>Nombre <input id="anNdNombre" maxlength="100" placeholder="Centros de coste"></label>
+            <label>&nbsp;<button class="btn primario" id="anNdCrear" type="button">Crear dimensión</button></label>
+          </div>
+        </details>
+        <details class="nuevo" data-req="ANALITICA:ESCRITURA"><summary>Nuevo elemento</summary>
+          <div class="cab2">
+            <label>Dimensión <select id="anNeDim"></select></label>
+            <label>Código <input id="anNeCodigo" maxlength="20" placeholder="T1"></label>
+            <label>Nombre <input id="anNeNombre" maxlength="150" placeholder="Tienda centro"></label>
+            <label>Cuelga de <select id="anNePadre"></select></label>
+            <label>&nbsp;<button class="btn primario" id="anNeCrear" type="button">Crear elemento</button></label>
+          </div>
+        </details>
+        <p id="anDimMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel solo-pantalla">
+        <h2>Reparto por defecto de las cuentas</h2>
+        <p class="ayuda">Se aplica a los apuntes sin analítica, también a los automáticos (facturas, amortizaciones…). Vale el de la cuenta más concreta
+          en cada dimensión: el de la 621 manda sobre el de la 62. «Exige analítica»: los asientos tecleados no se graban sin reparto.</p>
+        <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Exige</th><th>Reparto</th><th></th></tr></thead><tbody id="anRepartos"></tbody></table>
+        <div class="cab2" data-req="ANALITICA:ESCRITURA">
+          <label>Cuenta <input id="anRpCuenta" list="dl-cuentas" placeholder="62"></label>
+          <label>Reparto <input id="anRpReparto" placeholder="T1:50 T2:50"></label>
+          <label>Exige analítica <select id="anRpExige"><option value="false">No</option><option value="true">Sí</option></select></label>
+          <label>&nbsp;<button class="btn primario" id="anRpGuardar" type="button">Guardar reparto</button></label>
+        </div>
+        <p id="anRpMsg" class="ayuda" role="status"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-presupuestos" hidden>
+    <div class="stack">
+      <div class="panel">
+        <h2>Presupuestos del ejercicio</h2>
+        <table><thead><tr><th>Código</th><th>Versión</th><th>Nombre</th><th>Canal</th><th>Estado</th><th class="num">Ingresos</th>
+          <th class="num">Gastos</th><th class="num">Resultado</th><th></th></tr></thead><tbody id="ppLista"></tbody></table>
+        <details class="nuevo" data-req="PRESUPUESTOS:ESCRITURA"><summary>Nuevo presupuesto</summary>
+          <div class="cab2">
+            <label>Código <input id="ppNCodigo" maxlength="20" placeholder="P2026"></label>
+            <label>Nombre <input id="ppNNombre" maxlength="150" placeholder="Presupuesto anual"></label>
+            <label>Canal <select id="ppNCanal"></select></label>
+            <label>&nbsp;<button class="btn primario" id="ppNCrear" type="button">Crear</button></label>
+          </div>
+        </details>
+        <p id="ppMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="ppPanel" hidden>
+        <h2 id="ppTitulo"></h2>
+        <div class="fila-acciones" data-req="PRESUPUESTOS:ESCRITURA">
+          <button class="btn primario" id="ppGuardar" type="button">Guardar líneas</button>
+          <button class="btn" id="ppAnadir" type="button">Añadir línea</button>
+          <button class="btn" id="ppAprobar" type="button">Aprobar</button>
+          <button class="btn" id="ppABorrador" type="button">Volver a borrador</button>
+          <button class="btn" id="ppCerrar" type="button">Cerrar</button>
+          <button class="btn" id="ppVersion" type="button">Nueva versión</button>
+          <button class="btn" id="ppEliminar" type="button">Eliminar</button>
+        </div>
+        <div style="overflow-x:auto;margin-top:12px"><table class="presupuesto"><thead id="ppHead"></thead><tbody id="ppLineas"></tbody>
+          <tfoot id="ppPie"></tfoot></table></div>
+        <p class="ayuda">Cuenta o prefijo (62 = todas las 62x); los ingresos (grupo 7) y los gastos se escriben en positivo. Elemento analítico opcional
+          (T1 o CC/T1). Al cambiar el total se reparte a partes iguales entre los meses.</p>
+        <details class="nuevo" data-req="PRESUPUESTOS:ESCRITURA"><summary>Generar desde lo real de otro ejercicio</summary>
+          <div class="cab2">
+            <label>Ejercicio <select id="ppGEj"></select></label>
+            <label>Incremento % <input id="ppGInc" inputmode="decimal" value="0"></label>
+            <label>Agrupar por dígitos <select id="ppGDig"><option>2</option><option selected>3</option><option>4</option><option value="15">Cuenta completa</option></select></label>
+            <label>Por elementos de <select id="ppGDim"></select></label>
+            <label>&nbsp;<button class="btn" id="ppGenerar" type="button">Generar (sustituye las líneas)</button></label>
+          </div>
+        </details>
+        <p id="ppMsg2" class="ayuda" role="status"></p>
+
+        <h3>Presupuesto frente a real</h3>
+        <div class="cab2">
+          <label>Hasta <select id="ppHasta"></select></label>
+          <label>&nbsp;<button class="btn primario" id="ppComparar" type="button">Comparar</button></label>
+        </div>
+        <div class="totales" id="ppTotales"></div>
+        <ul id="ppAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Cuenta</th><th>Nombre</th><th>Elemento</th><th class="num">Presupuesto</th><th class="num">Real</th>
+          <th class="num">Desviación</th><th class="num">Ejecución</th></tr></thead><tbody id="ppComp"></tbody></table>
+      </div>
     </div>
   </section>
 

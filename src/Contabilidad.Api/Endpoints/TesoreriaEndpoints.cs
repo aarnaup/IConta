@@ -29,6 +29,23 @@ public static class TesoreriaEndpoints
             return Results.Created($"/api/empresas/{empresaId}/formas-pago/{f.Id}", f);
         }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
 
+        emp.MapPut("/formas-pago/{id:long}", async (long empresaId, long id, FormaPagoDto f, HttpContext http, ICatalogosAdminRepositorio c,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            f.Id = id;
+            await c.GuardarFormaPagoAsync(empresaId, f, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "FORMA_PAGO_MODIFICADA", "forma_pago", id, new { f.Codigo }, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+
+        emp.MapDelete("/formas-pago/{id:long}", async (long empresaId, long id, HttpContext http, ICatalogosAdminRepositorio c,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await c.EliminarFormaPagoAsync(empresaId, id, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "FORMA_PAGO_ELIMINADA", "forma_pago", id, null, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Tesoreria);
+
         emp.MapPut("/terceros/{terceroId:long}/forma-pago", async (long empresaId, long terceroId, AsignarFormaPagoCmd cmd,
             ITesoreriaRepositorio t, CancellationToken ct) =>
         {
@@ -63,6 +80,18 @@ public static class TesoreriaEndpoints
         emp.MapGet("/tesoreria/prevision", (long empresaId, int? meses, ITesoreriaRepositorio t, CancellationToken ct)
             => t.PrevisionAsync(empresaId, DateOnly.FromDateTime(DateTime.Today), meses ?? 6, ct))
             .Requiere(Nivel.Lectura, Modulo.Tesoreria);
+
+        emp.MapGet("/tesoreria/vencimientos/{vencimientoId:long}/cobros", (long empresaId, long vencimientoId, ITesoreriaRepositorio t, CancellationToken ct)
+            => t.CobrosAsync(empresaId, vencimientoId, ct))
+            .Requiere(Nivel.Lectura, Modulo.Tesoreria);
+
+        emp.MapPost("/ejercicios/{ejercicioId:long}/tesoreria/cobros/{cobroPagoId:long}/extornar", async (long empresaId, long ejercicioId,
+            long cobroPagoId, HttpContext http, ITesoreriaRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await t.ExtornarAsync(empresaId, ejercicioId, cobroPagoId, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "COBRO_PAGO_EXTORNADO", "cobro_pago", cobroPagoId, null, ct);
+            return Results.NoContent();
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Tesoreria);
 
         emp.MapPost("/tesoreria/vencimientos/{vencimientoId:long}/anular", async (long empresaId, long vencimientoId, HttpContext http,
             ITesoreriaRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>

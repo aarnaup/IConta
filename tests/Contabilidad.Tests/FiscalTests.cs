@@ -107,7 +107,7 @@ public class CalculadorImpuestoIndirectoTests
         Assert.Equal(-21m, d["44"]);
         Assert.Equal(0m, d["45"]);                        // 21 − 21
         Assert.Equal(1050m, d["46"]);
-        Assert.Equal(425m, d["68"]);
+        Assert.Equal(425m, d["78"]);
         Assert.Equal(625m, d["69"]);
         Assert.Equal(625m, d.AIngresar);
         Assert.Equal(0m, d.ACompensar);
@@ -119,7 +119,7 @@ public class CalculadorImpuestoIndirectoTests
     {
         var d = Nueva();
         CalculadorImpuestoIndirecto.Calcular(false, new([G("EMITIDAS", 21, 100, 21)], 0, 500m, false, false), d);
-        Assert.Equal(21m, d["68"]);
+        Assert.Equal(21m, d["78"]);
         Assert.Equal(0m, d.AIngresar);
         Assert.Equal(479m, d["87"]);                      // lo que sobra sigue pendiente
     }
@@ -330,5 +330,45 @@ public class Calculador347Tests
         Assert.Equal(3500m, f.Total);
         Assert.Equal(1000m, f.T1); Assert.Equal(0m, f.T2); Assert.Equal(2500m, f.T3); Assert.Equal(0m, f.T4);
         Assert.Contains(d.Avisos, a => a.Contains("NIF"));
+    }
+}
+
+public class ComplementariaTests
+{
+    private static DeclaracionCalculada D303(decimal resultado)
+    {
+        var d = new DeclaracionCalculada { Modelo = "303" };
+        d.Casillas.Add(new Casilla("69", "Resultado", resultado)); d.Casillas.Add(new Casilla("71", "Resultado de la liquidación", resultado));
+        d.Resultado = resultado; d.AIngresar = Math.Max(0, resultado); d.ACompensar = Math.Max(0, -resultado);
+        return d;
+    }
+
+    [Fact]
+    public void Complementaria_descuenta_lo_ingresado()
+    {
+        var d = D303(800);
+        Complementaria.Aplicar("303", "COMPLEMENTARIA", new PresentacionAnterior(1, 500, 500), d);
+        Assert.Equal((500m, 300m, 300m), (d["70"], d["71"], d.AIngresar));
+    }
+
+    [Fact]
+    public void Complementaria_que_pasa_de_compensar_a_ingresar()
+    {
+        var d = D303(50);
+        Complementaria.Aplicar("303", "COMPLEMENTARIA", new PresentacionAnterior(1, -100, 0), d);
+        Assert.Equal(50m, d.AIngresar);
+    }
+
+    [Fact]
+    public void Complementaria_que_baja_el_resultado_no_se_admite()
+        => Assert.Throws<ReglaContableException>(() => Complementaria.Aplicar("111", "COMPLEMENTARIA", new PresentacionAnterior(1, 500, 500), D303(400)));
+
+    [Fact]
+    public void Sustitutiva_no_descuenta_y_avisa_del_ingreso_indebido()
+    {
+        var d = D303(300);
+        Complementaria.Aplicar("303", "SUSTITUTIVA", new PresentacionAnterior(1, 500, 500), d);
+        Assert.Equal(300m, d.AIngresar);
+        Assert.Contains(d.Avisos, a => a.Contains("ingresos indebidos"));
     }
 }

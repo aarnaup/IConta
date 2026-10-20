@@ -41,7 +41,10 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         public long? AsientoEjercicioId { get; set; }
         public decimal ResultadoAntes { get; set; }
         public decimal Compensacion { get; set; }
+        public string TipoDeclaracion { get; set; } = "ORDINARIA";
+        public decimal ResultadoAnterior { get; set; }
         public decimal RegularizacionProrrata { get; set; }
+        public decimal ProrrataContabilizada { get; set; }
         public decimal RegularizacionBienes { get; set; }
         public decimal BienesContabilizado { get; set; }
     }
@@ -108,7 +111,12 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
 
     private static async Task<DeclaracionFila> CargarAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long declaracionId, CancellationToken ct)
         => await cn.QuerySingleOrDefaultAsync<DeclaracionFila>(new CommandDefinition($"""
-               SELECT d.id, m.codigo AS modelo, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.estado,
+               SELECT d.id, m.codigo AS modelo, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.estado, d.tipo_declaracion,
+                      COALESCE((SELECT c.importe FROM fiscal.declaracion p JOIN fiscal.declaracion_casilla c ON c.declaracion_id = p.id
+                                AND c.casilla = CASE m.codigo WHEN '420' THEN 'RES' ELSE '64' END
+                                WHERE p.empresa_id = d.empresa_id AND p.modelo_id = d.modelo_id AND p.anio = d.anio AND p.periodo = d.periodo
+                                  AND p.estado = 'PRESENTADA' AND p.numero_presentacion < d.numero_presentacion
+                                ORDER BY p.numero_presentacion DESC LIMIT 1), 0) AS resultado_anterior,
                       d.asiento_id, s.estado AS asiento_estado, s.numero AS asiento_numero, s.ejercicio_id AS asiento_ejercicio_id,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'RES' ELSE '64' END), 0) AS resultado_antes,
@@ -116,6 +124,9 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'COMP' ELSE '68' END), 0) AS compensacion,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'REG' ELSE '44' END), 0) AS regularizacion_prorrata,
+                      COALESCE((SELECT SUM(r.importe) FROM fiscal.regularizacion_prorrata r
+                                JOIN conta.asiento a ON a.id = r.asiento_id AND a.estado <> 'ANULADO'
+                                WHERE r.empresa_id = d.empresa_id AND r.fecha BETWEEN d.fecha_inicio AND d.fecha_fin), 0) AS prorrata_contabilizada,
                       COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id
                                 AND casilla = CASE m.codigo WHEN '420' THEN 'RBI' ELSE '43' END), 0) AS regularizacion_bienes,
                       COALESCE((SELECT SUM(r.importe_regularizacion) FROM inmov.bien_inversion_regularizacion r
@@ -147,6 +158,10 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
             throw new ReglaContableException($"El modelo {d.Modelo} no genera asiento de liquidación (solo 303 y 420).");
         if (PeriodoFiscal.Resolver(d.Anio, d.Periodo).EsAnual)
             throw new ReglaContableException("Los resúmenes anuales no generan asiento de liquidación.");
+        if (await cn.ExecuteScalarAsync<string>(new CommandDefinition("SELECT regimen_iva FROM core.empresa WHERE id = @empresaId",
+                new { empresaId }, tx, cancellationToken: ct)) == "SIMPLIFICADO")
+            throw new ReglaContableException("En el régimen simplificado el asiento de liquidación se hace a mano.",
+                "La cuota sale de los módulos y no coincide con el IVA repercutido y soportado de las facturas: la diferencia va a resultados.");
         if (d.Estado != "PRESENTADA")
             throw new ReglaContableException("Presenta la declaración antes de contabilizar su liquidación.",
                 "Así las cifras del asiento corresponden a las de la declaración presentada.");
@@ -186,13 +201,19 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         // Cuentas: 472/477 del PGC más las configuradas para IVA soportado/repercutido
         var extraSop = await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_SOPORTADO", ct);
         var extraRep = await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_REPERCUTIDO", ct);
-        var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, d.FechaFin, ["472", "477"],
-            [.. extraSop, .. extraRep], ct);
+        // El impuesto pendiente del criterio de caja (4779 / 4729) no se liquida hasta que se traspasa
+        var pendientesCaja = (await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_REPERCUTIDO_CAJA", ct))
+            .Concat(await ConsultasContables.CuentasDeRolAsync(cn, tx, empresaId, "IVA_SOPORTADO_CAJA", ct)).ToHashSet();
+        var saldos = (await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, d.FechaFin, ["472", "477"],
+            [.. extraSop, .. extraRep], ct)).Where(s => !pendientesCaja.Contains(s.CuentaId)).ToList();
         var repercutido = saldos.Where(s => s.Codigo.StartsWith("477", StringComparison.Ordinal)
                                          || (extraRep.Contains(s.CuentaId) && !s.Codigo.StartsWith("472", StringComparison.Ordinal))).ToList();
         var soportado = saldos.Except(repercutido).ToList();
+        var pendienteCaja = await CriterioCajaRepositorio.PendienteAsync(cn, tx, empresaId, d.Modelo == "420" ? "IGIC" : "IVA",
+            PeriodoFiscal.Resolver(d.Anio, d.Periodo), ct);
         if (saldos.Count == 0)
-            throw new ReglaContableException("Las cuentas de IVA/IGIC soportado y repercutido no tienen saldo a esa fecha: no hay nada que liquidar.");
+            throw new ReglaContableException("Las cuentas de IVA/IGIC soportado y repercutido no tienen saldo a esa fecha: no hay nada que liquidar.",
+                pendienteCaja != 0 ? $"Hay {pendienteCaja:N2} de criterio de caja sin traspasar: contabiliza antes el traspaso del periodo." : null);
 
         var acreedora = await ConsultasContables.CuentaPorRolAsync(cn, tx, empresaId, "HP_ACREEDORA_IVA", "4750", ct)
             ?? throw new ReglaContableException("No se encuentra la cuenta de Hacienda Pública acreedora por IVA (4750).",
@@ -209,13 +230,18 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
 
         // Contraste con la declaración: la regularización de prorrata no está en la contabilidad
         // La de bienes de inversión sí, si se ha contabilizado su asiento (472 contra 6342/6392) dentro del periodo
-        var esperado = d.ResultadoAntes + d.RegularizacionProrrata + d.RegularizacionBienes - d.BienesContabilizado;
+        var esperado = d.ResultadoAntes + d.RegularizacionProrrata - d.ProrrataContabilizada + d.RegularizacionBienes - d.BienesContabilizado;
+        // Complementaria: la presentación anterior ya se liquidó; en la contabilidad queda solo la diferencia
+        if (d.TipoDeclaracion == "COMPLEMENTARIA") esperado -= d.ResultadoAnterior;
         if (d.RegularizacionBienes != d.BienesContabilizado)
             avisos.Add($"La declaración regulariza {d.RegularizacionBienes:N2} por bienes de inversión y hay contabilizados {d.BienesContabilizado:N2} en el periodo: " +
                        "contabiliza la regularización (Inmovilizado → Bienes de inversión) antes de la liquidación.");
-        if (d.RegularizacionProrrata != 0)
-            avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y eso no está en la contabilidad: " +
-                       "regístralo con un asiento manual (634/639 contra 472).");
+        if (d.RegularizacionProrrata != d.ProrrataContabilizada)
+            avisos.Add($"La declaración regulariza {d.RegularizacionProrrata:N2} por prorrata definitiva y hay contabilizados {d.ProrrataContabilizada:N2} " +
+                       "en el periodo: contabiliza la regularización (Modelos fiscales → Prorrata) antes de la liquidación.");
+        if (pendienteCaja != 0)
+            avisos.Add($"Hay {pendienteCaja:N2} de impuesto en criterio de caja devengado en el periodo sin traspasar a las cuentas 477/472: " +
+                       "contabiliza antes el traspaso (Modelos fiscales → Criterio de caja).");
         if (!canales.Any(c => c.Resultado == esperado))
             avisos.Add($"El saldo contable no coincide con la declaración: resultado según la declaración {d.ResultadoAntes:N2}" +
                        $"; según la contabilidad {string.Join(", ", canales.Select(c => c.Resultado.ToString("N2")))}. " +

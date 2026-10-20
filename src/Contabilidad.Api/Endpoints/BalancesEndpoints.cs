@@ -21,13 +21,25 @@ public static class BalancesEndpoints
                                                   string.IsNullOrWhiteSpace(incluir) ? "MOVIMIENTOS" : incluir, ct)))
             .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
 
-        b.MapGet("/situacion", async (long empresaId, long ejercicioId, long? canalId, DateOnly? hasta, IBalancesRepositorio r, CancellationToken ct)
-            => Results.Ok(await r.BalanceSituacionAsync(empresaId, ejercicioId, canalId, hasta, ct)))
+        b.MapGet("/situacion", async (long empresaId, long ejercicioId, long? canalId, DateOnly? hasta, string? formato, IBalancesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.BalanceSituacionAsync(empresaId, ejercicioId, canalId, hasta, ct, formato)))
             .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
 
-        b.MapGet("/perdidas-ganancias", async (long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta,
+        b.MapGet("/perdidas-ganancias", async (long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta, string? formato,
             IBalancesRepositorio r, CancellationToken ct)
-            => Results.Ok(await r.PerdidasGananciasAsync(empresaId, ejercicioId, canalId, desde, hasta, ct)))
+            => Results.Ok(await r.PerdidasGananciasAsync(empresaId, ejercicioId, canalId, desde, hasta, ct, formato)))
+            .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
+
+        b.MapGet("/patrimonio-neto", async (long empresaId, long ejercicioId, long? canalId, IBalancesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.PatrimonioNetoAsync(empresaId, ejercicioId, canalId, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
+
+        b.MapGet("/flujos-efectivo", async (long empresaId, long ejercicioId, long? canalId, IBalancesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.FlujosEfectivoAsync(empresaId, ejercicioId, canalId, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
+
+        b.MapGet("/memoria", async (long empresaId, long ejercicioId, long? canalId, IBalancesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.MemoriaAsync(empresaId, ejercicioId, canalId, ct)))
             .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
     }
 }

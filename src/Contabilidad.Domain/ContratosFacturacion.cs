@@ -31,6 +31,10 @@ public sealed class CrearFacturaCmd
     /// <summary>Forma de pago de esta factura; por defecto la del tercero. Sin ninguna, un único vencimiento a la fecha de expedición.</summary>
     public long? FormaPagoId { get; set; }
     public bool Borrador { get; set; }
+    /// <summary>Clave del 349 si hay operaciones intracomunitarias: E/S/T en emitidas (por defecto E), A/I en recibidas (por defecto A).</summary>
+    public string? Clave349 { get; set; }
+    /// <summary>Factura que rectifica (rectificativas): mismo libro y tercero.</summary>
+    public long? FacturaRectificadaId { get; set; }
     public List<FacturaLineaCmd> Lineas { get; set; } = [];
 }
 
@@ -68,18 +72,26 @@ public sealed class TerceroDto
     public bool EsCliente { get; set; }
     public bool EsProveedor { get; set; }
     public bool RecargoEquivalencia { get; set; }
+    /// <summary>Proveedor acogido al criterio de caja: su IVA se deduce al pagarle.</summary>
+    public bool CriterioCaja { get; set; }
     public long? TipoRetencionDefectoId { get; set; }
     public long? TipoIvaDefectoId { get; set; }
 }
 
 public sealed class CrearTerceroCmd
 {
-    public string TipoDocumento { get; set; } = "NIF";            // NIF | NIE | CIF | OTRO
+    public string TipoDocumento { get; set; } = "NIF";            // NIF | NIE | CIF | PASAPORTE | VIES | OTRO
+    /// <summary>País del NIF (ISO 3166-1 alfa-2); por defecto ES.</summary>
+    public string? Pais { get; set; }
+    /// <summary>Código postal: da la provincia (modelos 190 y 180).</summary>
+    public string? CodigoPostal { get; set; }
     public string Nif { get; set; } = "";
     public string Nombre { get; set; } = "";
     public bool EsCliente { get; set; }
     public bool EsProveedor { get; set; }
     public bool RecargoEquivalencia { get; set; }
+    /// <summary>Proveedor acogido al criterio de caja: su IVA se deduce al pagarle.</summary>
+    public bool CriterioCaja { get; set; }
     public long? TipoRetencionDefectoId { get; set; }
     public long? TipoIvaDefectoId { get; set; }
 }

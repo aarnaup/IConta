@@ -1,3 +1,4 @@
+using Contabilidad.Domain.Facturacion;
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Canales;
@@ -73,6 +74,14 @@ public static class EmpresaEndpoints
             return Results.Created($"/api/empresas/{empresaId}/terceros/{creado.Id}", creado);
         }).Requiere(Nivel.Escritura, Modulo.Facturacion);
 
+        emp.MapPut("/terceros/{terceroId:long}/criterio-caja", async (long empresaId, long terceroId, CriterioCajaTerceroCmd cmd, HttpContext http,
+            ITerceroRepositorio t, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await t.MarcarCriterioCajaAsync(empresaId, terceroId, cmd.CriterioCaja, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "TERCERO_CRITERIO_CAJA", "tercero", terceroId, new { cmd.CriterioCaja }, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Facturacion);
+
         emp.MapGet("/tipos-iva", (long empresaId, DateOnly? fecha, ICatalogoFacturacionRepositorio c, CancellationToken ct)
             => c.ListarTiposIvaAsync(empresaId, fecha ?? DateOnly.FromDateTime(DateTime.Today), ct))
             .Requiere(Nivel.Lectura, Modulo.Facturacion);
@@ -126,6 +135,10 @@ public static class EmpresaEndpoints
 
         ej.MapGet("/facturas", (long empresaId, long ejercicioId, string? libro, int? limite, IFacturaRepositorio f, CancellationToken ct)
             => f.ListarAsync(empresaId, ejercicioId, string.IsNullOrWhiteSpace(libro) ? null : libro, Math.Clamp(limite ?? 50, 1, 500), ct))
+            .Requiere(Nivel.Lectura, Modulo.Facturacion);
+
+        ej.MapGet("/facturas/{facturaId:long}/impreso", async (long empresaId, long ejercicioId, long facturaId, IFacturaRepositorio f, CancellationToken ct)
+            => Results.Content(ImpresoFactura.Html(await f.ImpresoAsync(empresaId, ejercicioId, facturaId, ct)), "text/html; charset=utf-8"))
             .Requiere(Nivel.Lectura, Modulo.Facturacion);
 
         // ---- Revisión de borradores ----

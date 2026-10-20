@@ -1,0 +1,100 @@
+using System.Text.Json;
+using Contabilidad.Domain;
+using Contabilidad.Domain.Fiscal;
+using Dapper;
+using Npgsql;
+
+namespace Contabilidad.Infrastructure.Repositorios;
+
+public sealed class DatosSociedadesDto
+{
+    public long EjercicioId { get; set; }
+    public List<AjusteIs> Ajustes { get; set; } = [];
+    public decimal ReservaCapitalizacion { get; set; }
+    public decimal Bonificaciones { get; set; }
+    public decimal Deducciones { get; set; }
+    /// <summary>Importe neto de la cifra de negocios (límite de compensación de bases negativas).</summary>
+    public decimal Incn { get; set; }
+    /// <summary>Bases negativas pendientes de antes de usar la aplicación (se indican una vez).</summary>
+    public decimal BinsAnteriores { get; set; }
+    /// <summary>Ajustes que se proponen desde la contabilidad (diferencias de amortización contable y fiscal…).</summary>
+    public List<AjusteIs> Sugerencias { get; set; } = [];
+}
+
+public interface ISociedadesRepositorio
+{
+    Task<DatosSociedadesDto> DatosAsync(long empresaId, long ejercicioId, CancellationToken ct);
+    Task<DatosSociedadesDto> GuardarAsync(long empresaId, long ejercicioId, DatosSociedadesDto datos, CancellationToken ct);
+}
+
+/// <summary>Datos del Impuesto sobre Sociedades de cada periodo impositivo que no salen de los asientos.</summary>
+public sealed class SociedadesRepositorio(IConexionFactory conexiones, IInmovilizadoRepositorio inmovilizado) : ISociedadesRepositorio
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    internal sealed class Fila
+    {
+        public string Ajustes { get; set; } = "[]";
+        public decimal ReservaCapitalizacion { get; set; }
+        public decimal Bonificaciones { get; set; }
+        public decimal Deducciones { get; set; }
+        public decimal Incn { get; set; }
+        public decimal BinsAnteriores { get; set; }
+        public List<AjusteIs> Lista => JsonSerializer.Deserialize<List<AjusteIs>>(Ajustes, Json) ?? [];
+    }
+
+    internal static async Task<Fila> LeerAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long ejercicioId, CancellationToken ct)
+        => await cn.QuerySingleOrDefaultAsync<Fila>(new CommandDefinition("""
+               SELECT ajustes::text AS ajustes, reserva_capitalizacion, bonificaciones, deducciones, incn, bins_anteriores
+               FROM fiscal.impuesto_sociedades WHERE empresa_id = @empresaId AND ejercicio_id = @ejercicioId
+               """, new { empresaId, ejercicioId }, tx, cancellationToken: ct)) ?? new Fila();
+
+    public async Task<DatosSociedadesDto> DatosAsync(long empresaId, long ejercicioId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await EjercicioAsync(cn, empresaId, ejercicioId, ct);
+        var f = await LeerAsync(cn, null, empresaId, ejercicioId, ct);
+        var sugerencias = new List<AjusteIs>();
+        var dif = await inmovilizado.DiferenciasFiscalesAsync(empresaId, ejercicioId, 25m, ct);
+        foreach (var x in dif.Elementos.Where(x => x.Ajuste != 0))
+            sugerencias.Add(new AjusteIs($"Amortización contable/fiscal {x.Codigo} {x.Descripcion}", x.Ajuste));
+        var multas = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(a.debe - a.haber), 0) FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id
+            JOIN conta.cuenta c ON c.id = a.cuenta_id
+            WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
+              AND s.origen NOT IN ('REGULARIZACION', 'CIERRE') AND c.codigo LIKE '678%'
+            """, new { empresaId, ejercicioId }, cancellationToken: ct));
+        if (multas != 0) sugerencias.Add(new AjusteIs("Gastos excepcionales (678): revisa si son multas, sanciones u otros no deducibles", multas));
+        return new DatosSociedadesDto
+        {
+            EjercicioId = ejercicioId, Ajustes = f.Lista, ReservaCapitalizacion = f.ReservaCapitalizacion, Bonificaciones = f.Bonificaciones,
+            Deducciones = f.Deducciones, Incn = f.Incn, BinsAnteriores = f.BinsAnteriores, Sugerencias = sugerencias
+        };
+    }
+
+    private static async Task EjercicioAsync(NpgsqlConnection cn, long empresaId, long ejercicioId, CancellationToken ct)
+    {
+        if (!await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS (SELECT 1 FROM core.ejercicio WHERE id = @ejercicioId AND empresa_id = @empresaId)",
+                new { ejercicioId, empresaId }, cancellationToken: ct)))
+            throw new ReglaContableException("El ejercicio no existe en la empresa.");
+    }
+
+    public async Task<DatosSociedadesDto> GuardarAsync(long empresaId, long ejercicioId, DatosSociedadesDto datos, CancellationToken ct)
+    {
+        if (datos.ReservaCapitalizacion < 0 || datos.Bonificaciones < 0 || datos.Deducciones < 0 || datos.Incn < 0 || datos.BinsAnteriores < 0)
+            throw new ReglaContableException("Los importes no pueden ser negativos (los ajustes sí: negativo es una disminución).");
+        var ajustes = (datos.Ajustes ?? []).Where(a => a.Importe != 0).Select(a => a with { Concepto = (a.Concepto ?? "").Trim() }).ToList();
+        if (ajustes.Any(a => a.Concepto.Length is 0 or > 200)) throw new ReglaContableException("Cada ajuste necesita un concepto (hasta 200 caracteres).");
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await EjercicioAsync(cn, empresaId, ejercicioId, ct);
+        await cn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO fiscal.impuesto_sociedades (empresa_id, ejercicio_id, ajustes, reserva_capitalizacion, bonificaciones, deducciones, incn, bins_anteriores)
+            VALUES (@empresaId, @ejercicioId, @ajustes::jsonb, @r, @b, @d, @i, @bins)
+            ON CONFLICT (empresa_id, ejercicio_id) DO UPDATE SET ajustes = EXCLUDED.ajustes, reserva_capitalizacion = EXCLUDED.reserva_capitalizacion,
+                bonificaciones = EXCLUDED.bonificaciones, deducciones = EXCLUDED.deducciones, incn = EXCLUDED.incn, bins_anteriores = EXCLUDED.bins_anteriores
+            """, new { empresaId, ejercicioId, ajustes = JsonSerializer.Serialize(ajustes, Json), r = datos.ReservaCapitalizacion, b = datos.Bonificaciones,
+                d = datos.Deducciones, i = datos.Incn, bins = datos.BinsAnteriores }, cancellationToken: ct));
+        return await DatosAsync(empresaId, ejercicioId, ct);
+    }
+}

@@ -921,7 +921,7 @@ FROM regexp_split_to_table($pgc$
 992|N|Recuperación de ajustes valorativos negativos previos, empresas asociadas
 993|N|Transferencia por deterioro de ajustes valorativos negativos previos, empresas del grupo
 994|N|Transferencia por deterioro de ajustes valorativos negativos previos, empresas asociadas
-$pgc$, '\n') AS l
+$pgc$, '\r?\n') AS l
 WHERE trim(l) <> '';
 
 -- Naturaleza por prefijo: gana el prefijo más largo que coincida con el código.

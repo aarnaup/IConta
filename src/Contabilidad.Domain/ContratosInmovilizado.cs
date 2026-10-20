@@ -47,6 +47,8 @@ public sealed class AltaInmovilizadoCmd
     public int? VidaUtilMeses { get; set; }
     /// <summary>Amortización ya registrada antes de llevar el elemento aquí (traspasos desde otro programa).</summary>
     public decimal AmortizacionPrevia { get; set; }
+    /// <summary>% anual: obligatorio con COEFICIENTE_TABLA; con DEGRESIVO, si no se indica, el lineal por 1,5 / 2 / 2,5.</summary>
+    public decimal? Coeficiente { get; set; }
     public long? FacturaId { get; set; }
     public long? ProveedorId { get; set; }
     /// <summary>
@@ -69,7 +71,11 @@ public sealed class InmovilizadoResumenDto
     public decimal ValorResidual { get; set; }
     public string Metodo { get; set; } = "";
     public int? VidaUtilMeses { get; set; }
+    public decimal? Coeficiente { get; set; }
     public decimal AmortizacionPrevia { get; set; }
+    public string? MetodoFiscal { get; set; }
+    public int? VidaUtilMesesFiscal { get; set; }
+    public decimal? CoeficienteFiscal { get; set; }
     public string Estado { get; set; } = "";
     public DateOnly? FechaBaja { get; set; }
     public decimal Amortizado { get; set; }
@@ -103,3 +109,34 @@ public sealed class BajaInmovilizadoCmd
 }
 
 public sealed record BajaRealizadaDto(long AsientoId, int AsientoNumero, ResultadoBaja Resultado, IReadOnlyList<ApuntePrevioDto> Asiento);
+
+/// <summary>Amortización fiscal distinta de la contable. Metodo null: la fiscal es igual que la contable.</summary>
+public sealed class AmortizacionFiscalCmd
+{
+    /// <summary>LINEAL, DEGRESIVO, COEFICIENTE_TABLA o LIBRE (libertad de amortización); null para quitarla.</summary>
+    public string? Metodo { get; set; }
+    public int? VidaUtilMeses { get; set; }
+    public decimal? Coeficiente { get; set; }
+}
+
+public sealed class DiferenciaFiscalDto
+{
+    public long InmovilizadoId { get; set; }
+    public string Codigo { get; set; } = "";
+    public string Descripcion { get; set; } = "";
+    public string MetodoContable { get; set; } = "";
+    public string MetodoFiscal { get; set; } = "";
+    public decimal Contable { get; set; }
+    public decimal Fiscal { get; set; }
+    /// <summary>Contable − fiscal del ejercicio: positivo, aumento de la base imponible; negativo, disminución.</summary>
+    public decimal Ajuste { get; set; }
+    /// <summary>Diferencia acumulada al cierre (contable − fiscal).</summary>
+    public decimal Acumulada { get; set; }
+}
+
+/// <summary>
+/// Diferencias entre amortización contable y fiscal de un ejercicio: ajustes extracontables del Impuesto sobre Sociedades y el impuesto
+/// diferido que generan (activo 4740 si la contable va por delante; pasivo 479 si va por detrás).
+/// </summary>
+public sealed record DiferenciasFiscalesDto(string Ejercicio, decimal TipoGravamen, IReadOnlyList<DiferenciaFiscalDto> Elementos,
+    decimal Aumentos, decimal Disminuciones, decimal ActivoDiferido, decimal PasivoDiferido, IReadOnlyList<string> Avisos);

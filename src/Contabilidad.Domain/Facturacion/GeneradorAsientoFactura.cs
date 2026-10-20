@@ -9,13 +9,16 @@ namespace Contabilidad.Domain.Facturacion;
 ///  - Factura en negativo (rectificativa): importes absolutos y Debe/Haber invertidos.
 ///  - Cuota autorrepercutida (adquisición intracomunitaria, inversión del sujeto pasivo): además de lo que diga la plantilla
 ///    (472 por la parte deducible, gasto por la no deducible), se abona por tipo a la cuenta del rol IVA_REPERCUTIDO (477).
+///  - Criterio de caja: el impuesto de las líneas interiores va a los roles IVA_REPERCUTIDO_CAJA / IVA_SOPORTADO_CAJA (4779 / 4729).
+///  - Recargo de equivalencia (empresa minorista): el IVA repercutido en las ventas interiores no se ingresa y va a VENTAS.
 /// </summary>
 public static class GeneradorAsientoFactura
 {
     public static IReadOnlyList<ApunteCmd> Generar(
         LibroFactura libro, FacturaCalculada f, IEnumerable<LineaPlantilla> plantilla, ResolutorCuentas cuentas,
         long terceroId, long? actividadId, long canalFactura,
-        string terceroNombre, string numeroFactura, DateOnly fecha, string? conceptoModelo)
+        string terceroNombre, string numeroFactura, DateOnly fecha, string? conceptoModelo, bool criterioCaja = false,
+        bool recargoEquivalencia = false)
     {
         var t = f.Totales;
         var invertir = t.Base < 0 || (t.Base == 0 && t.Total < 0);
@@ -65,7 +68,16 @@ public static class GeneradorAsientoFactura
                         ? (libro == LibroFactura.Recibidas ? row.CuotaDeducible : row.Cuota)
                         : row.CuotaRecargo;
                     if (imp == 0m) continue;
-                    Añade(l, cuentas.Resolver(l.CuentaId, l.CuentaRol, row.TipoIvaId), imp);
+                    // Criterio de caja: el impuesto interior queda pendiente (4779 / 4729) hasta el cobro o el pago
+                    var rol = criterioCaja && l.CuentaId is null && row.TipoOperacion == "INTERIOR" && l.CuentaRol is "IVA_REPERCUTIDO" or "IVA_SOPORTADO"
+                        ? l.CuentaRol + "_CAJA" : l.CuentaRol;
+                    if (recargoEquivalencia && libro == LibroFactura.Emitidas && l.CuentaId is null && row.TipoOperacion == "INTERIOR"
+                        && l.CuentaRol == "IVA_REPERCUTIDO")
+                    {
+                        Añade(l, cuentas.Resolver(null, "VENTAS", null), imp);
+                        continue;
+                    }
+                    Añade(l, cuentas.Resolver(l.CuentaId, rol, row.TipoIvaId), imp);
                 }
                 continue;
             }

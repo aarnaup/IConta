@@ -19,6 +19,7 @@ public interface ICierreEjercicioRepositorio
 
 /// <summary>
 /// Cierre del ejercicio contable:
+///   0. Traspaso de los grupos 8 y 9 a su cuenta del patrimonio neto (subgrupo 13 o 115), en el periodo 13.
 ///   1. Regularización (periodo 13): las cuentas 6 y 7 se saldan contra la 129.
 ///   2. Cierre (periodo 14): se saldan todas las cuentas con saldo.
 ///   3. Apertura (periodo 0 del ejercicio siguiente): se reabren esos mismos saldos.
@@ -64,6 +65,22 @@ public sealed class CierreEjercicioRepositorio(IConexionFactory conexiones, IAsi
         await CrearPeriodosEspecialesAsync(cn, tx, ej, sig, ct);
 
         var generados = new List<AsientoGeneradoDto>();
+
+        // 0) Grupos 8 y 9 al patrimonio neto (subgrupo 13 y 115)
+        var saldos89 = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ej.Id, ej.FechaFin, ["8", "9"], null, ct);
+        if (saldos89.Any(x => x.Saldo != 0))
+        {
+            var destinos = new Dictionary<string, long>();
+            foreach (var cod in saldos89.Select(x => GeneradorCierre.DestinoPatrimonioNeto(x.Codigo)!).Distinct())
+                destinos[cod] = await cn.ExecuteScalarAsync<long?>(new CommandDefinition("SELECT inmov.asegurar_cuenta(@empresaId, @cod)",
+                    new { empresaId, cod }, tx, cancellationToken: ct)) ?? throw new ReglaContableException($"La empresa no tiene la cuenta {cod}.");
+            var apPn = GeneradorCierre.TraspasoPatrimonioNeto(saldos89, destinos);
+            var concepto = $"Traspaso de ingresos y gastos imputados al patrimonio neto {ej.Codigo}";
+            var t = await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ej.Id, usuarioId,
+                new CrearAsientoCmd { Fecha = ej.FechaFin, DiarioId = diarioId, Concepto = concepto, Apuntes = ConsultasContables.AApuntes(apPn, concepto) },
+                "REGULARIZACION", null, $"CIERRE {ej.Codigo}", ct, tipoPeriodo: "REGULARIZACION");
+            generados.Add(new AsientoGeneradoDto("PATRIMONIO_NETO", t.Id, t.Numero, ej.Id, ej.FechaFin, apPn.Count));
+        }
 
         // 1) Regularización
         var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ej.Id, ej.FechaFin, ["6", "7"], null, ct);
@@ -190,10 +207,18 @@ public sealed class CierreEjercicioRepositorio(IConexionFactory conexiones, IAsi
         // Saldos antes de cerrar: en un ejercicio ya cerrado se ignoran sus asientos de regularización y cierre
         var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, ej.FechaFin, null, null, ct, sinAsientosDeCierre: true);
 
-        var grupos89 = saldos.Where(s => GeneradorCierre.EsDePatrimonioNetoImputado(s.Codigo)).Select(s => s.Codigo).Distinct().ToList();
-        if (grupos89.Count > 0)
-            bloqueos.Add($"Las cuentas de los grupos 8 y 9 tienen saldo ({string.Join(", ", grupos89.Take(10))}): " +
-                         "trasládalo a las del subgrupo 13 con un asiento manual antes de cerrar.");
+        var grupos89 = saldos.Where(s => s.Saldo != 0 && GeneradorCierre.EsDePatrimonioNetoImputado(s.Codigo)).Select(s => s.Codigo).Distinct().ToList();
+        var sinDestino = grupos89.Where(c => GeneradorCierre.DestinoPatrimonioNeto(c) is null).ToList();
+        if (sinDestino.Count > 0)
+            bloqueos.Add($"Las cuentas {string.Join(", ", sinDestino.Take(10))} de los grupos 8 y 9 no tienen una cuenta del patrimonio neto asociada: " +
+                         "trasládalas con un asiento manual antes de cerrar.");
+        else if (grupos89.Count > 0)
+        {
+            avisos.Add($"Las cuentas de los grupos 8 y 9 con saldo ({string.Join(", ", grupos89.Take(10))}) se traspasarán al patrimonio neto " +
+                       "(subgrupo 13 y 115) antes de la regularización.");
+            if (grupos89.Any(c => c.StartsWith("830") || c.StartsWith("833") || c.StartsWith("838")))
+                avisos.Add("El efecto impositivo imputado al patrimonio neto (830, 833, 838) se lleva a la 130: si corresponde a otra partida, corrígelo después.");
+        }
 
         var fueraDeFecha = await cn.ExecuteScalarAsync<int>(new CommandDefinition("""
             SELECT count(*) FROM conta.asiento

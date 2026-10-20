@@ -8,6 +8,7 @@ public interface ITerceroRepositorio
 {
     Task<IReadOnlyList<TerceroDto>> ListarAsync(long empresaId, string? tipo, string? q, CancellationToken ct);
     Task<TerceroDto> CrearAsync(long empresaId, CrearTerceroCmd cmd, CancellationToken ct);
+    Task MarcarCriterioCajaAsync(long empresaId, long terceroId, bool criterioCaja, CancellationToken ct);
 }
 
 public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRepositorio
@@ -19,7 +20,7 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
         await using var cn = await conexiones.AbrirAsync(ct);
         const string sql = """
             SELECT t.id, t.codigo, t.nombre, n.numero AS nif, t.es_cliente, t.es_proveedor,
-                   t.recargo_equivalencia, t.tipo_retencion_defecto_id, t.tipo_iva_defecto_id
+                   t.recargo_equivalencia, t.criterio_caja, t.tipo_retencion_defecto_id, t.tipo_iva_defecto_id
             FROM conta.tercero t JOIN core.nif n ON n.id = t.nif_id
             WHERE t.empresa_id = @empresaId AND t.activo
               AND (@tipo::text IS NULL
@@ -31,6 +32,16 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
         return (await cn.QueryAsync<TerceroDto>(new CommandDefinition(sql, new { empresaId, tipo, q }, cancellationToken: ct))).AsList();
     }
 
+    /// <summary>Proveedor acogido (o no) al criterio de caja; afecta a las facturas que se contabilicen desde ahora.</summary>
+    public async Task MarcarCriterioCajaAsync(long empresaId, long terceroId, bool criterioCaja, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var n = await cn.ExecuteAsync(new CommandDefinition(
+            "UPDATE conta.tercero SET criterio_caja = @criterioCaja WHERE id = @terceroId AND empresa_id = @empresaId",
+            new { criterioCaja, terceroId, empresaId }, cancellationToken: ct));
+        if (n == 0) throw new ReglaContableException("El tercero no existe en la empresa.");
+    }
+
     /// <summary>Alta de cliente/proveedor: reutiliza el NIF si ya existe y crea la subcuenta (4300... / 4000...).</summary>
     public async Task<TerceroDto> CrearAsync(long empresaId, CrearTerceroCmd cmd, CancellationToken ct)
     {
@@ -40,6 +51,13 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             throw new ReglaContableException("Indica si es cliente, proveedor o ambos.");
 
         var nif = cmd.Nif.Trim().ToUpperInvariant().Replace(" ", "").Replace("-", "");
+        var pais = string.IsNullOrWhiteSpace(cmd.Pais) ? "ES" : cmd.Pais.Trim().ToUpperInvariant();
+        var tipoDoc = string.IsNullOrWhiteSpace(cmd.TipoDocumento) ? "NIF" : cmd.TipoDocumento.Trim().ToUpperInvariant();
+        if (tipoDoc is not ("NIF" or "NIE" or "CIF" or "PASAPORTE" or "VIES" or "OTRO"))
+            throw new ReglaContableException("Tipo de documento no válido: NIF, NIE, CIF, PASAPORTE, VIES u OTRO.");
+        var cp = string.IsNullOrWhiteSpace(cmd.CodigoPostal) ? null : cmd.CodigoPostal.Trim();
+        if (cp is not null && pais == "ES" && !System.Text.RegularExpressions.Regex.IsMatch(cp, "^(0[1-9]|[1-4][0-9]|5[0-2])[0-9]{3}$"))
+            throw new ReglaContableException("El código postal no es válido (5 dígitos, provincia 01 a 52).");
 
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
@@ -48,11 +66,16 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             "SELECT digitos_cuenta FROM core.empresa WHERE id = @empresaId", new { empresaId }, tx, cancellationToken: ct));
 
         var nifId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
-            INSERT INTO core.nif (pais_id, tipo_documento, numero, razon_social)
-            SELECT id, @tipo, @numero, @nombre FROM cat.pais WHERE iso2 = 'ES'
-            ON CONFLICT (pais_id, numero) DO UPDATE SET razon_social = core.nif.razon_social
+            INSERT INTO core.nif (pais_id, tipo_documento, numero, razon_social, codigo_postal, provincia_id)
+            SELECT p.id, @tipo, @numero, @nombre, @cp,
+                   (SELECT pr.id FROM cat.provincia pr WHERE pr.pais_id = p.id AND pr.codigo = left(@cp, 2))
+            FROM cat.pais p WHERE p.iso2 = @pais
+            ON CONFLICT (pais_id, numero) DO UPDATE SET razon_social = core.nif.razon_social,
+                   codigo_postal = COALESCE(EXCLUDED.codigo_postal, core.nif.codigo_postal),
+                   provincia_id = COALESCE(EXCLUDED.provincia_id, core.nif.provincia_id)
             RETURNING id
-            """, new { tipo = cmd.TipoDocumento, numero = nif, nombre = cmd.Nombre.Trim() }, tx, cancellationToken: ct));
+            """, new { tipo = tipoDoc, numero = nif, nombre = cmd.Nombre.Trim(), cp, pais }, tx, cancellationToken: ct));
+        if (nifId == 0) throw new ReglaContableException($"El país {pais} no está en el catálogo.");
 
         var cli = cmd.EsCliente ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4300", digitos, $"Cliente {cmd.Nombre.Trim()}", "DEUDORA", ct) : null;
         var pro = cmd.EsProveedor ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4000", digitos, $"Proveedor {cmd.Nombre.Trim()}", "ACREEDORA", ct) : null;
@@ -63,15 +86,15 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
         {
             id = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
                 INSERT INTO conta.tercero (empresa_id, nif_id, codigo, nombre, es_cliente, es_proveedor,
-                                           cuenta_cliente_id, cuenta_proveedor_id, recargo_equivalencia,
+                                           cuenta_cliente_id, cuenta_proveedor_id, recargo_equivalencia, criterio_caja,
                                            tipo_retencion_defecto_id, tipo_iva_defecto_id)
                 VALUES (@empresaId, @nifId, @codigo, @nombre, @esCliente, @esProveedor,
-                        @cuentaCliente, @cuentaProveedor, @recargo, @tipoRet, @tipoIva)
+                        @cuentaCliente, @cuentaProveedor, @recargo, @criterioCaja, @tipoRet, @tipoIva)
                 RETURNING id
                 """, new
             {
                 empresaId, nifId, codigo, nombre = cmd.Nombre.Trim(), esCliente = cmd.EsCliente, esProveedor = cmd.EsProveedor,
-                cuentaCliente = cli?.Id, cuentaProveedor = pro?.Id, recargo = cmd.RecargoEquivalencia,
+                cuentaCliente = cli?.Id, cuentaProveedor = pro?.Id, recargo = cmd.RecargoEquivalencia, criterioCaja = cmd.CriterioCaja,
                 tipoRet = cmd.TipoRetencionDefectoId, tipoIva = cmd.TipoIvaDefectoId
             }, tx, cancellationToken: ct));
         }
