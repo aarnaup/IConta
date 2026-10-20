@@ -936,11 +936,65 @@ async function cargaFiscal() {
     pintaPeriodos();
   }
   await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja()]);
+  cargaSii();
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
     $('#lrPeriodo').innerHTML = ['1T', '2T', '3T', '4T', '0A', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12']
       .map(p => `<option value="${p}">${esc(periodoTxt(p))}</option>`).join('');
 }
+
+// ------------------------------------------------------------ SII
+const SII = { facturas: [] };
+const estadoSii = { PENDIENTE: 'Pendiente', ACEPTADA: 'Aceptada', ACEPTADA_CON_ERRORES: 'Aceptada con errores', RECHAZADA: 'Rechazada' };
+function cargaSii() {
+  const igic = S.empresa && (S.empresa.impuestoIndirecto === 'IGIC');
+  $('#siiPanel').hidden = !!igic;
+  if (!$('#siiAnio').value) $('#siiAnio').value = $('#mfAnio').value;
+  if (!$('#siiMes').options.length)
+    $('#siiMes').innerHTML = '<option value="">Todo el año</option>' + Array.from({ length: 12 }, (_, i) =>
+      `<option value="${i + 1}" ${i === new Date().getMonth() ? 'selected' : ''}>${new Date(2000, i, 1).toLocaleDateString('es-ES', { month: 'long' })}</option>`).join('');
+}
+const siiCmd = (ids) => ({ libro: $('#siiLibro').value, anio: +$('#siiAnio').value, mes: $('#siiMes').value ? +$('#siiMes').value : null,
+  facturaIds: ids && ids.length ? ids : null });
+const siiElegidas = () => $$('#siiLista input[data-f]:checked').map(c => +c.dataset.f);
+async function verSii() {
+  try {
+    const q = new URLSearchParams({ libro: $('#siiLibro').value, anio: $('#siiAnio').value });
+    if ($('#siiMes').value) q.set('mes', $('#siiMes').value);
+    const r = await api(urlE('/fiscal/sii/facturas?' + q));
+    SII.facturas = r.facturas;
+    $('#siiEnviar').title = r.envioConfigurado ? '' : 'El servidor no tiene certificado para el SII: descarga el XML';
+    $('#siiEnviar').disabled = !r.envioConfigurado;
+    $('#siiLista').innerHTML = r.facturas.map(f => `<tr><td><input type="checkbox" data-f="${f.id}" aria-label="Elegir ${esc(f.numSerie)}"></td>
+      <td>${esc(f.numSerie)}</td><td>${fechaES(f.fechaExpedicion)}</td><td>${esc(f.nombre)} <small>${esc(f.nif)}</small></td>
+      <td class="num">${fmt(f.total)}</td><td class="${f.estado === 'RECHAZADA' ? 'estado-mal' : f.estado === 'ACEPTADA' ? 'estado-ok' : ''}">${esc(estadoSii[f.estado] || f.estado)}</td>
+      <td><small>${esc(f.error || f.csv || '')}</small></td></tr>`).join('') || '<tr><td colspan="7" class="vacio">No hay facturas contabilizadas en el periodo.</td></tr>';
+    const pend = r.facturas.filter(f => ['PENDIENTE', 'RECHAZADA'].includes(f.estado)).length;
+    msg($('#siiMsg'), `${r.facturas.length} factura(s); ${pend} pendiente(s) de enviar. Sin marcar ninguna se envían las pendientes y rechazadas del periodo.`, 'ayuda');
+  } catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+}
+$('#siiVer').onclick = verSii;
+$('#siiTodas').onchange = e => $$('#siiLista input[data-f]').forEach(c => c.checked = e.target.checked);
+$('#siiXml').onclick = async () => {
+  try { const n = await descargaPost(urlE('/fiscal/sii/xml'), siiCmd(siiElegidas()), 'sii.xml'); msg($('#siiMsg'), `Descargado ${n}.`, 'ayuda ok-texto'); }
+  catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
+const pintaEnvioSii = envios => {
+  $('#siiResultado').innerHTML = envios.map(e => `<li>${esc(e.tipoComunicacion)} ${esc(e.entorno.toLowerCase())}: ${esc(e.estadoEnvio || '')}
+    ${e.csv ? ' · CSV ' + esc(e.csv) : ''}${e.fallo ? ' · ' + esc(e.fallo) : ''} · ${e.lineas.filter(l => l.estado === 'Correcto').length} correctas,
+    ${e.lineas.filter(l => l.estado === 'AceptadoConErrores').length} con errores, ${e.lineas.filter(l => l.estado === 'Incorrecto').length} rechazadas</li>`).join('');
+};
+$('#siiEnviar').onclick = async () => {
+  if (!confirm('¿Enviar las facturas al SII de la AEAT?')) return;
+  try { pintaEnvioSii(await post(urlE('/fiscal/sii/enviar'), siiCmd(siiElegidas()))); await verSii(); }
+  catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#siiRegistrar').onclick = async () => {
+  try {
+    pintaEnvioSii([await post(urlE('/fiscal/sii/respuesta'), { libro: $('#siiLibro').value, xml: $('#siiRespuesta').value })]);
+    $('#siiRespuesta').value = ''; await verSii();
+  } catch (e) { msg($('#siiMsg'), e.message, 'ayuda err-texto'); }
+};
 
 // ------------------------------------------------------------ régimen de IVA y criterio de caja
 async function cargaCriterioCaja() {

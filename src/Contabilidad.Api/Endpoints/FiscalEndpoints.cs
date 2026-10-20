@@ -14,6 +14,8 @@ namespace Contabilidad.Api.Endpoints;
 /// </summary>
 public static class FiscalEndpoints
 {
+    public sealed record RespuestaSiiCmd(string Libro, string Xml);
+
     public static void MapFiscal(this IEndpointRouteBuilder app)
     {
         var f = app.MapGroup("/api/empresas/{empresaId:long}/fiscal").RequireAuthorization();
@@ -70,6 +72,27 @@ public static class FiscalEndpoints
             var (contenido, nombre) = await r.FicheroAsync(empresaId, id, cmd, cfg["Aeat:NifDesarrollador"], ct);
             return Results.File(contenido, "text/plain; charset=iso-8859-1", nombre);
         }).Requiere(Nivel.Lectura, Modulo.Fiscal);
+
+        // ---- SII: estado de las facturas, mensaje XML, envío (si hay certificado) y registro de respuestas de otra herramienta ----
+        f.MapGet("/sii/facturas", async (long empresaId, string libro, int anio, int? mes, ISiiRepositorio r, CancellationToken ct)
+            => Results.Ok(new { envioConfigurado = r.EnvioConfigurado, facturas = await r.FacturasAsync(empresaId, libro, anio, mes, ct) }))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+        f.MapPost("/sii/xml", async (long empresaId, SiiCmd cmd, ISiiRepositorio r, CancellationToken ct) =>
+        {
+            var (xml, nombre) = await r.MensajeAsync(empresaId, cmd, ct);
+            return Results.File(System.Text.Encoding.UTF8.GetBytes(xml), "application/xml; charset=utf-8", nombre);
+        }).Requiere(Nivel.Lectura, Modulo.Fiscal);
+        f.MapPost("/sii/enviar", async (long empresaId, SiiCmd cmd, HttpContext http, ISiiRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var envios = await r.EnviarAsync(empresaId, http.User.UsuarioId(), cmd, ct);
+            foreach (var e in envios)
+                await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "SII_ENVIADO", "envio_sii", e.Id,
+                    new { e.Libro, e.TipoComunicacion, e.Entorno, e.Facturas, e.EstadoEnvio, e.Csv }, ct);
+            return Results.Ok(envios);
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+        f.MapPost("/sii/respuesta", async (long empresaId, RespuestaSiiCmd cmd, HttpContext http, ISiiRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.RegistrarRespuestaAsync(empresaId, http.User.UsuarioId(), cmd.Libro, cmd.Xml, ct)))
+            .RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
 
         f.MapPost("/declaraciones/{id:long}/presentar", async (long empresaId, long id, PresentarDeclaracionCmd cmd, HttpContext http,
             IFiscalRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>

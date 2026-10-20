@@ -579,6 +579,29 @@
         </div>
       </div>
 
+      <div class="panel" id="siiPanel">
+        <h2>SII · Suministro Inmediato de Información</h2>
+        <p class="ayuda">Envío de los libros de facturas expedidas y recibidas a la AEAT (versión 1.1). Sin certificado configurado en el servidor
+          se descarga el mensaje XML para enviarlo con otra herramienta, y luego se puede registrar aquí la respuesta para marcar las facturas.
+          Las ya aceptadas se vuelven a enviar como modificación (A1).</p>
+        <div class="fila-acciones">
+          <label>Libro <select id="siiLibro"><option value="EMITIDAS">Facturas expedidas</option><option value="RECIBIDAS">Facturas recibidas</option></select></label>
+          <label>Año <input id="siiAnio" type="number" min="2017" max="2100" style="width:7em"></label>
+          <label>Mes <select id="siiMes"></select></label>
+          <button class="btn primario" id="siiVer" type="button">Ver</button>
+          <button class="btn" id="siiXml" type="button">Descargar XML</button>
+          <button class="btn" id="siiEnviar" data-req="FISCAL_DIRECTO" type="button">Enviar a la AEAT</button>
+        </div>
+        <p id="siiMsg" class="ayuda" role="status"></p>
+        <ul id="siiResultado" class="avisos"></ul>
+        <table><thead><tr><th><input type="checkbox" id="siiTodas" aria-label="Elegir todas"></th><th>Factura</th><th>Fecha</th><th>Tercero</th>
+          <th class="num">Total</th><th>Estado</th><th>CSV / error</th></tr></thead><tbody id="siiLista"></tbody></table>
+        <details class="nuevo" data-req="FISCAL_DIRECTO"><summary>Registrar la respuesta de un envío hecho con otra herramienta</summary>
+          <textarea id="siiRespuesta" rows="5" style="width:100%;margin-top:8px" placeholder="Pega aquí el XML de respuesta de la AEAT"></textarea>
+          <div class="fila-acciones"><button class="btn" id="siiRegistrar" type="button">Registrar respuesta</button></div>
+        </details>
+      </div>
+
       <div class="panel">
         <h2>Régimen de IVA y criterio de caja</h2>
         <p class="ayuda">En el criterio de caja el impuesto de las operaciones interiores se devenga al cobrar y se deduce al pagar (como tarde, el 31 de

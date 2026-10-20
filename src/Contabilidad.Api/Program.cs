@@ -7,6 +7,7 @@ using Contabilidad.Api.Endpoints;
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
 using Contabilidad.Infrastructure;
+using Contabilidad.Infrastructure.Repositorios;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
@@ -30,7 +31,11 @@ try
     var cs = builder.Configuration.GetConnectionString("Contabilidad")
              ?? throw new InvalidOperationException("Falta ConnectionStrings:Contabilidad");
     builder.Host.UseServiceProviderFactory(new AutofacServiceProviderFactory());
-    builder.Host.ConfigureContainer<ContainerBuilder>(cb => cb.RegisterModule(new InfrastructureModule(cs)));
+    // SII: certificado PKCS#12 de la empresa (o de un apoderado) para el envío directo; sin él solo se descarga el XML
+    var sii = new SiiOpciones(builder.Configuration["Sii:Certificado"], builder.Configuration["Sii:Clave"],
+        string.Equals(builder.Configuration["Sii:Entorno"], "PRODUCCION", StringComparison.OrdinalIgnoreCase),
+        string.Equals(builder.Configuration["Sii:Sello"], "true", StringComparison.OrdinalIgnoreCase));
+    builder.Host.ConfigureContainer<ContainerBuilder>(cb => cb.RegisterModule(new InfrastructureModule(cs, sii)));
 
     // ---- Autenticación JWT ----
     var jwt = builder.Configuration.GetSection("Jwt").Get<JwtOpciones>() ?? new JwtOpciones();

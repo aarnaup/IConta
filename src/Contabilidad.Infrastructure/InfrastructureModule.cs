@@ -6,10 +6,11 @@ using Npgsql;
 namespace Contabilidad.Infrastructure;
 
 /// <summary>Registro Autofac de la capa de datos y servicios de dominio.</summary>
-public sealed class InfrastructureModule(string connectionString) : Autofac.Module
+public sealed class InfrastructureModule(string connectionString, SiiOpciones? sii = null) : Autofac.Module
 {
     protected override void Load(ContainerBuilder builder)
     {
+        builder.RegisterInstance(sii ?? new SiiOpciones()).AsSelf().SingleInstance();
         TiposDapper.Inicializar();
 
         builder.Register(_ => new NpgsqlDataSourceBuilder(connectionString).Build())
@@ -42,6 +43,7 @@ public sealed class InfrastructureModule(string connectionString) : Autofac.Modu
         builder.RegisterType<BalancesRepositorio>().As<IBalancesRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<AnaliticaRepositorio>().As<IAnaliticaRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<PresentacionAeatRepositorio>().As<IPresentacionAeatRepositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<SiiRepositorio>().As<ISiiRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<PresupuestoRepositorio>().As<IPresupuestoRepositorio>().InstancePerLifetimeScope();
     }
 }
