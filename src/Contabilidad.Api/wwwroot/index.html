@@ -162,6 +162,7 @@
     <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
     <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
+    <button data-tab="balances" data-req="BALANCES" aria-pressed="false">Balances</button>
     <button data-tab="cierre" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Cierre</button>
   </nav>
 
@@ -403,6 +404,36 @@
         <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>
       </div>
+    </div>
+  </section>
+
+  <section id="tab-balances" hidden>
+    <div class="panel">
+      <div class="cab2 solo-pantalla">
+        <label>Informe <select id="baInforme">
+          <option value="situacion">Balance de situación</option>
+          <option value="perdidas-ganancias">Pérdidas y ganancias</option>
+          <option value="sumas-saldos">Sumas y saldos</option></select></label>
+        <label>Canal <select id="baCanal"></select></label>
+        <label id="baDesdeL">Desde <input type="date" id="baDesde"></label>
+        <label>Hasta <input type="date" id="baHasta"></label>
+        <label id="baNivelL">Nivel <select id="baNivel">
+          <option value="1">Grupo</option><option value="2">Subgrupo</option><option value="3">Cuenta (3 dígitos)</option>
+          <option value="4">Subcuenta (4 dígitos)</option><option value="5" selected>Cuenta completa</option></select></label>
+        <label id="baIncluirL">Asientos <select id="baIncluir">
+          <option value="MOVIMIENTOS">Sin regularización ni cierre</option><option value="REGULARIZACION">Con regularización</option>
+          <option value="CIERRE">Con cierre</option></select></label>
+      </div>
+      <div class="fila-acciones solo-pantalla">
+        <button class="btn primario" id="baVer" type="button">Ver</button>
+        <button class="btn" id="baImprimir" type="button">Imprimir</button>
+      </div>
+      <p id="baMsg" class="ayuda solo-pantalla" role="status"></p>
+      <h2 id="baTitulo"></h2>
+      <p id="baSub" class="ayuda"></p>
+      <ul id="baAvisos" class="avisos"></ul>
+      <table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table>
+      <p class="ayuda solo-pantalla" id="baPista"></p>
     </div>
   </section>
 

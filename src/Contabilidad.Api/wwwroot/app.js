@@ -138,6 +138,7 @@ function permitido(req) {
   if (!S.acceso) return false;
   if (req === 'TESORERIA_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.TESORERIA] >= ORDEN.ESCRITURA;
   if (req === 'FISCAL_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.FISCAL] >= ORDEN.ESCRITURA;
+  if (req === 'BALANCES') return ['BALANCES', 'CONTABILIDAD'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.LECTURA);
   if (req === 'CONTABILIDAD_DIRECTO') return S.acceso.puedeContabilizarDirecto && ORDEN[S.acceso.permisos.CONTABILIDAD] >= ORDEN.ESCRITURA;
   if (req === 'REVISOR')
     return S.acceso.puedeContabilizarDirecto && ['CONTABILIDAD', 'FACTURACION'].some(m => ORDEN[S.acceso.permisos[m]] >= ORDEN.ESCRITURA);
@@ -190,9 +191,9 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'balances', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
   const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
-                  cierre: cargaCierre }[nombre];
+                  balances: cargaBalances, cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
 }
 $('#navApp').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTab(b.dataset.tab); });
@@ -642,6 +643,85 @@ $('#mfLiqGuardar').onclick = async () => {
     await cargaDeclaraciones();
   } catch (e) { msg($('#mfLiqMsg'), e.message, 'ayuda err-texto'); }
 };
+
+// ------------------------------------------------------------ balances
+function cargaBalances() {
+  if (!$('#baCanal').options.length || $('#baCanal').dataset.empresa !== String(S.empresa.id)) {
+    $('#baCanal').innerHTML = baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
+    $('#baCanal').dataset.empresa = String(S.empresa.id);
+  }
+  if ($('#baHasta').dataset.ejercicio !== String(S.ejercicio.id)) {
+    for (const id of ['#baDesde', '#baHasta']) { $(id).min = S.ejercicio.fechaInicio; $(id).max = S.ejercicio.fechaFin; }
+    $('#baDesde').value = S.ejercicio.fechaInicio; $('#baHasta').value = S.ejercicio.fechaFin;
+    $('#baHasta').dataset.ejercicio = String(S.ejercicio.id);
+  }
+  pintaControlesBalance();
+  return verBalance();
+}
+
+function pintaControlesBalance() {
+  const inf = $('#baInforme').value;
+  $('#baDesdeL').hidden = inf === 'situacion';
+  $('#baNivelL').hidden = $('#baIncluirL').hidden = inf !== 'sumas-saldos';
+}
+$('#baInforme').onchange = () => { pintaControlesBalance(); verBalance(); };
+
+async function verBalance() {
+  const inf = $('#baInforme').value;
+  const q = new URLSearchParams({ canalId: $('#baCanal').value, hasta: $('#baHasta').value });
+  if (inf !== 'situacion') q.set('desde', $('#baDesde').value);
+  if (inf === 'sumas-saldos') { q.set('nivel', $('#baNivel').value); q.set('incluir', $('#baIncluir').value); }
+  try {
+    const r = await api(urlX(`/balances/${inf}?${q}`));
+    msg($('#baMsg'), '', 'ayuda');
+    if (inf === 'sumas-saldos') pintaSumasSaldos(r); else pintaEstado(r);
+  } catch (e) { msg($('#baMsg'), e.message, 'ayuda err-texto'); }
+}
+$('#baVer').onclick = verBalance;
+$('#baImprimir').onclick = () => window.print();
+
+function cabeceraBalance(titulo, r) {
+  $('#baTitulo').textContent = `${titulo} · ${S.empresa.nombre}`;
+  $('#baSub').textContent = `Ejercicio ${S.ejercicio.codigo} · canal ${r.canal.codigo} · ` +
+    (r.desde && titulo !== 'Balance de situación' ? `del ${fechaES(r.desde)} al ${fechaES(r.hasta)}` : `a ${fechaES(r.hasta)}`);
+}
+
+function pintaSumasSaldos(r) {
+  cabeceraBalance('Balance de sumas y saldos', r);
+  $('#baAvisos').innerHTML = r.cuadra ? '' : '<li>Las sumas del debe y del haber no coinciden.</li>';
+  $('#baHead').innerHTML = '<tr><th>Cuenta</th><th>Nombre</th><th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo deudor</th><th class="num">Saldo acreedor</th></tr>';
+  $('#baBody').innerHTML = (r.filas.map(f => `<tr><td>${esc(f.codigo)}</td><td>${esc(f.nombre)}</td><td class="num">${fmt(f.debe)}</td>
+      <td class="num">${fmt(f.haber)}</td><td class="num">${f.saldoDeudor ? fmt(f.saldoDeudor) : ''}</td><td class="num">${f.saldoAcreedor ? fmt(f.saldoAcreedor) : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">No hay movimientos en esas fechas.</td></tr>')
+    + `<tr class="total"><td colspan="2">Totales</td><td class="num">${fmt(r.totalDebe)}</td><td class="num">${fmt(r.totalHaber)}</td>
+       <td class="num">${fmt(r.totalSaldoDeudor)}</td><td class="num">${fmt(r.totalSaldoAcreedor)}</td></tr>`;
+  $('#baPista').textContent = '';
+}
+
+function pintaEstado(r) {
+  cabeceraBalance(r.titulo, r);
+  const ant = r.ejercicioAnterior;
+  $('#baAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('')
+    + r.sinClasificar.map(s => `<li>Sin partida: ${esc(s.codigo)} ${esc(s.nombre)} (saldo ${fmt(s.saldo)})</li>`).join('');
+  $('#baHead').innerHTML = `<tr><th>Partida</th><th class="num">${esc(r.ejercicio)}</th>${ant ? `<th class="num">${esc(ant)}</th>` : ''}</tr>`;
+  const cols = ant ? 3 : 2;
+  $('#baBody').innerHTML = r.partidas
+    .filter(p => p.esTotal || p.importe || p.importeAnterior)
+    .map(p => {
+      const sangria = `style="padding-left:${8 + p.nivel * 18}px"`;
+      const fila = `<tr class="partida ${p.esTotal && p.nivel === 0 ? 'total' : ''}" ${p.cuentas.length ? `data-abre="${esc(p.id)}"` : ''}>
+        <td ${sangria}>${esc(p.texto)}</td><td class="num">${fmt(p.importe)}</td>${ant ? `<td class="num">${p.importeAnterior == null ? '' : fmt(p.importeAnterior)}</td>` : ''}</tr>`;
+      const detalle = p.cuentas.map(c => `<tr class="detalle" data-de="${esc(p.id)}" hidden><td style="padding-left:${26 + p.nivel * 18}px">${esc(c.codigo)} ${esc(c.nombre)}</td>
+        <td class="num">${fmt(c.importe)}</td>${cols === 3 ? '<td></td>' : ''}</tr>`).join('');
+      return fila + detalle;
+    }).join('');
+  $('#baPista').textContent = 'Pulsa una partida para ver sus cuentas. Solo se muestran las partidas con importe.';
+}
+$('#baBody').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-abre]'); if (!tr) return;
+  const abierta = tr.classList.toggle('abierta');
+  $$(`#baBody tr[data-de="${CSS.escape(tr.dataset.abre)}"]`).forEach(d => d.hidden = !abierta);
+});
 
 // ------------------------------------------------------------ cierre del ejercicio
 async function cargaCierre() {
