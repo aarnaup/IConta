@@ -796,7 +796,12 @@
         <label>Informe <select id="baInforme">
           <option value="situacion">Balance de situación</option>
           <option value="perdidas-ganancias">Pérdidas y ganancias</option>
-          <option value="sumas-saldos">Sumas y saldos</option></select></label>
+          <option value="sumas-saldos">Sumas y saldos</option>
+          <option value="patrimonio-neto">Cambios en el patrimonio neto</option>
+          <option value="flujos-efectivo">Flujos de efectivo</option>
+          <option value="memoria">Memoria (borrador)</option></select></label>
+        <label id="baFormatoL">Formato <select id="baFormato"><option value="">Según el plan de la empresa</option><option value="NORMAL">Normal</option>
+          <option value="PYMES">PYMES / abreviado</option></select></label>
         <label>Canal <select id="baCanal"></select></label>
         <label id="baDesdeL">Desde <input type="date" id="baDesde"></label>
         <label>Hasta <input type="date" id="baHasta"></label>
@@ -815,7 +820,8 @@
       <h2 id="baTitulo"></h2>
       <p id="baSub" class="ayuda"></p>
       <ul id="baAvisos" class="avisos"></ul>
-      <table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table>
+      <div id="baTabla"><table class="balance"><thead id="baHead"></thead><tbody id="baBody"></tbody></table></div>
+      <div id="baExtra"></div>
       <p class="ayuda solo-pantalla" id="baPista"></p>
     </div>
   </section>

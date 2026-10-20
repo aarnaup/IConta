@@ -1459,21 +1459,31 @@ function cargaBalances() {
 }
 
 function pintaControlesBalance() {
-  const inf = $('#baInforme').value;
-  $('#baDesdeL').hidden = inf === 'situacion';
+  const inf = $('#baInforme').value, anual = ['patrimonio-neto', 'flujos-efectivo', 'memoria'].includes(inf);
+  $('#baDesdeL').hidden = inf === 'situacion' || anual;
+  $('#baHasta').parentElement.hidden = anual;
   $('#baNivelL').hidden = $('#baIncluirL').hidden = inf !== 'sumas-saldos';
+  $('#baFormatoL').hidden = !['situacion', 'perdidas-ganancias'].includes(inf);
 }
 $('#baInforme').onchange = () => { pintaControlesBalance(); verBalance(); };
 
 async function verBalance() {
   const inf = $('#baInforme').value;
-  const q = new URLSearchParams({ canalId: $('#baCanal').value, hasta: $('#baHasta').value });
-  if (inf !== 'situacion') q.set('desde', $('#baDesde').value);
+  const anual = ['patrimonio-neto', 'flujos-efectivo', 'memoria'].includes(inf);
+  const q = new URLSearchParams({ canalId: $('#baCanal').value });
+  if (!anual) q.set('hasta', $('#baHasta').value);
+  if (!anual && inf !== 'situacion') q.set('desde', $('#baDesde').value);
   if (inf === 'sumas-saldos') { q.set('nivel', $('#baNivel').value); q.set('incluir', $('#baIncluir').value); }
+  if (['situacion', 'perdidas-ganancias'].includes(inf) && $('#baFormato').value) q.set('formato', $('#baFormato').value);
   try {
     const r = await api(urlX(`/balances/${inf}?${q}`));
     msg($('#baMsg'), '', 'ayuda');
-    if (inf === 'sumas-saldos') pintaSumasSaldos(r); else pintaEstado(r);
+    $('#baTabla').hidden = inf === 'memoria'; $('#baExtra').innerHTML = '';
+    if (inf === 'sumas-saldos') pintaSumasSaldos(r);
+    else if (inf === 'patrimonio-neto') pintaEcpn(r);
+    else if (inf === 'flujos-efectivo') pintaEfe(r);
+    else if (inf === 'memoria') pintaMemoria(r);
+    else pintaEstado(r);
   } catch (e) { msg($('#baMsg'), e.message, 'ayuda err-texto'); }
 }
 $('#baVer').onclick = verBalance;
@@ -1516,6 +1526,38 @@ function pintaEstado(r) {
     }).join('');
   $('#baPista').textContent = 'Pulsa una partida para ver sus cuentas. Solo se muestran las partidas con importe.';
 }
+function cabeceraAnual(titulo, r) {
+  $('#baTitulo').textContent = `${titulo} · ${S.empresa.nombre}`;
+  $('#baSub').textContent = `Ejercicio ${r.ejercicio} (del ${fechaES(r.desde)} al ${fechaES(r.hasta)})` + (r.canal ? ` · canal ${r.canal.codigo}` : '');
+  $('#baAvisos').innerHTML = r.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#baPista').textContent = '';
+}
+const filaLinea = l => `<tr class="partida ${l.esTotal && l.nivel === 0 ? 'total' : ''}"><td style="padding-left:${8 + l.nivel * 18}px">${esc(l.texto)}</td>
+  <td class="num">${l.esTotal || l.importe ? fmt(l.importe) : ''}</td></tr>`;
+function pintaEcpn(r) {
+  cabeceraAnual('Estado de cambios en el patrimonio neto', r);
+  $('#baHead').innerHTML = `<tr><th>A) Estado de ingresos y gastos reconocidos</th><th class="num">${esc(r.ejercicio)}</th></tr>`;
+  $('#baBody').innerHTML = r.ingresosGastos.map(filaLinea).join('');
+  const cols = r.columnas;
+  $('#baExtra').innerHTML = `<h3>B) Estado total de cambios en el patrimonio neto</h3><div style="overflow-x:auto"><table class="balance">
+    <thead><tr><th></th>${cols.map(c => `<th class="num">${esc(c.texto)}</th>`).join('')}</tr></thead>
+    <tbody>${r.cambios.map(f => `<tr class="${f.esTotal ? 'total' : ''}"><td>${esc(f.texto)}</td>${cols.map(c => `<td class="num">${f.importes[c.id] ? fmt(f.importes[c.id]) : ''}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div><p class="ayuda">Patrimonio neto según el balance: ${fmt(r.patrimonioNetoBalance)}.</p>`;
+}
+function pintaEfe(r) {
+  cabeceraAnual('Estado de flujos de efectivo', r);
+  $('#baHead').innerHTML = `<tr><th>Concepto</th><th class="num">${esc(r.ejercicio)}</th></tr>`;
+  $('#baBody').innerHTML = r.lineas.map(filaLinea).join('');
+}
+function pintaMemoria(r) {
+  cabeceraAnual('Memoria (borrador)', { ...r, canal: null });
+  $('#baExtra').innerHTML = `<div class="memoria"><p><strong>${esc(r.empresa)}</strong> · NIF ${esc(r.nif)} · modelo ${r.formato === 'NORMAL' ? 'normal' : 'PYMES/abreviado'}</p>`
+    + r.secciones.map(sec => `<h3>${esc(sec.numero)}. ${esc(sec.titulo)}</h3>${sec.parrafos.map(p => `<p>${esc(p)}</p>`).join('')}`
+      + sec.tablas.map(t => `<table class="balance"><thead><tr>${t.cabecera.map((c, i) => `<th class="${i ? 'num' : ''}">${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${t.filas.map(f => `<tr>${f.map((v, i) => `<td class="${i ? 'num' : ''}">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`).join('')).join('')
+    + '</div>';
+}
+
 $('#baBody').addEventListener('click', e => {
   const tr = e.target.closest('tr[data-abre]'); if (!tr) return;
   const abierta = tr.classList.toggle('abierta');
