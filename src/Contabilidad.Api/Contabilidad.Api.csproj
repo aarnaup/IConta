@@ -2,7 +2,9 @@
   <ItemGroup>
     <PackageReference Include="Autofac.Extensions.DependencyInjection" Version="10.*" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.*" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
     <PackageReference Include="Serilog.AspNetCore" Version="9.*" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" Version="10.3.1" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Contabilidad.Domain\Contabilidad.Domain.csproj" />

@@ -33,6 +33,12 @@ dotnet test Contabilidad.slnx
 dotnet run --project src/Contabilidad.Api    # cadena de conexión en appsettings.json
 ```
 
+## Swagger y Postman
+En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
+- **Swagger UI**: `http://localhost:5080/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
+- **Documento OpenAPI**: `http://localhost:5080/openapi/v1.json`. En Postman: *Import* → pega esa URL (o el fichero). Crea una colección con las rutas agrupadas por módulo y autenticación *Bearer Token*: haz el login, copia el `token` de la respuesta en la variable de la colección (`bearerToken`) y el resto de peticiones ya lo envían.
+- Los parámetros `{empresaId}` y `{ejercicioId}` son los `id` de `GET /api/mis-empresas` y `GET /api/empresas/{id}/ejercicios`. Fechas como `2026-12-31`; errores de negocio, 400 con `{ error, detalle }`.
+
 ## Plan General Contable
 `07_pgc.sql` carga en `cat.cuenta_modelo` el cuadro de cuentas del PGC Normal (RD 1514/2007, 1.218 cuentas) y del PGC de PYMES (RD 1515/2007, 992 cuentas), con las modificaciones de 2016 y 2021, hasta 4 dígitos. Se puede volver a ejecutar sin duplicar.
 
