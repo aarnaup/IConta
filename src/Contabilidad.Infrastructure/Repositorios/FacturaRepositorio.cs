@@ -176,7 +176,8 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
                 // En recargo de equivalencia el IVA (y el recargo) soportado en las compras interiores no se deduce: es más coste
                 // (igual en el REAGP: el agricultor no deduce, se compensa a tanto alzado)
-                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" or "COMERCIANTE_MINORISTA"
+                // (también lo autorrepercutido en adquisiciones intracomunitarias e inversión del sujeto pasivo: se ingresa con el 309)
+                libro == LibroFactura.Recibidas && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" or "COMERCIANTE_MINORISTA"
                     ? "NINGUNA" : l.ReglaDeduccion,
                 l.PorcentajeDeduccion, l.EsBienInversion));
         }

@@ -116,6 +116,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP")
                      && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
             // Comerciante minorista: no presenta el 420 (sus ventas están exentas); el 425 informa de ellas
+            "IVA_NP" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP",
             "IGIC" => e.ImpuestoIndirecto == "IGIC" && !(m.Codigo == "420" && e.RegimenIva == "COMERCIANTE_MINORISTA"),
             "IRPF" => m.Codigo == "131" ? e.RegimenIrpf == "OBJETIVA" : directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
@@ -160,6 +161,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         {
             case "IVA" or "IGIC":
                 await CalcularImpuestoIndirectoAsync(cn, tx, empresaId, empresa, modelo, p, cmd, d, ct);
+                break;
+            case "IVA_NP":
+                await Calcular309Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
             case "IRPF" when modelo.Codigo == "131":
                 await Calcular131Async(cn, tx, empresaId, empresa, p, d, ct);
@@ -391,6 +395,35 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     : $"NO cuadra: resultado anual {anualAntes:N2} frente a {suma:N2} en las {presentadas.Count} autoliquidaciones {baseModelo.Codigo} presentadas. Hay facturas contabilizadas después de presentar o periodos sin presentar.");
             }
         }
+    }
+
+    // ---------------------------------------------------------------- 309
+    private sealed class Linea309Fila
+    {
+        public string Clase { get; set; } = "";
+        public decimal Porcentaje { get; set; }
+        public decimal PorcentajeRecargo { get; set; }
+        public decimal Base { get; set; }
+    }
+
+    private static async Task Calcular309Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
+        DeclaracionCalculada d, CancellationToken ct)
+    {
+        if (empresa.ImpuestoIndirecto != "IVA" || empresa.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP"))
+            throw new ReglaContableException("El 309 lo presentan los empresarios en recargo de equivalencia o en el régimen especial de la agricultura, " +
+                                             "ganadería y pesca (en el régimen general esas operaciones van en el 303).");
+        var lineas = (await cn.QueryAsync<Linea309Fila>(new CommandDefinition("""
+            SELECT CASE WHEN fi.tipo_operacion = 'INTRACOM_ADQUISICION' AND COALESCE(f.clave_operacion_349, 'A') <> 'I' THEN 'ADQUISICION' ELSE 'ISP' END AS clase,
+                   fi.porcentaje, COALESCE(v.recargo_equivalencia, 0) AS porcentaje_recargo, SUM(fi.base) AS base
+            FROM fiscal.factura f
+            JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+            LEFT JOIN cat.tipo_iva_vigencia v ON v.id = fi.tipo_iva_vigencia_id
+            WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
+              AND fi.tipo_operacion IN ('INTRACOM_ADQUISICION', 'INVERSION_SUJETO_PASIVO')
+            GROUP BY 1, 2, 3
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+            .Select(x => new Linea309(x.Clase, x.Porcentaje, x.PorcentajeRecargo, x.Base)).ToList();
+        Calculador309.Calcular(lineas, empresa.RegimenIva == "RECARGO_EQUIVALENCIA", d);
     }
 
     // ---------------------------------------------------------------- 200 / 202 (Impuesto sobre Sociedades)

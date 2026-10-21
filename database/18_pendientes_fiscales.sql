@@ -81,3 +81,8 @@ WHERE NOT EXISTS (SELECT 1 FROM cat.tipo_iva_vigencia x WHERE x.tipo_iva_id = t.
 ALTER TABLE core.empresa DROP CONSTRAINT IF EXISTS empresa_regimen_iva_check;
 ALTER TABLE core.empresa ADD CONSTRAINT empresa_regimen_iva_check
   CHECK (regimen_iva IN ('GENERAL','SIMPLIFICADO','RECARGO_EQUIVALENCIA','AGRICULTURA_GYP','CRITERIO_CAJA','EXENTO','COMERCIANTE_MINORISTA'));
+
+-- ---------------------------------------------------------------- modelo 309 (declaración no periódica del IVA)
+INSERT INTO fiscal.modelo_fiscal (administracion, codigo, nombre, impuesto, periodicidades)
+VALUES ('AEAT', '309', 'IVA - Declaración-liquidación no periódica', 'IVA', '{TRIMESTRAL}')
+ON CONFLICT (administracion, codigo) DO NOTHING;
