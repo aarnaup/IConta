@@ -76,7 +76,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
     private sealed record Preparada(
         LibroFactura Libro, FacturaCalculada Calculo, long EjercicioId, DateOnly FechaContable,
         long PlantillaId, string PlantillaNombre, long DiarioId, string Concepto, IReadOnlyList<ApunteCmd> Apuntes,
-        bool CriterioCaja, string? Clave349);
+        bool CriterioCaja, string? Clave349, long? InmuebleId = null);
 
 
     // =====================================================================
@@ -156,14 +156,29 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
             if (empresa.ImpuestoIndirecto != "EXENTO" && t.Impuesto != empresa.ImpuestoIndirecto)
                 throw new ReglaContableException($"La empresa usa {empresa.ImpuestoIndirecto}; el tipo {t.Codigo} es de {t.Impuesto}.");
             OperacionesIva.Validar(libro, l.TipoOperacion, empresa.ImpuestoIndirecto);
+            if (l.TipoOperacion == "COMPENSACION_REAGP")
+            {
+                if (!t.Codigo.StartsWith("REAGP", StringComparison.Ordinal))
+                    throw new ReglaContableException("La compensación del REAGP va con su tipo (12 % agrícola o forestal, 10,5 % ganadera o pesquera).");
+                if (libro == LibroFactura.Emitidas && empresa.RegimenIva != "AGRICULTURA_GYP")
+                    throw new ReglaContableException("Solo una empresa en el régimen especial de la agricultura, ganadería y pesca cobra la compensación.");
+            }
+            else if (t.Codigo.StartsWith("REAGP", StringComparison.Ordinal))
+                throw new ReglaContableException("El tipo de compensación del REAGP solo se usa con la operación «compensación REAGP».");
 
-            var interior = l.TipoOperacion == "INTERIOR";
+            // Comerciante minorista del IGIC: sus ventas interiores están exentas (art. 10.1.27 de la Ley 20/1991)
+            var operacion = empresa.RegimenIva == "COMERCIANTE_MINORISTA" && libro == LibroFactura.Emitidas && l.TipoOperacion == "INTERIOR"
+                ? "EXENTA" : l.TipoOperacion;
+            var interior = operacion == "INTERIOR";
             entradas.Add(new LineaIvaEntrada(
-                t.TipoIvaId, t.VigenciaId, l.TipoOperacion, l.Base,
-                OperacionesIva.LlevaCuota(libro, l.TipoOperacion) ? t.Porcentaje.Value : 0m,
+                t.TipoIvaId, t.VigenciaId, operacion, l.Base,
+                OperacionesIva.LlevaCuota(libro, operacion) ? t.Porcentaje.Value : 0m,
                 interior && aplicaRecargo ? (t.Recargo ?? 0m) : 0m,
                 // En recargo de equivalencia el IVA (y el recargo) soportado en las compras interiores no se deduce: es más coste
-                libro == LibroFactura.Recibidas && interior && empresa.RegimenIva == "RECARGO_EQUIVALENCIA" ? "NINGUNA" : l.ReglaDeduccion,
+                // (igual en el REAGP: el agricultor no deduce, se compensa a tanto alzado)
+                // (también lo autorrepercutido en adquisiciones intracomunitarias e inversión del sujeto pasivo: se ingresa con el 309)
+                libro == LibroFactura.Recibidas && empresa.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP" or "COMERCIANTE_MINORISTA"
+                    ? "NINGUNA" : l.ReglaDeduccion,
                 l.PorcentajeDeduccion, l.EsBienInversion));
         }
 
@@ -275,7 +290,10 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var apuntes = GeneradorAsientoFactura.Generar(libro, calculo, lineasPlantilla, resolutor,
             cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo, criterioCaja,
-            empresa.RegimenIva == "RECARGO_EQUIVALENCIA");
+            empresa.RegimenIva == "RECARGO_EQUIVALENCIA",
+            // Minorista en recargo de equivalencia: recargo de sus adquisiciones intracomunitarias de bienes (no de servicios, clave I)
+            libro == LibroFactura.Recibidas && empresa.RegimenIva == "RECARGO_EQUIVALENCIA" && clave349 != "I"
+                ? tipos.Values.ToDictionary(t => t.TipoIvaId, t => t.Recargo ?? 0m) : null);
         if (apuntes.Count < 2)
             throw new ReglaContableException("La plantilla no generó apuntes suficientes para esta factura.");
 
@@ -287,8 +305,23 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var concepto = !string.IsNullOrWhiteSpace(cmd.Descripcion) ? cmd.Descripcion.Trim() : apuntes[0].Concepto ?? $"Factura {numeroCompleto}";
 
+        // --- Inmueble arrendado (180): el indicado o, si el arrendador tiene uno solo, ese ---
+        long? inmuebleId = null;
+        if (cmd.InmuebleId is { } inm)
+        {
+            if (libro != LibroFactura.Recibidas) throw new ReglaContableException("El inmueble arrendado se indica en las facturas recibidas.");
+            inmuebleId = await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
+                "SELECT id FROM conta.inmueble WHERE id = @inm AND empresa_id = @empresaId AND tercero_id = @terceroId",
+                new { inm, empresaId, terceroId = cmd.TerceroId }, tx, cancellationToken: ct))
+                ?? throw new ReglaContableException("El inmueble no es de este arrendador.");
+        }
+        else if (libro == LibroFactura.Recibidas && retencion is not null)
+            inmuebleId = await cn.ExecuteScalarAsync<long?>(new CommandDefinition("""
+                SELECT min(id) FROM conta.inmueble WHERE empresa_id = @empresaId AND tercero_id = @terceroId HAVING count(*) = 1
+                """, new { empresaId, terceroId = cmd.TerceroId }, tx, cancellationToken: ct));
+
         return new Preparada(libro, calculo, ejercicioId, fechaContable, plantilla.Id, plantilla.Nombre, diarioId, concepto, apuntes,
-            criterioCaja, clave349);
+            criterioCaja, clave349, inmuebleId);
     }
 
     // =====================================================================
@@ -324,12 +357,12 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                   (empresa_id, ejercicio_id, libro, tipo_factura, serie, numero, tercero_id, actividad_id, canal_id, plantilla_id,
                    fecha_expedicion, fecha_operacion, fecha_contable, descripcion,
                    base_total, cuota_total, recargo_total, retencion_total, total, clave_operacion_347, estado, creado_por, comando,
-                   criterio_caja, clave_operacion_349, factura_rectificada_id)
+                   criterio_caja, clave_operacion_349, factura_rectificada_id, inmueble_id)
                 VALUES
                   (@empresaId, @ejercicioId, @libro, @tipoFactura, @serie, @numero, @terceroId, @actividadId, @canalId, @plantillaId,
                    @fechaExpedicion, @fechaOperacion, @fechaContable, @descripcion,
                    @base, @cuota, @recargo, @retencion, @total, @clave347, 'BORRADOR', @usuarioId, @comando::jsonb,
-                   @criterioCaja, @clave349, @rectificada)
+                   @criterioCaja, @clave349, @rectificada, @inmueble)
                 RETURNING id
                 """, new
             {
@@ -340,7 +373,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 @base = t.Base, cuota = t.Cuota, recargo = t.Recargo, retencion = t.Retencion, total = t.Total,
                 clave347 = p.Libro == LibroFactura.Emitidas ? "B" : "A",
                 usuarioId, comando = JsonSerializer.Serialize(cmd, JsonOpts),
-                criterioCaja = p.CriterioCaja, clave349 = p.Clave349, rectificada = cmd.FacturaRectificadaId
+                criterioCaja = p.CriterioCaja, clave349 = p.Clave349, rectificada = cmd.FacturaRectificadaId, inmueble = p.InmuebleId
             }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)

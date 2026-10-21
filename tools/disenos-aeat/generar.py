@@ -83,7 +83,13 @@ MAPA = {
     "${object.aeat_perception_key_id.code}": "I:clave", "${object.aeat_perception_subkey_id.name or '00'}": "I:subclave",
     "${'N' if object.percepciones_dinerarias < 0 else ' '}": "I:signoBase",
     "${object.percepciones_dinerarias}": "I:base", "${object.retenciones_dinerarias}": "I:retencion",
-    "${'N' if object.percepciones_en_especie < 0 else ' '}": None,
+    "${'N' if object.percepciones_en_especie < 0 else ' '}": "I:signoEspecie",
+    "${object.percepciones_en_especie}": "I:especie",
+    "${object.ingresos_a_cuenta_efectuados}": "I:ingresoCuenta", "${object.ingresos_a_cuenta_repercutidos}": "I:ingresoCuentaRepercutido",
+    "${object.a_nacimiento}": "I:anioNacimiento", "${object.situacion_familiar}": "I:situacionFamiliar",
+    "${object.nif_conyuge}": "I:nifConyuge", "${object.discapacidad}": "I:discapacidad",
+    "${object.contrato_o_relacion}": "I:contrato", "${object.movilidad_geografica}": "I:movilidad",
+    "${object.gastos_deducibles}": "I:gastosDeducibles",
     "${'N' if object.percepciones_dinerarias_incap < 0 else ' '}": None,
     "${'0' if object.report_id.year > 2023 else ''}": "D:cero",
     # 390: datos estadísticos y representantes
@@ -149,6 +155,8 @@ def campo(l, cid):
     if l["align"] == "right" and t in ("Alfanumerico", "Alfabetico"): named.append("Derecha: true")
     e = l["expr"]
     if e in FIJOS: e = FIJOS[e]
+    if "190" in cid and "derivadas de incapacidad" in l["name"] and "no derivadas" not in l["name"]:
+        e = None                                 # OCA repite aquí las expresiones de la especie sin incapacidad
     if "mod390" in cid and l["type"] == "float" and (l["fixed"] in ("0", None)) and not e \
             and not any(x in l["name"] for x in SECCIONES_SIN_CALCULO_390):
         m390 = re.search(r"\[(\d+)\]\s*\.?$", l["name"].strip())

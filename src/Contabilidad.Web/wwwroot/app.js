@@ -201,8 +201,8 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
-  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, fiscal: cargaFiscal, pendientes: cargaPendientes,
+  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, nominas: cargaNominas, fiscal: cargaFiscal, pendientes: cargaPendientes,
                   inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
                   cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
@@ -326,10 +326,13 @@ const fst = { tipos: [], rets: [], terceros: [], formas: [], lineas: [] };
 const nuevaFL = () => ({ tipoIvaId: null, base: '', regla: 'TOTAL', pct: '', op: '', inv: false });
 // Operaciones por libro ('' = interior, o exenta si el tipo es exento). En el IGIC no hay intracomunitarias.
 const OPS_FACTURA = {
-  EMITIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ENTREGA', 'Entrega intracomunitaria (exenta)'],
-             ['EXPORTACION', 'Exportación (exenta)'], ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo']],
+  EMITIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta (arts. 7 y 14)'], ['NO_SUJETA_LOCAL', 'No sujeta por localización'],
+             ['NO_SUJETA_OSS', 'No sujeta: ventanilla única (OSS)'], ['INTRACOM_ENTREGA', 'Entrega intracomunitaria (exenta)'],
+             ['EXPORTACION', 'Exportación (exenta)'], ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo'],
+             ['COMPENSACION_REAGP', 'Compensación REAGP (empresa en el régimen)']],
   RECIBIDAS: [['', 'Interior'], ['NO_SUJETA', 'No sujeta'], ['INTRACOM_ADQUISICION', 'Adquisición intracomunitaria'],
-              ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo'], ['IMPORTACION', 'Importación (DUA)']]
+              ['INVERSION_SUJETO_PASIVO', 'Inversión del sujeto pasivo'], ['IMPORTACION', 'Importación (DUA)'],
+              ['COMPENSACION_REAGP', 'Compensación REAGP (agricultor, ganadero o pescador)']]
 };
 const opsFactura = () => OPS_FACTURA[$('#fLibro').value].filter(([v]) => !(S.empresa && S.empresa.impuestoIndirecto === 'IGIC' && v.startsWith('INTRACOM')));
 const esEmitida = () => $('#fLibro').value === 'EMITIDAS';
@@ -409,6 +412,7 @@ function cmdFactura(borrador) {
     terceroId: +$('#fTercero').value || 0, formaPagoId: +$('#fForma').value || null, canalId: +$('#fCanal').value || 0,
     fechaExpedicion: $('#fFecha').value, tipoRetencionId: +$('#fRet').value || null, borrador,
     clave349: fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')) ? $('#f349').value : null,
+    inmuebleId: !$('#fInmL').hidden && $('#fInm').value ? +$('#fInm').value : null,
     lineas: fst.lineas.filter(l => l.tipoIvaId && num(l.base)).map(l => {
       const t = fst.tipos.find(x => x.id === l.tipoIvaId);
       return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: l.op || (t && t.esExento ? 'EXENTA' : 'INTERIOR'),
@@ -475,15 +479,88 @@ async function imprimeFactura(id) {
 $('#tCrear').onclick = async () => {
   const tipo = $('#tTipo').value;
   try {
-    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo !== 'PROVEEDOR', esProveedor: tipo !== 'CLIENTE',
+    await post(urlE('/terceros'), { nif: $('#tNif').value, nombre: $('#tNombre').value, esCliente: tipo === 'CLIENTE' || tipo === 'AMBOS',
+      esProveedor: tipo === 'PROVEEDOR' || tipo === 'AMBOS', esEmpleado: tipo === 'EMPLEADO',
       codigoPostal: $('#tCp').value || null, pais: $('#tPais').value || 'ES', tipoDocumento: ($('#tPais').value || 'ES') === 'ES' ? 'NIF' : 'VIES',
-      criterioCaja: tipo !== 'CLIENTE' && $('#tCaja').checked });
+      criterioCaja: (tipo === 'PROVEEDOR' || tipo === 'AMBOS') && $('#tCaja').checked });
     $('#tCaja').checked = false;
     msg($('#tMsg'), 'Tercero creado.', 'ok-texto'); $('#tNif').value = ''; $('#tNombre').value = ''; $('#tCp').value = '';
     await cargaFacturas();
   } catch (e) { msg($('#tMsg'), e.message, 'err-texto'); }
 };
 
+
+// ------------------------------------------------------------ nóminas
+const NO = { nominas: [], empleados: [] };
+const impNomina = () => {
+  const bruto = num($('#noBruto').value), pct = $('#noPct').value.trim();
+  const ret = $('#noRet').value.trim() ? num($('#noRet').value) : (pct ? Math.round(bruto * num(pct)) / 100 : 0);
+  return { bruto, retencion: ret, ssTrabajador: num($('#noSsT').value), ssEmpresa: num($('#noSsE').value), anticipos: num($('#noAnt').value),
+           especie: num($('#noEsp').value), ingresoACuenta: num($('#noIc').value), ingresoRepercutido: $('#noRep').checked };
+};
+function pintaLiquidoNomina() {
+  const n = impNomina();
+  const liq = n.bruto - n.retencion - n.ssTrabajador - n.anticipos - (n.ingresoRepercutido ? n.ingresoACuenta : 0);
+  $('#noLiquido').textContent = n.bruto || n.especie ? `Retención ${fmt(n.retencion)} · líquido a percibir ${fmt(liq)} · coste para la empresa ${fmt(n.bruto + n.ssEmpresa + (n.ingresoRepercutido ? 0 : n.ingresoACuenta))}` : '';
+}
+['#noBruto', '#noPct', '#noRet', '#noSsT', '#noSsE', '#noAnt', '#noEsp', '#noIc'].forEach(i => $(i).addEventListener('input', pintaLiquidoNomina));
+$('#noRep').addEventListener('change', pintaLiquidoNomina);
+$('#noPct').addEventListener('input', () => { $('#noRet').value = ''; });
+
+async function cargaNominas() {
+  const [terceros, nominas, empleados] = await Promise.all([api(urlE('/terceros')), api(urlX('/nominas')), api(urlE('/empleados'))]);
+  NO.nominas = nominas; NO.empleados = empleados;
+  const sel = $('#noTercero').value;
+  $('#noTercero').innerHTML = terceros.map(t => `<option value="${t.id}">${esc(t.nombre)} (${esc(t.nif || '')})</option>`).join('');
+  if (sel) $('#noTercero').value = sel;
+  $('#noCanal').innerHTML = canalOpts($('#noCanal').value || (S.canales.find(c => c.codigo === 'A') || S.canales[0] || {}).id);
+  if (!$('#noFecha').value) $('#noFecha').value = S.ejercicio.fechaFin < new Date().toISOString().slice(0, 10) ? S.ejercicio.fechaFin : new Date().toISOString().slice(0, 10);
+  const directo = permitido('CONTABILIDAD_DIRECTO');
+  $('#noLista').innerHTML = nominas.map(n => `<tr class="${n.estado === 'ANULADA' ? 'estado-cerrado' : ''}"><td>${fechaES(n.fecha)}</td><td>${esc(n.empleado)}</td>
+      <td>${esc(n.periodo || '')}</td><td class="num">${fmt(n.bruto)}</td><td class="num">${fmt(n.retencion)} <small>(${fmt(n.porcentajeRetencion)} %)</small></td>
+      <td class="num">${fmt(n.ssTrabajador)}</td><td class="num">${fmt(n.ssEmpresa)}</td><td class="num">${n.especie ? fmt(n.especie) : ''}</td>
+      <td class="num">${fmt(n.liquido)}</td><td>${n.estado === 'ANULADA' ? 'anulada' : (n.asientoNumero ? 'nº ' + n.asientoNumero : '')}</td>
+      <td>${directo && n.estado !== 'ANULADA' ? `<button class="btn" type="button" data-anula="${n.id}">Anular</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="11" class="vacio">Todavía no hay nóminas en este ejercicio.</td></tr>';
+  const escribe = permitido('CONTABILIDAD:ESCRITURA');
+  const sit = v => [1, 2, 3].map(x => `<option ${x === v ? 'selected' : ''}>${x}</option>`).join('');
+  $('#noEmpleados').innerHTML = empleados.map(e => `<tr data-id="${e.terceroId}"><td>${esc(e.nombre)}</td><td>${esc(e.nif)}</td>
+      <td><input data-f="anioNacimiento" inputmode="numeric" style="width:6em" value="${e.anioNacimiento ?? ''}"></td>
+      <td><select data-f="situacionFamiliar">${sit(e.situacionFamiliar)}</select></td>
+      <td><input data-f="nifConyuge" maxlength="9" style="width:8em" value="${esc(e.nifConyuge || '')}"></td>
+      <td><select data-f="discapacidad">${[0, 1, 2, 3].map(x => `<option ${x === e.discapacidad ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+      <td><select data-f="contrato">${[1, 2, 3, 4].map(x => `<option ${x === e.contrato ? 'selected' : ''}>${x}</option>`).join('')}</select></td>
+      <td><input type="checkbox" data-f="movilidadGeografica" ${e.movilidadGeografica ? 'checked' : ''}></td>
+      <td>${escribe ? '<button class="btn" type="button" data-guarda-emp>Guardar</button>' : ''}</td></tr>`).join('')
+    || '<tr><td colspan="9" class="vacio">Los trabajadores aparecen aquí con su primera nómina.</td></tr>';
+  pintaLiquidoNomina();
+}
+
+$('#noGuardar').onclick = async () => {
+  try {
+    const n = await post(urlX('/nominas'), { terceroId: +$('#noTercero').value, canalId: +$('#noCanal').value, fecha: $('#noFecha').value,
+      periodo: $('#noPeriodo').value || null, ...impNomina() });
+    msg($('#noMsg'), `Nómina contabilizada: asiento nº ${n.asientoNumero}, líquido ${fmt(n.liquido)}.`, 'ok-texto');
+    ['#noBruto', '#noPct', '#noRet', '#noSsT', '#noSsE', '#noPeriodo'].forEach(i => $(i).value = '');
+    ['#noAnt', '#noEsp', '#noIc'].forEach(i => $(i).value = '0');
+    await cargaNominas();
+  } catch (e) { msg($('#noMsg'), e.message, 'err-texto'); }
+};
+$('#noLista').addEventListener('click', async e => {
+  const b = e.target.closest('[data-anula]'); if (!b || !confirm('¿Anular la nómina y su asiento?')) return;
+  try { await api(urlX(`/nominas/${b.dataset.anula}`), { method: 'DELETE' }); await cargaNominas(); msg($('#noListaMsg'), 'Nómina anulada.', 'ayuda ok-texto'); }
+  catch (err) { msg($('#noListaMsg'), err.message, 'ayuda err-texto'); }
+});
+$('#noEmpleados').addEventListener('click', async e => {
+  const b = e.target.closest('[data-guarda-emp]'); if (!b) return;
+  const tr = b.closest('tr'), v = f => tr.querySelector(`[data-f=${f}]`);
+  try {
+    await put(urlE(`/empleados/${tr.dataset.id}`), { anioNacimiento: v('anioNacimiento').value ? +v('anioNacimiento').value : null,
+      situacionFamiliar: +v('situacionFamiliar').value, nifConyuge: v('nifConyuge').value || null, discapacidad: +v('discapacidad').value,
+      contrato: +v('contrato').value, movilidadGeografica: v('movilidadGeografica').checked });
+    msg($('#noEmpMsg'), 'Datos del trabajador guardados.', 'ayuda ok-texto');
+  } catch (err) { msg($('#noEmpMsg'), err.message, 'ayuda err-texto'); }
+});
 
 // ------------------------------------------------------------ tesorería
 const TES = { venc: [], bancos: [], liq: null };
@@ -954,7 +1031,7 @@ async function cargaFiscal() {
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
     pintaPeriodos();
   }
-  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja()]);
+  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja(), cargaInmuebles()]);
   cargaSii();
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
@@ -969,13 +1046,32 @@ async function verSociedades() {
   $('#isTitulo').textContent = `Impuesto sobre Sociedades · periodo impositivo ${S.ejercicio.codigo} (${fechaES(S.ejercicio.fechaInicio)} – ${fechaES(S.ejercicio.fechaFin)})`;
   for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores'])
     $('#is_' + k).value = IS[k] ? String(IS[k]).replace('.', ',') : '';
-  pintaAjustesIs();
+  pintaAjustesIs(); pintaBinsIs();
 }
+function pintaBinsIs() {
+  IS.binsDetalle = IS.binsDetalle || [];
+  $('#isBins').innerHTML = IS.binsDetalle.map((b, i) => `<tr><td><input data-b="${i}" data-k="anio" inputmode="numeric" value="${b.anio || ''}" aria-label="Año"></td>
+    <td><input class="num" data-b="${i}" data-k="importe" inputmode="decimal" value="${String(b.importe || '').replace('.', ',')}" aria-label="Importe"></td>
+    <td><button class="x" type="button" data-delb="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="3" class="vacio">Sin detalle por año.</td></tr>';
+  const tot = IS.binsDetalle.reduce((a, b) => a + (+b.importe || 0), 0);
+  $('#is_binsAnteriores').readOnly = IS.binsDetalle.length > 0;
+  if (IS.binsDetalle.length) $('#is_binsAnteriores').value = String(tot).replace('.', ',');
+}
+$('#isBins').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.b === undefined) return;
+  IS.binsDetalle[+t.dataset.b][t.dataset.k] = t.dataset.k === 'anio' ? +t.value : num(t.value); pintaBinsIs();
+});
+$('#isBins').addEventListener('click', e => { if (e.target.dataset.delb !== undefined) { IS.binsDetalle.splice(+e.target.dataset.delb, 1); pintaBinsIs(); } });
+$('#isBinAnadir').onclick = () => { IS.binsDetalle = IS.binsDetalle || []; IS.binsDetalle.push({ anio: new Date(S.ejercicio.fechaInicio).getFullYear() - 1, importe: 0 }); pintaBinsIs(); };
 function pintaAjustesIs() {
+  const clases = IS.clases || [];
+  const opcClase = c => clases.map(x => `<option value="${x.codigo}" ${x.codigo === (c || 'OTRAS') ? 'selected' : ''}>${esc(x.texto)}</option>`).join('');
   $('#isAjustes').innerHTML = IS.ajustes.map((a, i) => `<tr><td><input data-i="${i}" data-k="concepto" value="${esc(a.concepto)}" aria-label="Concepto"></td>
+    <td><select data-i="${i}" data-k="clase" aria-label="Casilla del modelo 200">${opcClase(a.clase)}</select></td>
     <td><input class="num" data-i="${i}" data-k="importe" inputmode="decimal" value="${String(a.importe).replace('.', ',')}" aria-label="Importe"></td>
     <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
-    || '<tr><td colspan="3" class="vacio">Sin ajustes extracontables.</td></tr>';
+    || '<tr><td colspan="4" class="vacio">Sin ajustes extracontables.</td></tr>';
   $('#isSugerencias').innerHTML = IS.sugerencias.map((a, i) => `<li>${esc(a.concepto)}: ${fmt(a.importe)}
     <button class="btn" type="button" data-sug="${i}">Añadir</button></li>`).join('');
 }
@@ -988,12 +1084,12 @@ $('#isSugerencias').addEventListener('click', e => {
   const i = e.target.dataset.sug; if (i === undefined) return;
   IS.ajustes.push({ ...IS.sugerencias[+i] }); pintaAjustesIs();
 });
-$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0 }); pintaAjustesIs(); };
+$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0, clase: 'OTRAS' }); pintaAjustesIs(); };
 $('#isGuardar').onclick = async () => {
   try {
     const cuerpo = { ...IS };
     for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores']) cuerpo[k] = num($('#is_' + k).value);
-    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs();
+    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs(); pintaBinsIs();
     msg($('#isMsg'), 'Datos del Impuesto sobre Sociedades guardados. Calcula el 200 en la lista de modelos.', 'ayuda ok-texto');
   } catch (e) { msg($('#isMsg'), e.message, 'ayuda err-texto'); }
 };
@@ -1173,20 +1269,64 @@ $('#prRegAnular').onclick = async () => {
 $('#prGuardar').onclick = async () => {
   try {
     const ent = id => $(id).value.trim() ? parseInt($(id).value, 10) : null, dec = id => $(id).value.trim() ? num($(id).value) : null;
-    const p = await api(urlE('/fiscal/prorratas'), { method: 'PUT', body: JSON.stringify({ anio: +$('#prAnio').value,
+    const p = await api(urlE('/fiscal/prorratas'), { method: 'PUT', body: JSON.stringify({ anio: +$('#prAnio').value, sectorDiferenciado: ent('#prSector'),
       porcentajeProvisional: ent('#prProv'), porcentajeDefinitivo: ent('#prDef'), operacionesConDerecho: dec('#prCon'), operacionesTotales: dec('#prTot') }) });
-    ['#prProv', '#prDef', '#prCon', '#prTot'].forEach(i => $(i).value = '');
+    ['#prProv', '#prDef', '#prCon', '#prTot', '#prSector'].forEach(i => $(i).value = '');
     await listaProrratas();
     msg($('#prMsg'), `Prorrata de ${p.anio} guardada${p.porcentajeDefinitivo != null ? ': definitivo ' + p.porcentajeDefinitivo + ' %' : ''}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#prMsg'), e.message, 'ayuda err-texto'); }
 };
+
+// ------------------------------------------------------------ inmuebles arrendados (180)
+const IM = { lista: [], sel: null };
+const sitTxt = { 1: 'España salvo País Vasco y Navarra', 2: 'País Vasco', 3: 'Navarra', 4: 'sin referencia catastral' };
+async function cargaInmuebles() {
+  const [lista, terceros] = await Promise.all([api(urlE('/inmuebles')), api(urlE('/terceros'))]);
+  IM.lista = lista;
+  $('#imTercero').innerHTML = terceros.filter(t => t.esProveedor).map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
+  $('#imLista').innerHTML = lista.map((i, n) => `<tr><td>${esc(i.arrendador)}</td><td>${i.situacion} · ${sitTxt[i.situacion]}</td><td>${esc(i.referenciaCatastral || '')}</td>
+      <td>${esc([i.tipoVia, i.nombreVia, i.numero, i.complemento].filter(Boolean).join(' '))}</td><td>${esc(i.municipio || '')} ${esc(i.codigoPostal || '')}</td>
+      <td class="fila-acciones" data-req="FISCAL:ESCRITURA"><button class="btn" data-imed="${n}">Modificar</button><button class="btn" data-imdel="${i.id}">Borrar</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">No hay inmuebles arrendados.</td></tr>';
+  aplicaPermisos();
+}
+const IM_CAMPOS = { imTercero: 'terceroId', imSit: 'situacion', imRc: 'referenciaCatastral', imTv: 'tipoVia', imVia: 'nombreVia', imNum: 'numero',
+                    imComp: 'complemento', imMun: 'municipio', imMuni: 'codigoMunicipio', imCp: 'codigoPostal' };
+function formInmueble(i) {
+  IM.sel = i;
+  Object.entries(IM_CAMPOS).forEach(([id, k]) => { $('#' + id).value = i ? (i[k] ?? '') : (id === 'imSit' ? '1' : id === 'imTercero' ? $('#imTercero').value : ''); });
+}
+$('#imNuevo').onclick = () => formInmueble(null);
+$('#imLista').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.imed !== undefined) { formInmueble(IM.lista[+b.dataset.imed]); return; }
+  if (!confirm('¿Borrar el inmueble?')) return;
+  try { await api(urlE(`/inmuebles/${b.dataset.imdel}`), { method: 'DELETE' }); await cargaInmuebles(); msg($('#imMsg'), 'Inmueble borrado.', 'ok-texto'); }
+  catch (err) { msg($('#imMsg'), err.message, 'err-texto'); }
+});
+$('#imGuardar').onclick = async () => {
+  const o = { id: IM.sel?.id || 0 };
+  Object.entries(IM_CAMPOS).forEach(([id, k]) => { const v = $('#' + id).value.trim(); o[k] = v === '' ? null : v; });
+  o.terceroId = +o.terceroId; o.situacion = +o.situacion; o.nombreVia = o.nombreVia || '';
+  try { await put(urlE('/inmuebles'), o); formInmueble(null); await cargaInmuebles(); msg($('#imMsg'), 'Inmueble guardado.', 'ok-texto'); }
+  catch (err) { msg($('#imMsg'), err.message, 'err-texto'); }
+};
+// En la factura recibida: el inmueble del arrendador, si tiene alguno
+async function pintaInmueblesFactura() {
+  const t = +$('#fTercero').value;
+  const lista = !esEmitida() && t ? await api(urlE(`/inmuebles?terceroId=${t}`)).catch(() => []) : [];
+  $('#fInmL').hidden = lista.length === 0;
+  $('#fInm').innerHTML = lista.map(i => `<option value="${i.id}">${esc([i.tipoVia, i.nombreVia, i.numero].filter(Boolean).join(' '))}${i.referenciaCatastral ? ' · ' + esc(i.referenciaCatastral) : ''}</option>`).join('');
+}
+$('#fTercero').addEventListener('change', pintaInmueblesFactura);
+$('#fLibro').addEventListener('change', pintaInmueblesFactura);
 
 // ------------------------------------------------------------ libros registro de IVA/IGIC
 const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#lrAnio').value}&periodo=${$('#lrPeriodo').value}`;
 $('#lrVer').onclick = async () => {
   try {
     const d = await api(urlE(consultaLibro()));
-    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta', INTRACOM_ENTREGA: 'Entrega intracom.', INTRACOM_ADQUISICION: 'Adquisición intracom.', EXPORTACION: 'Exportación', IMPORTACION: 'Importación', INVERSION_SUJETO_PASIVO: 'Inv. sujeto pasivo' };
+    const rec = d.libro === 'RECIBIDAS', imp = d.impuesto, txt = { INTERIOR: 'Interior', EXENTA: 'Exenta', NO_SUJETA: 'No sujeta', NO_SUJETA_LOCAL: 'No sujeta (localización)', NO_SUJETA_OSS: 'No sujeta (OSS)', COMPENSACION_REAGP: 'Compensación REAGP', INTRACOM_ENTREGA: 'Entrega intracom.', INTRACOM_ADQUISICION: 'Adquisición intracom.', EXPORTACION: 'Exportación', IMPORTACION: 'Importación', INVERSION_SUJETO_PASIVO: 'Inv. sujeto pasivo' };
     $('#lrResumen').textContent = `${rec ? 'Facturas recibidas' : 'Facturas expedidas'} · ${imp} · del ${fechaES(d.desde)} al ${fechaES(d.hasta)} · ${d.facturas} factura(s). `
       + `Base ${fmt(d.totalBase)}, cuota ${fmt(d.totalCuota)}${d.totalRecargo ? ', recargo ' + fmt(d.totalRecargo) : ''}${rec ? ', deducible ' + fmt(d.totalCuotaDeducible) : ''}, total ${fmt(d.totalFacturas)}.`;
     $('#lrAvisos').innerHTML = d.avisos.map(a => `<li>${esc(a)}</li>`).join('');
@@ -1272,13 +1412,20 @@ function muestraDeclaracion(v) {
   $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
       <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
   // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
-  const conFichero = !!v.id && ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
+  // 420/425: XML para el programa de ayuda de la Agencia Tributaria Canaria
+  const atc = ['420', '425'].includes(v.modelo);
+  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '131', '309', '347', '349', '190', '180', '200', '202'].includes(v.modelo));
   $('#mfFichero').hidden = !conFichero;
+  $('#mfFichero').querySelector('summary').textContent = atc ? 'Fichero XML para la Agencia Tributaria Canaria' : 'Fichero para la Agencia Tributaria';
   if (conFichero) {
-    const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
-    $('#mfFDomL').hidden = !autoliq || v.resultado <= 0;
-    $('#mfFIbanL').hidden = !autoliq;
-    $('#mfFTelL').hidden = $('#mfFConL').hidden = autoliq;
+    const autoliq = ['303', '111', '115', '130', '131', '309'].includes(v.modelo);
+    const is = ['200', '202'].includes(v.modelo);
+    $('#mfFDomL').hidden = !(autoliq || is) || v.resultado <= 0;
+    $('#mfFIbanL').hidden = !autoliq && !is && v.modelo !== '420';
+    $('#mfFTelL').hidden = autoliq || v.modelo === '202'; $('#mfFConL').hidden = autoliq || atc || is;
+    $('#mfFCnaeL').hidden = !is;
+    $('#mfFSvpL').hidden = $('#mfFMunL').hidden = !atc;
+    $('#mfFPagoL').hidden = v.modelo !== '420' || v.resultado <= 0;
     $('#mfFExoL').hidden = !(v.modelo === '303' && ['4T', '12'].includes(v.periodo));
     msg($('#mfFMsg'), '', 'ayuda');
   }
@@ -1306,7 +1453,9 @@ $('#mfFDescargar').onclick = async () => {
     const nombre = await descargaPost(urlE(`/fiscal/declaraciones/${v.id}/fichero`), {
       domiciliar: $('#mfFDom').value === 'true' && !$('#mfFDomL').hidden, iban: $('#mfFIban').value || null,
       telefono: $('#mfFTel').value || null, contacto: $('#mfFCon').value || null,
-      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden }, 'modelo.txt');
+      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden,
+      siglasVia: $('#mfFSvp').value || null, codigoMunicipio: $('#mfFMun').value || null, formaPagoAtc: $('#mfFPago').value,
+      cnae: $('#mfFCnaeL').hidden ? null : $('#mfFCnae').value || null }, 'modelo.txt');
     msg($('#mfFMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#mfFMsg'), e.message, 'ayuda err-texto'); }
 };
@@ -1337,7 +1486,8 @@ async function cargaDeclaraciones() {
       ${d.asientoNumero && directo ? `<button class="btn" data-anliq="${d.id}" ${abierto ? '' : 'disabled'}>Anular asiento</button>` : ''}</td></tr>`).join('')
     : '<tr><td colspan="8" class="vacio">No hay declaraciones guardadas en este año.</td></tr>';
 }
-const liquidable = d => d.estado === 'PRESENTADA' && ['303', '420'].includes(d.modelo) && d.periodo !== '0A';
+// 303/420: liquidación del IVA/IGIC; 202: pago fraccionado; 200: impuesto corriente y diferido del ejercicio
+const liquidable = d => d.estado === 'PRESENTADA' && (['303', '420', '202'].includes(d.modelo) && d.periodo !== '0A' || d.modelo === '200');
 $('#mfAnio').onchange = () => cargaDeclaraciones().catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto'));
 
 $('#mfLista').addEventListener('click', async e => {
@@ -1509,7 +1659,7 @@ $('#inAnularBaja').onclick = async () => {
   catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
 };
 
-const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
+const metodoTxt = { LINEAL: 'lineal', DEGRESIVO: 'degresiva', DIGITOS_DECRECIENTE: 'por suma de dígitos decreciente', DIGITOS_CRECIENTE: 'por suma de dígitos creciente', COEFICIENTE_TABLA: 'por coeficiente de tablas', LIBRE: 'libre', NO_AMORTIZA: 'no se amortiza' };
 $('#inFGuardar').onclick = async () => {
   if (!IN.ficha) return;
   try {
@@ -1570,12 +1720,15 @@ async function pintaBienInversion(e) {
   const b = l.bienes.find(x => x.inmovilizadoId === e.id);
   $('#inBIResumen').textContent = b
     ? `En el registro desde ${b.anioInicio} hasta ${b.ultimoAnio}${b.esInmueble ? ' (inmueble)' : ''}: cuota soportada ${fmt(b.cuotaSoportada)}, prorrata del año de inicio ${b.prorrataInicial} %, `
-      + `deducción ${fmt(b.deduccionInicial)}.${b.transmisionExenta ? ' Venta exenta o no sujeta.' : ''} ${textoCuadro(b)}`
+      + `deducción ${fmt(b.deduccionInicial)}.${b.sectorDiferenciado != null ? ' Sector diferenciado ' + b.sectorDiferenciado + '.' : ''}`
+      + `${b.transmisionExenta ? ' Venta exenta o no sujeta.' : ''}`
+      + `${b.porcentajes.length ? ' % fijados: ' + b.porcentajes.map(p => p.anio + ': ' + p.porcentaje + ' %').join(', ') + '.' : ''} ${textoCuadro(b)}`
     : e.valorAdquisicion > 3005.06 ? 'No está en el registro de bienes de inversión. Si su IVA/IGIC se dedujo con prorrata, regístralo para regularizarlo los años siguientes.'
       : 'Valor de 3.005,06 € o menos: no es bien de inversión a efectos del impuesto.';
   $('#inBIForm').hidden = !!b || e.valorAdquisicion <= 3005.06 || !permitido('INMOVILIZADO:ESCRITURA');
   $('#inBIQuitar').hidden = !b;
-  ['#inBICuota', '#inBIProrrata', '#inBIAnio'].forEach(i => $(i).value = ''); $('#inBIInmueble').checked = $('#inBIExenta').checked = false;
+  $('#inBIAfecta').hidden = !b || !permitido('INMOVILIZADO:ESCRITURA');
+  ['#inBICuota', '#inBIProrrata', '#inBIAnio', '#inBISector', '#inBIPAnio', '#inBIPPct'].forEach(i => $(i).value = ''); $('#inBIInmueble').checked = $('#inBIExenta').checked = false;
 }
 $('#inBIAlta').onclick = async () => {
   if (!IN.ficha) return;
@@ -1584,9 +1737,19 @@ $('#inBIAlta').onclick = async () => {
     await post(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion`), {
       cuotaSoportada: n($('#inBICuota').value), prorrataInicial: $('#inBIProrrata').value.trim() ? parseInt($('#inBIProrrata').value, 10) : null,
       anioInicio: $('#inBIAnio').value.trim() ? parseInt($('#inBIAnio').value, 10) : null,
+      sectorDiferenciado: $('#inBISector').value.trim() ? parseInt($('#inBISector').value, 10) : null,
       esInmueble: $('#inBIInmueble').checked, transmisionExenta: $('#inBIExenta').checked });
     await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
     msg($('#inFichaMsg'), 'Registrado como bien de inversión.', 'ayuda ok-texto');
+  } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#inBIPGuardar').onclick = async () => {
+  if (!IN.ficha) return;
+  try {
+    await put(urlE(`/inmovilizado/${IN.ficha.elemento.id}/bien-inversion/porcentajes`), { anio: parseInt($('#inBIPAnio').value, 10),
+      porcentaje: $('#inBIPPct').value.trim() ? parseInt($('#inBIPPct').value, 10) : null });
+    await Promise.all([pintaBienInversion(IN.ficha.elemento), listaBienesInversion()]);
+    msg($('#inFichaMsg'), 'Porcentaje del año guardado: la regularización se recalcula.', 'ayuda ok-texto');
   } catch (e) { msg($('#inFichaMsg'), e.message, 'ayuda err-texto'); }
 };
 $('#inBIQuitar').onclick = async () => {
@@ -2322,13 +2485,13 @@ const CAT = {
     guarda: o => put('/api/admin/catalogos/epigrafes', { ...o, seccion: +o.seccion }),
   },
   fp: {
-    url: () => `/api/empresas/${$('#caEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
+    url: () => `/api/empresas/${$('#cgEmpresa').value}/formas-pago`, ayuda: 'Formas de pago de la empresa: generan los vencimientos de sus facturas. Una forma en uso no se puede borrar.', empresa: true,
     cols: ['Código', 'Nombre', 'Tipo', 'Plazos', 'Días al primero', 'Días entre plazos', ''],
     fila: f => [esc(f.codigo), esc(f.nombre), esc(f.tipo), f.numPlazos, f.diasPrimerPlazo, f.diasEntrePlazos,
       `<button class="btn" type="button" data-borra="${f.id}">Borrar</button>`],
     campos: [['codigo', 'Código', 'text'], ['nombre', 'Nombre', 'text'], ['tipo', 'Tipo', ['TRANSFERENCIA', 'RECIBO', 'EFECTIVO', 'TARJETA', 'PAGARE', 'CHEQUE', 'OTRO']],
       ['numPlazos', 'Número de plazos', 'number'], ['diasPrimerPlazo', 'Días hasta el primero', 'number'], ['diasEntrePlazos', 'Días entre plazos', 'number']],
-    guarda: (o, id) => { const u = `/api/empresas/${$('#caEmpresa').value}/formas-pago`;
+    guarda: (o, id) => { const u = `/api/empresas/${$('#cgEmpresa').value}/formas-pago`;
       const c = { ...o, numPlazos: +o.numPlazos || 1, diasPrimerPlazo: +o.diasPrimerPlazo || 0, diasEntrePlazos: +o.diasEntrePlazos || 0 };
       return id ? put(`${u}/${id}`, c) : post(u, c); },
   },
@@ -2336,33 +2499,33 @@ const CAT = {
 const CA = { filas: [], sel: null };
 
 async function cargaCatalogos() {
-  if (!$('#caEmpresa').options.length) {
+  if (!$('#cgEmpresa').options.length) {
     const emps = await api('/api/admin/empresas');
-    $('#caEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
+    $('#cgEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
   }
   await pintaCatalogo();
 }
 
 async function pintaCatalogo() {
-  const c = CAT[$('#caTipo').value];
-  $('#caEmpresaL').hidden = !c.empresa; $('#caBuscaL').hidden = !c.busca;
-  $('#caAyuda').textContent = c.ayuda; msg($('#caMsg'), ''); msg($('#caFormMsg'), '');
-  $('#caFormPanel').hidden = !!c.sinForm; $('#caVigPanel').hidden = true;
+  const c = CAT[$('#cgTipo').value];
+  $('#cgEmpresaL').hidden = !c.empresa; $('#cgBuscaL').hidden = !c.busca;
+  $('#cgAyuda').textContent = c.ayuda; msg($('#cgMsg'), ''); msg($('#cgFormMsg'), '');
+  $('#cgFormPanel').hidden = !!c.sinForm; $('#cgVigPanel').hidden = true;
   let url = typeof c.url === 'function' ? c.url() : c.url;
-  if (c.busca && $('#caBusca').value.trim()) url += '?q=' + encodeURIComponent($('#caBusca').value.trim());
-  if (c.empresa && !$('#caEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
-  $('#caHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
-  $('#caBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
+  if (c.busca && $('#cgBusca').value.trim()) url += '?q=' + encodeURIComponent($('#cgBusca').value.trim());
+  if (c.empresa && !$('#cgEmpresa').value) { CA.filas = []; } else CA.filas = await api(url);
+  $('#cgHead').innerHTML = '<tr>' + c.cols.map(x => `<th>${x}</th>`).join('') + (c.sinForm ? '' : '<th></th>') + '</tr>';
+  $('#cgBody').innerHTML = CA.filas.map((f, i) => `<tr>${c.fila(f).map(v => `<td>${v}</td>`).join('')}${c.sinForm ? ''
     : `<td><button class="btn" type="button" data-edita="${i}">Modificar</button></td>`}</tr>`).join('')
     || `<tr><td colspan="${c.cols.length + 1}" class="vacio">No hay registros.</td></tr>`;
   if (!c.sinForm) formCatalogo(null);
 }
 
 function formCatalogo(fila) {
-  const c = CAT[$('#caTipo').value];
+  const c = CAT[$('#cgTipo').value];
   CA.sel = fila;
-  $('#caFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
-  $('#caForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
+  $('#cgFormTitulo').textContent = fila ? 'Modificar' : 'Nuevo';
+  $('#cgForm').innerHTML = c.campos.map(([k, etq, tipo, soloAlta]) => {
       const v = fila ? fila[k] : (tipo === 'check' ? k === 'activo' : '');
       const bloquea = fila && soloAlta ? ' disabled' : '';
       if (fila && c.vigencias && ['porcentaje', 'recargo', 'fechaDesde'].includes(k)) return '';
@@ -2370,55 +2533,55 @@ function formCatalogo(fila) {
       if (tipo === 'check') return `<label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" data-k="${k}"${v ? ' checked' : ''}> ${etq}</label>`;
       return `<label>${etq} <input data-k="${k}" type="${tipo}"${tipo === 'number' ? ' step="0.01"' : ''} value="${esc(v ?? '')}"${bloquea}></label>`;
     }).join('');
-  $('#caVigPanel').hidden = !(fila && c.vigencias);
+  $('#cgVigPanel').hidden = !(fila && c.vigencias);
   if (fila && c.vigencias) {
-    $('#caVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
-    $('#caVigRecL').hidden = !c.recargo; $('#caVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#caVigDesde').value = '';
-    msg($('#caVigMsg'), '');
+    $('#cgVigTitulo').textContent = `Nueva vigencia de ${fila.codigo}`;
+    $('#cgVigRecL').hidden = !c.recargo; $('#cgVigPct').value = pctVigente(fila)?.porcentaje ?? ''; $('#cgVigDesde').value = '';
+    msg($('#cgVigMsg'), '');
   }
 }
 
-$('#caTipo').onchange = () => pintaCatalogo().catch(e => msg($('#caMsg'), e.message, 'ayuda err-texto'));
-$('#caEmpresa').onchange = $('#caTipo').onchange;
-$('#caBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#caTipo').onchange(); });
-$('#caNuevo').onclick = () => formCatalogo(null);
-$('#caBody').addEventListener('click', async e => {
+$('#cgTipo').onchange = () => pintaCatalogo().catch(e => msg($('#cgMsg'), e.message, 'ayuda err-texto'));
+$('#cgEmpresa').onchange = $('#cgTipo').onchange;
+$('#cgBusca').addEventListener('keydown', e => { if (e.key === 'Enter') $('#cgTipo').onchange(); });
+$('#cgNuevo').onclick = () => formCatalogo(null);
+$('#cgBody').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
-  const c = CAT[$('#caTipo').value];
+  const c = CAT[$('#cgTipo').value];
   try {
-    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#caFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
+    if (b.dataset.edita !== undefined) { formCatalogo(CA.filas[+b.dataset.edita]); $('#cgFormPanel').scrollIntoView({ behavior: 'smooth' }); return; }
     if (b.dataset.act) { await put(`/api/admin/catalogos/modelos-fiscales/${b.dataset.act}/activo`, { activo: b.dataset.v === 'true' }); }
     if (b.dataset.borra) {
       if (!confirm('¿Borrar la forma de pago?')) return;
       await api(`${c.url()}/${b.dataset.borra}`, { method: 'DELETE' });
     }
     await pintaCatalogo();
-    msg($('#caMsg'), 'Hecho.', 'ayuda ok-texto');
-  } catch (err) { msg($('#caMsg'), err.message, 'ayuda err-texto'); }
+    msg($('#cgMsg'), 'Hecho.', 'ayuda ok-texto');
+  } catch (err) { msg($('#cgMsg'), err.message, 'ayuda err-texto'); }
 });
-$('#caGuardar').onclick = async () => {
-  const c = CAT[$('#caTipo').value];
+$('#cgGuardar').onclick = async () => {
+  const c = CAT[$('#cgTipo').value];
   const o = { ...(CA.sel || {}) };
-  $$('#caForm [data-k]').forEach(el => {
+  $$('#cgForm [data-k]').forEach(el => {
     o[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (el.value === '' ? null : +el.value) : (el.value === '' ? null : el.value);
   });
   if ('recargo' in o && o.recargo == null) o.recargo = 0;
   try {
     await c.guarda(o, CA.sel?.id);
     await pintaCatalogo();
-    msg($('#caFormMsg'), 'Guardado.', 'ok-texto');
-  } catch (err) { msg($('#caFormMsg'), err.message, 'err-texto'); }
+    msg($('#cgFormMsg'), 'Guardado.', 'ok-texto');
+  } catch (err) { msg($('#cgFormMsg'), err.message, 'err-texto'); }
 };
-$('#caVigGuardar').onclick = async () => {
-  const c = CAT[$('#caTipo').value];
+$('#cgVigGuardar').onclick = async () => {
+  const c = CAT[$('#cgTipo').value];
   try {
     await post(`/api/admin/catalogos/${c.vigencias}/${CA.sel.id}/vigencias`,
-      { porcentaje: +$('#caVigPct').value, recargo: +$('#caVigRec').value || 0, fechaDesde: $('#caVigDesde').value || null });
+      { porcentaje: +$('#cgVigPct').value, recargo: +$('#cgVigRec').value || 0, fechaDesde: $('#cgVigDesde').value || null });
     const id = CA.sel.id;
     await pintaCatalogo();
     formCatalogo(CA.filas.find(f => f.id === id));
-    msg($('#caVigMsg'), 'Vigencia abierta.', 'ok-texto');
-  } catch (err) { msg($('#caVigMsg'), err.message, 'err-texto'); }
+    msg($('#cgVigMsg'), 'Vigencia abierta.', 'ok-texto');
+  } catch (err) { msg($('#cgVigMsg'), err.message, 'err-texto'); }
 };
 
 // ---- usuarios

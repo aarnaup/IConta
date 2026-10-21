@@ -6,7 +6,7 @@ public sealed class FacturaLineaCmd
 {
     public long TipoIvaId { get; set; }
     public decimal Base { get; set; }
-    public string TipoOperacion { get; set; } = "INTERIOR";     // INTERIOR | EXENTA | NO_SUJETA
+    public string TipoOperacion { get; set; } = "INTERIOR";     // INTERIOR | EXENTA | NO_SUJETA | NO_SUJETA_LOCAL | NO_SUJETA_OSS | INTRACOM_* | EXPORTACION | IMPORTACION | INVERSION_SUJETO_PASIVO
     public string ReglaDeduccion { get; set; } = "TOTAL";        // TOTAL | NINGUNA | PRORRATA | PORCENTAJE_AFECTACION
     public decimal? PorcentajeDeduccion { get; set; }
     public bool EsBienInversion { get; set; }
@@ -35,6 +35,8 @@ public sealed class CrearFacturaCmd
     public string? Clave349 { get; set; }
     /// <summary>Factura que rectifica (rectificativas): mismo libro y tercero.</summary>
     public long? FacturaRectificadaId { get; set; }
+    /// <summary>Inmueble arrendado (recibidas de un arrendador): para el 180. Si el arrendador tiene uno solo, se toma ese.</summary>
+    public long? InmuebleId { get; set; }
     public List<FacturaLineaCmd> Lineas { get; set; } = [];
 }
 
@@ -89,6 +91,8 @@ public sealed class CrearTerceroCmd
     public string Nombre { get; set; } = "";
     public bool EsCliente { get; set; }
     public bool EsProveedor { get; set; }
+    /// <summary>Trabajador por cuenta ajena (nóminas): puede ser solo esto, sin cuenta de cliente ni de proveedor.</summary>
+    public bool EsEmpleado { get; set; }
     public bool RecargoEquivalencia { get; set; }
     /// <summary>Proveedor acogido al criterio de caja: su IVA se deduce al pagarle.</summary>
     public bool CriterioCaja { get; set; }

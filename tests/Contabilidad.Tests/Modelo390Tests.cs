@@ -26,6 +26,7 @@ public class Modelo390Tests
             G("EMITIDAS", "INTERIOR", 21, 2000, 420, pctRec: 5.2m, cRec: 104),
             G("EMITIDAS", "INTERIOR", 21, 300, 63, caja: true),
             G("EMITIDAS", "INTRACOM_ENTREGA", 0, 4000, 0), G("EMITIDAS", "EXPORTACION", 0, 2500, 0), G("EMITIDAS", "EXENTA", 0, 700, 0),
+            G("EMITIDAS", "NO_SUJETA_LOCAL", 0, 900, 0), G("EMITIDAS", "NO_SUJETA", 0, 8000, 0),
             G("RECIBIDAS", "INTERIOR", 21, 5000, 1050), G("RECIBIDAS", "INTERIOR", 21, 3000, 630, bi: true),
             G("RECIBIDAS", "IMPORTACION", 21, 2000, 420),
             G("RECIBIDAS", "INTRACOM_ADQUISICION", 21, 1000, 210), G("RECIBIDAS", "INTRACOM_SERVICIOS", 21, 400, 84),
@@ -74,7 +75,8 @@ public class Modelo390Tests
         Assert.Equal(10000m + 1000 - 500 + 2000, d["99"]);
         Assert.Equal(300m, d["653"]);
         Assert.Equal((4000m, 2500m, 700m), (d["103"], d["104"], d["105"]));
-        Assert.Equal(12500m + 300 + 4000 + 2500 + 700, d["108"]);
+        Assert.Equal(900m, d["110"]);                                 // la no sujeta por el art. 7 no es volumen
+        Assert.Equal(12500m + 300 + 4000 + 2500 + 700 + 900, d["108"]);
         Assert.Equal(200m, d["232"]);
         Assert.Equal((10000m, 9000m, 0m, 90m), (d["115"], d["116"], d["117"], d["118"]));
         Assert.Equal(0m, d.Resultado);

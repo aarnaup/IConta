@@ -48,7 +48,7 @@ public static class CalculadorImpuestoIndirecto
         var emitidasRect = e.Grupos.Where(g => g.Libro == "EMITIDAS" && g.Rectificativa && g.TipoOperacion == "INTERIOR").ToList();
         // Deducible: todo lo recibido con cuota (interior, importación y autorrepercutido); las rectificativas van aparte
         var soportado = recibidas.Where(g => !g.Rectificativa).ToList();
-        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA")).ToList();
+        var recibidasRect = recibidas.Where(g => g.Rectificativa && g.TipoOperacion is not ("EXENTA" or "NO_SUJETA" or "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS" or "COMPENSACION_REAGP")).ToList();
 
         void Add(string clave, string desc, decimal importe) => d.Casillas.Add(new Casilla(clave, desc, importe));
 
@@ -171,7 +171,7 @@ public static class CalculadorImpuestoIndirecto
         foreach (var (es, nombre, iva, ig) in grupos)
         {
             var k = igic ? ig : iva;
-            var corr = soportado.Where(x => es(x) && !x.EsBienInversion && x.TipoOperacion != "EXENTA" && x.TipoOperacion != "NO_SUJETA").ToList();
+            var corr = soportado.Where(x => es(x) && !x.EsBienInversion && x.TipoOperacion != "EXENTA" && !Facturacion.OperacionesIva.NoSujeta(x.TipoOperacion)).ToList();
             var inv = soportado.Where(x => es(x) && x.EsBienInversion).ToList();
             if (corr.Count > 0)
             {
@@ -193,6 +193,13 @@ public static class CalculadorImpuestoIndirecto
             Add(igic ? "RDC" : "41", "Rectificación de deducciones: cuota", c);
             totalDeducible += c;
         }
+        // Compensaciones pagadas a agricultores, ganaderos y pescadores del régimen especial (con sus rectificaciones)
+        var reagp = recibidas.Where(g => g.TipoOperacion == "COMPENSACION_REAGP").ToList();
+        if (reagp.Count > 0)
+        {
+            Add("42", "Compensaciones del régimen especial de la agricultura, ganadería y pesca", reagp.Sum(x => x.CuotaDeducible));
+            totalDeducible += reagp.Sum(x => x.CuotaDeducible);
+        }
         if (e.RegularizacionBienesInversion != 0)
         {
             Add(igic ? "RBI" : "43", "Regularización de bienes de inversión", e.RegularizacionBienesInversion);
@@ -212,7 +219,9 @@ public static class CalculadorImpuestoIndirecto
         foreach (var (tipo, iva, ig, txt) in new[] {
             ("INTRACOM_ENTREGA", "59", "", "Entregas intracomunitarias de bienes y servicios"),
             ("EXPORTACION", "60", "EXP", "Exportaciones y operaciones asimiladas"),
-            ("INVERSION_SUJETO_PASIVO", "122", "ISPE", "Operaciones sujetas con inversión del sujeto pasivo (emitidas)") })
+            ("INVERSION_SUJETO_PASIVO", "122", "ISPE", "Operaciones sujetas con inversión del sujeto pasivo (emitidas)"),
+            ("NO_SUJETA_LOCAL", "120", "NSL", "Operaciones no sujetas por reglas de localización (excepto las de la casilla 123)"),
+            ("NO_SUJETA_OSS", "123", "NSO", "Operaciones no sujetas por reglas de localización acogidas a la ventanilla única") })
         {
             var g = e.Grupos.Where(x => x.Libro == "EMITIDAS" && x.TipoOperacion == tipo).ToList();
             if (g.Count > 0) Add(igic ? ig : iva, txt, g.Sum(x => x.Base));
@@ -230,11 +239,13 @@ public static class CalculadorImpuestoIndirecto
         decimal resultado, aplicada = 0;
         if (igic)
         {
-            Add("RES", "Resultado antes de compensaciones (devengado − deducible)", resultadoRG);
-            if (resultadoRG > 0) aplicada = Math.Min(resultadoRG, e.CompensacionPendiente);
+            var res = resultadoRG + e.CuotaSimplificado;
+            Add("RES", e.CuotaSimplificado != 0 ? "Resultado antes de compensaciones (régimen general + simplificado)"
+                                                : "Resultado antes de compensaciones (devengado − deducible)", res);
+            if (res > 0) aplicada = Math.Min(res, e.CompensacionPendiente);
             Add("PEND_ANT", "Cuotas a compensar de periodos anteriores (pendientes)", e.CompensacionPendiente);
             Add("COMP", "Cuotas a compensar aplicadas en este periodo", aplicada);
-            resultado = resultadoRG - aplicada;
+            resultado = res - aplicada;
             Add("LIQ", "Resultado de la liquidación", resultado);
         }
         else
@@ -255,6 +266,11 @@ public static class CalculadorImpuestoIndirecto
             Add("71", "Resultado de la liquidación (69 − 70)", resultado);
         }
 
+        // IGIC: la casilla del modelo 420 de la ATC delante de la descripción (las claves internas no cambian)
+        if (igic)
+            for (var i = 0; i < d.Casillas.Count; i++)
+                if (Presentacion.XmlAtc.Casilla420(d.Casillas[i].Clave) is { } n && !d.Casillas[i].Descripcion.StartsWith('['))
+                    d.Casillas[i] = d.Casillas[i] with { Descripcion = $"[{n}] {d.Casillas[i].Descripcion}" };
         d.Resultado = resultado;
         if (resultado >= 0) d.AIngresar = resultado;
         else if (e.SolicitaDevolucion && e.EsUltimoPeriodo) d.ADevolver = -resultado;

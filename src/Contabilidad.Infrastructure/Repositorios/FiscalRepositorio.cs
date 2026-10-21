@@ -112,9 +112,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "SELECT codigo FROM fiscal.modelo_fiscal WHERE NOT activo", cancellationToken: ct))).ToHashSet();
         return ModelosFiscales.Soportados.Where(m => !inactivos.Contains(m.Codigo)).Where(m => m.Impuesto switch
         {
-            // Recargo de equivalencia: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
-            "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva != "RECARGO_EQUIVALENCIA" && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
-            "IGIC" => e.ImpuestoIndirecto == "IGIC",
+            // Recargo de equivalencia y REAGP: no hay autoliquidación ni resumen anual; el simplificado está exonerado del 390
+            "IVA" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP")
+                     && !(m.Codigo == "390" && e.RegimenIva == "SIMPLIFICADO"),
+            // Comerciante minorista: no presenta el 420 (sus ventas están exentas); el 425 informa de ellas
+            "IVA_NP" => e.ImpuestoIndirecto == "IVA" && e.RegimenIva is "RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP",
+            "IGIC" => e.ImpuestoIndirecto == "IGIC" && !(m.Codigo == "420" && e.RegimenIva == "COMERCIANTE_MINORISTA"),
             "IRPF" => m.Codigo == "131" ? e.RegimenIrpf == "OBJETIVA" : directa,
             "TERCEROS" => m.Codigo == "415" ? e.ImpuestoIndirecto == "IGIC" : e.ImpuestoIndirecto != "IGIC",
             "INTRACOM" => e.ImpuestoIndirecto == "IVA",
@@ -158,6 +161,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         {
             case "IVA" or "IGIC":
                 await CalcularImpuestoIndirectoAsync(cn, tx, empresaId, empresa, modelo, p, cmd, d, ct);
+                break;
+            case "IVA_NP":
+                await Calcular309Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
             case "IRPF" when modelo.Codigo == "131":
                 await Calcular131Async(cn, tx, empresaId, empresa, p, d, ct);
@@ -219,7 +225,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 "Solo las adquisiciones intracomunitarias y las operaciones con inversión del sujeto pasivo se declaran, en el modelo 309.");
         if (empresa.RegimenIva == "SIMPLIFICADO" && modelo.Codigo == "390")
             throw new ReglaContableException("Quien tributa solo en el régimen simplificado está exonerado del 390.");
-        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO"))
+        if (empresa.RegimenIva == "AGRICULTURA_GYP")
+            throw new ReglaContableException($"En el régimen especial de la agricultura, ganadería y pesca no se presenta el {modelo.Codigo}.",
+                "Las adquisiciones intracomunitarias y las operaciones con inversión del sujeto pasivo se declaran en el modelo 309.");
+        if (empresa.RegimenIva == "COMERCIANTE_MINORISTA" && modelo.Codigo == "420")
+            throw new ReglaContableException("El comerciante minorista del IGIC no presenta el 420: sus ventas están exentas y el IGIC de las compras es coste.");
+        if (empresa.RegimenIva is not ("GENERAL" or "CRITERIO_CAJA" or "SIMPLIFICADO" or "COMERCIANTE_MINORISTA"))
             throw new ReglaContableException($"El régimen {empresa.RegimenIva} todavía no está soportado en {modelo.Codigo}.");
 
         var igic = modelo.Impuesto == "IGIC";
@@ -326,6 +337,37 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             return;
         }
 
+        if (anual && igic)
+        {
+            // 425 con la numeración del modelo de la ATC: necesita además los 420 presentados del año
+            var mid420 = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener("420"), ct);
+            var autoliq420 = (await cn.QueryAsync<Resumen303Fila>(new CommandDefinition("""
+                SELECT d.periodo,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'RES'), 0) AS resultado,
+                       COALESCE(d.a_ingresar, 0) AS a_ingresar, COALESCE(d.a_devolver, 0) AS a_devolver, COALESCE(d.a_compensar, 0) AS a_compensar,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'PEND_ANT'), 0) AS pendiente_inicial,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'COMP'), 0) AS aplicada,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'PEND_SIG'), 0) AS pendiente_posterior
+                FROM fiscal.declaracion d
+                WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid420 AND d.anio = @anio AND d.estado = 'PRESENTADA'
+                  AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                        WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+                ORDER BY d.fecha_inicio
+                """, new { empresaId, mid420, anio = (short)p.Anio }, tx, cancellationToken: ct)))
+                .Select(a => new Resumen303(a.Periodo, a.Resultado, a.AIngresar, a.ADevolver, a.ACompensar, a.PendienteInicial, a.Aplicada,
+                                            a.PendientePosterior)).ToList();
+            decimal cuotaAnualSimplificado = 0;
+            var grupos425 = grupos;
+            if (empresa.RegimenIva == "SIMPLIFICADO")
+            {
+                grupos425 = grupos.Where(g => g.Libro == "EMITIDAS" || g.EsBienInversion || g.TipoOperacion == "INVERSION_SUJETO_PASIVO").ToList();
+                cuotaAnualSimplificado = CalculadorModulos.CuotaAnualIva(await ModulosRepositorio.DelAnioAsync(cn, tx, empresaId, p.Anio, ct));
+            }
+            Calculador425.Calcular(new Entrada425(grupos425, regBienes, regularizacion, autoliq420, cuotaAnualSimplificado,
+                empresa.RegimenIva == "COMERCIANTE_MINORISTA"), d);
+            return;
+        }
+
         // Régimen simplificado: lo devengado por las ventas interiores y lo soportado en operaciones corrientes van en los módulos;
         // por el régimen general quedan las adquisiciones intracomunitarias, la inversión del sujeto pasivo y los bienes de inversión
         decimal cuotaSimplificado = 0;
@@ -348,8 +390,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                     """, new { empresaId, mid303, anio = (short)p.Anio, inicio = p.Inicio }, tx, cancellationToken: ct));
             }
             cuotaSimplificado = CalculadorModulos.Simplificado303(modulos, p.EsUltimoDelAnio, anteriores, d);
-            d.Avisos.Add("Régimen simplificado: la cuota sale de los módulos del año; las ventas interiores y las compras corrientes no van en el 303. " +
-                         "El fichero de presentación no lleva la parte del simplificado: complétala en el formulario.");
+            d.Avisos.Add($"Régimen simplificado: la cuota sale de los módulos del año; las ventas interiores y las compras corrientes no van en el {modelo.Codigo}. " +
+                         (igic ? "VERIFICA con el formulario del 420 del año cómo se declara el ingreso a cuenta del simplificado del IGIC."
+                               : "El fichero de presentación no lleva la parte del simplificado: complétala en el formulario."));
         }
 
         CalculadorImpuestoIndirecto.Calcular(igic,
@@ -385,6 +428,35 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         }
     }
 
+    // ---------------------------------------------------------------- 309
+    private sealed class Linea309Fila
+    {
+        public string Clase { get; set; } = "";
+        public decimal Porcentaje { get; set; }
+        public decimal PorcentajeRecargo { get; set; }
+        public decimal Base { get; set; }
+    }
+
+    private static async Task Calcular309Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
+        DeclaracionCalculada d, CancellationToken ct)
+    {
+        if (empresa.ImpuestoIndirecto != "IVA" || empresa.RegimenIva is not ("RECARGO_EQUIVALENCIA" or "AGRICULTURA_GYP"))
+            throw new ReglaContableException("El 309 lo presentan los empresarios en recargo de equivalencia o en el régimen especial de la agricultura, " +
+                                             "ganadería y pesca (en el régimen general esas operaciones van en el 303).");
+        var lineas = (await cn.QueryAsync<Linea309Fila>(new CommandDefinition("""
+            SELECT CASE WHEN fi.tipo_operacion = 'INTRACOM_ADQUISICION' AND COALESCE(f.clave_operacion_349, 'A') <> 'I' THEN 'ADQUISICION' ELSE 'ISP' END AS clase,
+                   fi.porcentaje, COALESCE(v.recargo_equivalencia, 0) AS porcentaje_recargo, SUM(fi.base) AS base
+            FROM fiscal.factura f
+            JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+            LEFT JOIN cat.tipo_iva_vigencia v ON v.id = fi.tipo_iva_vigencia_id
+            WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
+              AND fi.tipo_operacion IN ('INTRACOM_ADQUISICION', 'INVERSION_SUJETO_PASIVO')
+            GROUP BY 1, 2, 3
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+            .Select(x => new Linea309(x.Clase, x.Porcentaje, x.PorcentajeRecargo, x.Base)).ToList();
+        Calculador309.Calcular(lineas, empresa.RegimenIva == "RECARGO_EQUIVALENCIA", d);
+    }
+
     // ---------------------------------------------------------------- 200 / 202 (Impuesto sobre Sociedades)
     // Resultado antes del impuesto: ingresos menos gastos sin las cuentas del propio impuesto (630, 633, 638)
     private const string SqlResultadoIs = """
@@ -395,12 +467,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
           AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta
         """;
-    // Retenciones e ingresos a cuenta soportados (473)
+    // Retenciones e ingresos a cuenta soportados (473), sin los pagos fraccionados ni la liquidación del propio impuesto
     private const string SqlRetencionesIs = """
         SELECT COALESCE(SUM(a.debe), 0)
         FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
         WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
-          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta AND c.codigo LIKE '473%'
+          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE', 'IMPUESTO_SOCIEDADES') AND s.fecha BETWEEN @desde AND @hasta AND c.codigo LIKE '473%'
         """;
 
     private static void ExigeIs(EmpresaFila e)
@@ -409,20 +481,49 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             throw new ReglaContableException("La empresa no tributa por el Impuesto sobre Sociedades.", "Márcalo en la configuración fiscal de la empresa.");
     }
 
-    /// <summary>Bases negativas pendientes al empezar el periodo: las de antes de la aplicación más las generadas en los 200 presentados, menos lo compensado.</summary>
-    private static async Task<decimal> BinsDisponiblesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, DateOnly inicio, CancellationToken ct)
-        => Math.Max(0, await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-            SELECT COALESCE((SELECT SUM(i.bins_anteriores) FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
-                             WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio), 0)
-                 + COALESCE((SELECT SUM(GREATEST(-COALESCE(bi.importe, 0), 0) - COALESCE(cp.importe, 0))
-                             FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
-                             LEFT JOIN fiscal.declaracion_casilla bi ON bi.declaracion_id = d.id AND bi.casilla = 'BI'
-                             LEFT JOIN fiscal.declaracion_casilla cp ON cp.declaracion_id = d.id AND cp.casilla = 'COMP'
-                             WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
-                               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
-                                    WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo
-                                      AND x.estado = 'PRESENTADA')), 0)
-            """, new { empresaId, inicio }, tx, cancellationToken: ct)));
+    private sealed class OrigenBinFila
+    {
+        public int Anio { get; set; }
+        public decimal Generada { get; set; }
+        public decimal Compensada { get; set; }
+    }
+
+    /// <summary>
+    /// Bases negativas pendientes al empezar el periodo, por año de origen: las de antes de la aplicación (con su año o, si no se indicó,
+    /// el anterior al del periodo en que se anotaron) y las generadas en los 200 presentados; lo compensado en ellos se descuenta de las
+    /// más antiguas.
+    /// </summary>
+    private static async Task<List<BinAnio>> BinsPorAnioAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, DateOnly inicio, CancellationToken ct)
+    {
+        var filas = (await cn.QueryAsync<OrigenBinFila>(new CommandDefinition("""
+            SELECT (x->>'anio')::int AS anio, (x->>'importe')::numeric AS generada, 0::numeric AS compensada
+            FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id, jsonb_array_elements(i.bins_detalle) x
+            WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio
+            UNION ALL
+            SELECT EXTRACT(YEAR FROM e.fecha_inicio)::int - 1, i.bins_anteriores, 0
+            FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
+            WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio AND i.bins_anteriores > 0 AND jsonb_array_length(i.bins_detalle) = 0
+            UNION ALL
+            SELECT d.anio, GREATEST(-COALESCE(bi.importe, 0), 0), COALESCE(cp.importe, 0)
+            FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('BI', '00552')) bi ON true
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('COMP', '00547')) cp ON true
+            WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
+              AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                   WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+            """, new { empresaId, inicio }, tx, cancellationToken: ct))).ToList();
+        var pendientes = filas.Where(f => f.Generada > 0).GroupBy(f => f.Anio).OrderBy(g => g.Key)
+            .Select(g => new BinAnio(g.Key, g.Sum(f => f.Generada))).ToList();
+        var compensado = filas.Sum(f => f.Compensada);
+        var r = new List<BinAnio>();
+        foreach (var b in pendientes)
+        {
+            var usado = Math.Min(compensado, b.Importe);
+            compensado -= usado;
+            if (b.Importe - usado > 0) r.Add(b with { Importe = b.Importe - usado });
+        }
+        return r;
+    }
 
     private static async Task Calcular200Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
         DeclaracionCalculada d, CancellationToken ct)
@@ -439,14 +540,25 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = ej.FechaFin };
         var resultado = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
         var retenciones = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlRetencionesIs, q, tx, cancellationToken: ct));
-        var pagos = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-            SELECT COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
+        var pagos = (await cn.QueryAsync<(string Periodo, decimal Importe)>(new CommandDefinition("""
+            SELECT d.periodo, COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
             WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA'
+            GROUP BY d.periodo
+            """, q, tx, cancellationToken: ct))).ToDictionary(x => x.Periodo, x => x.Importe);
+        // Gasto por impuesto ya contabilizado (si se registró antes de calcular el 200)
+        var impuesto = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(a.debe - a.haber), 0)
+            FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
+            WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
+              AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta
+              AND (c.codigo LIKE '630%' OR c.codigo LIKE '633%' OR c.codigo LIKE '638%')
             """, q, tx, cancellationToken: ct));
         var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
-        var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+        var binsAnio = await BinsPorAnioAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+        var bins = binsAnio.Sum(b => b.Importe);
         CalculadorSociedades.Calcular200(new Entrada200(resultado, datos.Lista, datos.ReservaCapitalizacion, bins, datos.Incn, datos.Bonificaciones,
-            datos.Deducciones, retenciones, pagos, new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin), d);
+            datos.Deducciones, retenciones, (pagos.GetValueOrDefault("1P"), pagos.GetValueOrDefault("2P"), pagos.GetValueOrDefault("3P")),
+            new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin, impuesto, binsAnio), d);
         if (ej.FechaFin.DayNumber - ej.FechaInicio.DayNumber < 364)
             d.Avisos.Add("Periodo impositivo inferior al año: revisa los límites proporcionales (reserva de capitalización, compensación de bases negativas).");
     }
@@ -467,7 +579,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             throw new ReglaContableException("El periodo impositivo empieza el mismo mes del plazo: no hay pago fraccionado en este periodo.");
         d.FechaInicio = ej.FechaInicio; d.FechaFin = finBase; d.EjercicioId = ej.Id;
         var tipo = new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje);
-        if (empresa.IsModalidad202 == "ART_40_3")
+        // Cifra de negocios de los doce meses anteriores: la del periodo impositivo anterior (o la indicada en el actual si no hay)
+        var incn = await cn.ExecuteScalarAsync<decimal?>(new CommandDefinition("""
+            SELECT i.incn FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
+            WHERE i.empresa_id = @empresaId AND e.fecha_fin < @inicio AND i.incn > 0 ORDER BY e.fecha_fin DESC LIMIT 1
+            """, new { empresaId, inicio = ej.FechaInicio }, tx, cancellationToken: ct))
+            ?? await cn.ExecuteScalarAsync<decimal?>(new CommandDefinition(
+                "SELECT incn FROM fiscal.impuesto_sociedades WHERE empresa_id = @empresaId AND ejercicio_id = @id", new { empresaId, id = ej.Id }, tx,
+                cancellationToken: ct)) ?? 0;
+        if (empresa.IsModalidad202 == "ART_40_3" || incn >= CalculadorSociedades.IncnGranEmpresa)
         {
             var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = finBase };
             var baseAcum = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
@@ -477,16 +597,16 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @hasta
                 """, q, tx, cancellationToken: ct));
             var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
-            var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+            var bins = (await BinsPorAnioAsync(cn, tx, empresaId, ej.FechaInicio, ct)).Sum(b => b.Importe);
             CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", tipo, ej.FechaInicio.Year, 0, baseAcum, bins, datos.Bonificaciones,
-                ret, anteriores), d);
+                ret, anteriores, incn), d);
         }
         else
         {
             // Último periodo impositivo cuyo plazo de declaración haya vencido el primer día del plazo del pago fraccionado
             var ultimo = await cn.QueryFirstOrDefaultAsync<decimal?>(new CommandDefinition("""
-                SELECT COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'CL'), 0)
-                     - COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'RET'), 0)
+                SELECT COALESCE((SELECT SUM(importe) FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('CL', '00592')), 0)
+                     - COALESCE((SELECT SUM(importe) FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('RET', '01766')), 0)
                 FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
                 WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND (d.fecha_fin + interval '6 months 25 days')::date < @plazo
                 ORDER BY d.fecha_fin DESC, d.numero_presentacion DESC LIMIT 1
@@ -517,7 +637,18 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             SELECT COALESCE(SUM(retencion_total), 0) FROM fiscal.factura
             WHERE empresa_id = @empresaId AND libro = 'EMITIDAS' AND estado = 'CONTABILIZADA' AND fecha_contable BETWEEN @inicio AND @fin
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
-        CalculadorModulos.Calcular131(modulos, volumen, retenciones, d);
+        // Resultados negativos de los trimestres anteriores del año pendientes de deducir: los negativos de la última presentación de cada
+        // trimestre menos lo ya deducido en los siguientes (también con las claves descriptivas de antes)
+        var negativos = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(GREATEST(-COALESCE(r.importe, 0), 0) - COALESCE(n.importe, 0)), 0)
+            FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '131'
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('15', 'RES')) r ON true
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = '11') n ON true
+            WHERE d.empresa_id = @empresaId AND d.anio = @anio AND d.periodo < @periodo AND d.estado = 'PRESENTADA'
+              AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x WHERE x.empresa_id = d.empresa_id
+                   AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+            """, new { empresaId, anio = (short)p.Anio, periodo = p.Codigo }, tx, cancellationToken: ct));
+        CalculadorModulos.Calcular131(modulos, volumen, retenciones, d, negativos);
         if (agricolas.Count > 0 && !todasAgricolas && ids.Length == 0)
             d.Avisos.Add("Las actividades agrícolas no están enlazadas a una actividad de la empresa: su volumen de ingresos va a cero.");
     }
@@ -595,7 +726,40 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal Porcentaje { get; set; }
         public decimal Base { get; set; }
         public decimal Retencion { get; set; }
+        public long? InmuebleId { get; set; }
     }
+    private sealed class TrabajoFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public decimal Dinerario { get; set; }
+        public decimal Retencion { get; set; }
+        public decimal Especie { get; set; }
+        public decimal IngresoACuenta { get; set; }
+    }
+
+    private sealed class TrabajoAnualFila
+    {
+        public long TerceroId { get; set; }
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string Pais { get; set; } = "";
+        public string? Provincia { get; set; }
+        public decimal Dinerario { get; set; }
+        public decimal Retencion { get; set; }
+        public decimal Especie { get; set; }
+        public decimal IngresoACuenta { get; set; }
+        public decimal IngresoRepercutido { get; set; }
+        public decimal GastosDeducibles { get; set; }
+        public short? AnioNacimiento { get; set; }
+        public short SituacionFamiliar { get; set; }
+        public string? NifConyuge { get; set; }
+        public short Discapacidad { get; set; }
+        public short Contrato { get; set; }
+        public bool MovilidadGeografica { get; set; }
+    }
+
     private sealed class TrimestralFila { public decimal? Importe { get; set; } public int Presentados { get; set; } }
 
     private static async Task CalcularResumenRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
@@ -604,7 +768,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var trimestral = modelo.Codigo == "190" ? "111" : "115";
         var filas = (await cn.QueryAsync<PercepcionAnualFila>(new CommandDefinition("""
             SELECT f.tercero_id, n.numero AS nif, t.nombre, pa.iso2 AS pais, pr.codigo AS provincia, tr.codigo AS tipo_retencion,
-                   r.porcentaje, SUM(r.base) AS base, SUM(r.importe) AS retencion
+                   r.porcentaje, SUM(r.base) AS base, SUM(r.importe) AS retencion,
+                   COALESCE(f.inmueble_id, (SELECT min(i.id) FROM conta.inmueble i WHERE i.tercero_id = f.tercero_id HAVING count(*) = 1)) AS inmueble_id
             FROM fiscal.factura f
             JOIN fiscal.factura_retencion r ON r.factura_id = f.id
             JOIN cat.tipo_retencion_irpf tr ON tr.id = r.tipo_retencion_id
@@ -614,9 +779,35 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
             WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
               AND f.fecha_contable BETWEEN @inicio AND @fin AND tr.modelo_ingreso = @trimestral
-            GROUP BY 1, 2, 3, 4, 5, 6, 7
-            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct)))
-            .Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje, f.Base, f.Retencion)).ToList();
+            GROUP BY 1, 2, 3, 4, 5, 6, 7, 10
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct))).AsList();
+        var inmuebles = (await cn.QueryAsync<InmuebleDto>(new CommandDefinition(InmuebleRepositorio.Select + " WHERE i.empresa_id = @empresaId",
+            new { empresaId }, tx, cancellationToken: ct))).ToDictionary(i => i.Id);
+        var percepciones = filas.Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje,
+            f.Base, f.Retencion, f.InmuebleId is { } im ? inmuebles.GetValueOrDefault(im) : null)).ToList();
+
+        List<TrabajoAnual>? trabajo = null;
+        if (modelo.Codigo == "190")
+            trabajo = (await cn.QueryAsync<TrabajoAnualFila>(new CommandDefinition("""
+                SELECT n.tercero_id, ni.numero AS nif, t.nombre, pa.iso2 AS pais, pr.codigo AS provincia,
+                       SUM(n.bruto) AS dinerario, SUM(n.retencion) AS retencion,
+                       SUM(n.especie + CASE WHEN n.ingreso_repercutido THEN 0 ELSE n.ingreso_a_cuenta END) AS especie,
+                       SUM(n.ingreso_a_cuenta) AS ingreso_a_cuenta, SUM(CASE WHEN n.ingreso_repercutido THEN n.ingreso_a_cuenta ELSE 0 END) AS ingreso_repercutido,
+                       SUM(n.ss_trabajador) AS gastos_deducibles,
+                       e.anio_nacimiento, COALESCE(e.situacion_familiar, 3) AS situacion_familiar, e.nif_conyuge, COALESCE(e.discapacidad, 0) AS discapacidad,
+                       COALESCE(e.contrato, 1) AS contrato, COALESCE(e.movilidad_geografica, false) AS movilidad_geografica
+                FROM conta.nomina n
+                JOIN conta.tercero t ON t.id = n.tercero_id
+                JOIN core.nif ni ON ni.id = t.nif_id
+                JOIN cat.pais pa ON pa.id = ni.pais_id
+                LEFT JOIN cat.provincia pr ON pr.id = ni.provincia_id
+                LEFT JOIN conta.empleado e ON e.tercero_id = n.tercero_id
+                WHERE n.empresa_id = @empresaId AND n.estado = 'CONTABILIZADA' AND n.fecha BETWEEN @inicio AND @fin
+                GROUP BY 1, 2, 3, 4, 5, 12, 13, 14, 15, 16, 17
+                """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+                .Select(x => new TrabajoAnual(x.TerceroId, x.Nif, x.Nombre, x.Pais, x.Provincia, x.Dinerario, x.Retencion, x.Especie, x.IngresoACuenta,
+                    x.IngresoRepercutido, x.GastosDeducibles,
+                    new DatosTrabajador(x.AnioNacimiento, x.SituacionFamiliar, x.NifConyuge, x.Discapacidad, x.Contrato, x.MovilidadGeografica))).ToList();
 
         var mid = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener(trimestral), ct);
         var t = await cn.QuerySingleAsync<TrimestralFila>(new CommandDefinition("""
@@ -625,8 +816,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid AND d.anio = @anio AND d.estado = 'PRESENTADA'
               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                     WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
-            """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "09" : "03" }, tx, cancellationToken: ct));
-        CalculadorResumenRetenciones.Calcular(modelo.Codigo, filas, t.Importe, t.Presentados, d);
+            """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "28" : "03" }, tx, cancellationToken: ct));
+        CalculadorResumenRetenciones.Calcular(modelo.Codigo, percepciones, t.Importe, t.Presentados, d, trabajo);
     }
 
     private static async Task CalcularRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,
@@ -661,9 +852,20 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                   AND s.fecha BETWEEN @inicio AND @fin
                 """, new { cuentas, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
 
+        // Nóminas del periodo (rendimientos del trabajo del 111)
+        var trabajo = (await cn.QueryAsync<TrabajoFila>(new CommandDefinition("""
+            SELECT n.tercero_id, ni.numero AS nif, t.nombre, SUM(n.bruto) AS dinerario, SUM(n.retencion) AS retencion,
+                   SUM(n.especie + CASE WHEN n.ingreso_repercutido THEN 0 ELSE n.ingreso_a_cuenta END) AS especie,
+                   SUM(n.ingreso_a_cuenta) AS ingreso_a_cuenta
+            FROM conta.nomina n JOIN conta.tercero t ON t.id = n.tercero_id JOIN core.nif ni ON ni.id = t.nif_id
+            WHERE n.empresa_id = @empresaId AND n.estado = 'CONTABILIZADA' AND n.fecha BETWEEN @inicio AND @fin
+            GROUP BY 1, 2, 3
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct)))
+            .Select(x => new PercepcionTrabajo(x.TerceroId, x.Nif, x.Nombre, x.Dinerario, x.Retencion, x.Especie, x.IngresoACuenta)).ToList();
+
         CalculadorRetenciones.Calcular(modelo.Codigo,
             filas.Where(f => f.Modelo == modelo.Codigo).Select(f => new PercepcionRetenida(f.TerceroId, f.Nif, f.Nombre, f.Base, f.Retencion)).ToList(),
-            contable, filas.Sum(f => f.Retencion), d);
+            contable, filas.Sum(f => f.Retencion) + trabajo.Sum(t => t.Retencion + t.IngresoACuenta), d, modelo.Codigo == "111" ? trabajo : null);
     }
 
     // ---------------------------------------------------------------- 349
@@ -734,9 +936,10 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             JOIN conta.tercero t ON t.id = f.tercero_id
             JOIN core.nif n ON n.id = t.nif_id
             WHERE f.empresa_id = @empresaId AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @inicio AND @fin
-              -- No van al 347 las operaciones del 349 (intracomunitarias), las importaciones ni las exportaciones
+              -- No van al 347 las operaciones del 349 (intracomunitarias), las importaciones, las exportaciones ni las no sujetas
+              -- por las reglas de localización (se realizan fuera del territorio)
               AND NOT EXISTS (SELECT 1 FROM fiscal.factura_iva x WHERE x.factura_id = f.id
-                              AND x.tipo_operacion IN ('INTRACOM_ENTREGA','INTRACOM_ADQUISICION','IMPORTACION','EXPORTACION'))
+                              AND x.tipo_operacion IN ('INTRACOM_ENTREGA','INTRACOM_ADQUISICION','IMPORTACION','EXPORTACION','NO_SUJETA_LOCAL','NO_SUJETA_OSS'))
             GROUP BY 1, 2, 3, 4, 5
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
         Calculador347.Calcular(filas.Select(f => new Operacion347(f.TerceroId, f.Nif, f.Nombre, f.Clave, f.Trimestre, f.Importe)).ToList(), d);

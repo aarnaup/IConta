@@ -121,6 +121,19 @@ public class GeneradorAsientoFacturaTests
     }
 
     [Fact]
+    public void Minorista_en_recargo_liquida_el_recargo_de_sus_adquisiciones_intracomunitarias()
+    {
+        var f = FacturaCalculadora.Calcular(LibroFactura.Recibidas,
+            [new LineaIvaEntrada(1, 1, "INTRACOM_ADQUISICION", 1000m, 21m, 0m, "NINGUNA", null, false)], null, null);
+        var a = GeneradorAsientoFactura.Generar(LibroFactura.Recibidas, f, Compra, Resolutor(), 9, null, 5, "P", "UE-1", new DateOnly(2026, 1, 1), null,
+            recargoEquivalencia: true, recargoAdquisicion: new Dictionary<long, decimal> { [1] = 5.2m });
+        Cuadra(a);
+        Assert.Equal(1000m, a.Single(x => x.CuentaId == 400).Haber);                 // al proveedor solo la base
+        Assert.Equal(210m + 52m, a.Where(x => x.CuentaId == 477).Sum(x => x.Haber));  // IVA y recargo devengados
+        Assert.Equal(1262m, a.Where(x => x.CuentaId == 600).Sum(x => x.Debe));       // todo coste
+    }
+
+    [Fact]
     public void Importacion_lleva_la_cuota_de_aduana_y_no_se_autorrepercute()
     {
         var f = FacturaCalculadora.Calcular(LibroFactura.Recibidas,
@@ -169,5 +182,23 @@ public class GeneradorAsientoFacturaTests
         Cuadra(b);
         Assert.Equal(1262m, b.Where(x => x.CuentaId == 600).Sum(x => x.Debe));
         Assert.DoesNotContain(b, x => x.CuentaId == 472);
+    }
+
+    [Fact]
+    public void Compensacion_REAGP_deducible_al_comprar_e_ingreso_para_el_agricultor()
+    {
+        var reagp = new LineaIvaEntrada(1, 1, "COMPENSACION_REAGP", 1000m, 12m, 0m, "TOTAL", null, false);
+        var c = FacturaCalculadora.Calcular(LibroFactura.Recibidas, [reagp], null, null);
+        Assert.Equal((120m, 1120m), (c.Totales.Cuota, c.Totales.Total));
+        var b = GeneradorAsientoFactura.Generar(LibroFactura.Recibidas, c, Compra, Resolutor(), 9, null, 5, "P", "R-1", new DateOnly(2026, 1, 1), null);
+        Cuadra(b);
+        Assert.Equal(120m, b.Single(x => x.CuentaId == 472).Debe);
+
+        var v = FacturaCalculadora.Calcular(LibroFactura.Emitidas, [reagp], null, null);
+        var a = GeneradorAsientoFactura.Generar(LibroFactura.Emitidas, v, Venta, Resolutor(), 9, null, 5, "C", "F-1", new DateOnly(2026, 1, 1), null);
+        Cuadra(a);
+        Assert.Equal(1120m, a.Where(x => x.CuentaId == 700).Sum(x => x.Haber));
+        Assert.DoesNotContain(a, x => x.CuentaId == 477);
+        Assert.Throws<ReglaContableException>(() => OperacionesIva.Validar(LibroFactura.Recibidas, "COMPENSACION_REAGP", "IGIC"));
     }
 }

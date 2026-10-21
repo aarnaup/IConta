@@ -14,3 +14,23 @@ OCA_L10N_SPAIN=l10n-spain python3 tools/disenos-aeat/generar.py src/Contabilidad
 Para añadir un año, añade su configuración principal a `MODELOS` en `generar.py` (con su fecha de inicio y fin). Si aparece una
 expresión nueva, el script se detiene y hay que traducirla en `MAPA` a una clave de la aplicación (`C:nn` casilla, `D:x` dato de la
 declaración, `I:x` dato de cada registro repetido) y, si hace falta, darle valor en `FicheroModelo.cs`.
+
+## Modelos 131, 200, 202 y 309
+
+`DisenosAeatOficiales.cs` se genera con `oficiales.py` desde los diseños de registro oficiales de la AEAT (Sede → Ayuda → Diseños
+de registro: `DR200eAA.xls`, `DR202eAA.xlsx`, `DR131_AAAA.xlsx`, `dr309eAA.xls`). Solo se extraen a `aeat/DR<modelo>.csv` las páginas
+que rellena la aplicación, para no guardar los Excel (el del 200 ocupa 11 MB):
+
+```bash
+python3 -m pip install xlrd openpyxl
+python3 tools/disenos-aeat/oficiales.py extraer 200 DR200e25.xls     # y 202, 131, 309 con su fichero
+python3 tools/disenos-aeat/oficiales.py generar src/Contabilidad.Domain/Fiscal/Presentacion/DisenosAeatOficiales.cs
+```
+
+Las casillas `[nnnnn]` se traducen solas (`C:` liquidación, `B:` balance y pérdidas y ganancias, `F:` caracteres de la declaración);
+los demás datos se asignan por página y número de campo en `D200`, `D202`, `D131` y `D309`. Con un diseño nuevo, revisa que esos
+números de campo siguen siendo los mismos y añade el año con su fecha de inicio.
+
+## Modelo 180
+
+El diseño (registros de 500 posiciones) está escrito a mano en `Diseno180.cs` desde el PDF «DR_Mod_180» de la AEAT.

@@ -209,13 +209,15 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         if (cat.CuentaInmovilizadoId is null) throw new ReglaContableException("La categoría no tiene cuenta de inmovilizado.");
         var metodo = string.IsNullOrWhiteSpace(cmd.Metodo) ? cat.MetodoDefecto : cmd.Metodo.Trim().ToUpperInvariant();
         if (!CalculadorAmortizacion.Metodos.Contains(metodo))
-            throw new ReglaContableException("Método no válido: LINEAL, DEGRESIVO, COEFICIENTE_TABLA o NO_AMORTIZA.");
+            throw new ReglaContableException($"Método no válido: {string.Join(", ", CalculadorAmortizacion.Metodos)}.");
         var meses = cmd.VidaUtilMeses ?? cat.VidaUtilMesesDefecto;
         ValidarMetodo(metodo, meses, cmd.Coeficiente);
         if (metodo != "NO_AMORTIZA" && (cat.CuentaAmortAcumuladaId is null || cat.CuentaGastoAmortId is null))
             throw new ReglaContableException("La categoría no tiene cuentas de amortización: complétala o elige «no se amortiza».");
         if (metodo == "DEGRESIVO" && cat.Tipo != "MATERIAL")
             throw new ReglaContableException("El degresivo es para inmovilizado material (no para intangibles ni inmuebles).");
+        if (metodo is "DIGITOS_DECRECIENTE" or "DIGITOS_CRECIENTE" && cat.Tipo == "INVERSION_INMOBILIARIA")
+            throw new ReglaContableException("La suma de dígitos no se aplica a los edificios ni a las inversiones inmobiliarias.");
         var ficha = new FichaAmortizacion(cmd.ValorAdquisicion, cmd.ValorResidual, inicio, meses, metodo, 0, cmd.Coeficiente);
         if (cmd.AmortizacionPrevia < 0 || cmd.AmortizacionPrevia > ficha.BaseAmortizable)
             throw new ReglaContableException("La amortización previa no puede superar la base amortizable.");
@@ -276,7 +278,7 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
             {
                 empresaId, categoriaId = cmd.CategoriaId, canalId = cmd.CanalId, codigo, descripcion, facturaId = cmd.FacturaId, proveedorId = cmd.ProveedorId,
                 adquisicion = cmd.FechaAdquisicion, inicio, valor = cmd.ValorAdquisicion, residual = cmd.ValorResidual, metodo,
-                meses = metodo is "LINEAL" or "DEGRESIVO" ? meses : null,
+                meses = CalculadorAmortizacion.UsaVidaUtil(metodo) ? meses : null,
                 coeficiente = metodo is "COEFICIENTE_TABLA" or "DEGRESIVO" ? cmd.Coeficiente : null, previa = cmd.AmortizacionPrevia, asientoAlta
             }, tx, cancellationToken: ct));
         }
@@ -358,7 +360,7 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         DateOnly hasta, CancellationToken ct)
     {
         var filas = await cn.QueryAsync<ElementoFila>(new CommandDefinition(SelectElemento + """
-             WHERE i.empresa_id = @empresaId AND i.estado = 'ALTA' AND i.metodo IN ('LINEAL', 'DEGRESIVO', 'COEFICIENTE_TABLA') AND i.fecha_inicio_amortizacion <= @hasta
+             WHERE i.empresa_id = @empresaId AND i.estado = 'ALTA' AND i.metodo NOT IN ('NO_AMORTIZA') AND i.fecha_inicio_amortizacion <= @hasta
             ORDER BY i.codigo
             """, new { empresaId, hasta }, tx, cancellationToken: ct));
         return filas.Select(e => (e, CalculadorAmortizacion.Pendiente(e.Ficha, hasta, e.YaAmortizado))).Where(x => x.Item2 > 0).ToList();
@@ -504,8 +506,10 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
     // =====================================================================
     private static void ValidarMetodo(string metodo, int? meses, decimal? coeficiente)
     {
-        if (metodo is "LINEAL" or "DEGRESIVO" && meses is null or <= 0 or > 1200)
+        if (CalculadorAmortizacion.UsaVidaUtil(metodo) && meses is null or <= 0 or > 1200)
             throw new ReglaContableException("Indica la vida útil en meses (entre 1 y 1.200).");
+        if (metodo is "DIGITOS_DECRECIENTE" or "DIGITOS_CRECIENTE" && meses % 12 != 0)
+            throw new ReglaContableException("La suma de dígitos va por años completos: la vida útil debe ser un múltiplo de 12 meses.");
         if (metodo == "COEFICIENTE_TABLA" && coeficiente is null or <= 0 or > 100)
             throw new ReglaContableException("Indica el coeficiente anual de las tablas (entre 0 y 100 %).");
         if (metodo == "DEGRESIVO" && coeficiente is <= 0 or > 100)
@@ -518,14 +522,14 @@ public sealed class InmovilizadoRepositorio(IConexionFactory conexiones, IAsient
         if (metodo is not null)
         {
             if (!CalculadorAmortizacion.MetodosFiscales.Contains(metodo))
-                throw new ReglaContableException("Método fiscal no válido: LINEAL, DEGRESIVO, COEFICIENTE_TABLA o LIBRE.");
+                throw new ReglaContableException($"Método fiscal no válido: {string.Join(", ", CalculadorAmortizacion.MetodosFiscales)}.");
             ValidarMetodo(metodo, cmd.VidaUtilMeses, cmd.Coeficiente);
         }
         await using var cn = await conexiones.AbrirAsync(ct);
         var n = await cn.ExecuteAsync(new CommandDefinition("""
             UPDATE inmov.inmovilizado SET metodo_fiscal = @metodo, vida_util_meses_fiscal = @meses, coeficiente_fiscal = @coeficiente
             WHERE id = @inmovilizadoId AND empresa_id = @empresaId
-            """, new { metodo, meses = metodo is "LINEAL" or "DEGRESIVO" ? cmd.VidaUtilMeses : null,
+            """, new { metodo, meses = metodo is not null && CalculadorAmortizacion.UsaVidaUtil(metodo) ? cmd.VidaUtilMeses : null,
                        coeficiente = metodo is "COEFICIENTE_TABLA" or "DEGRESIVO" ? cmd.Coeficiente : null, inmovilizadoId, empresaId }, cancellationToken: ct));
         if (n == 0) throw new ReglaContableException("El elemento de inmovilizado no existe.");
         return await FichaAsync(cn, empresaId, inmovilizadoId, ct);

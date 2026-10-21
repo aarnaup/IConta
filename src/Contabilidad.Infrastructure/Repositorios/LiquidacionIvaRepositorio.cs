@@ -22,9 +22,11 @@ public interface ILiquidacionIvaRepositorio
 /// Asiento de liquidación del IVA/IGIC. Se calcula con los saldos de la contabilidad (472 y 477 a la fecha de fin del periodo)
 /// en cada canal base, y se contrasta con el resultado de la declaración presentada.
 /// </summary>
-public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsientoRepositorio asientos) : ILiquidacionIvaRepositorio
+public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsientoRepositorio asientos, IInmovilizadoRepositorio inmovilizado)
+    : ILiquidacionIvaRepositorio
 {
-    private static readonly string[] ModelosLiquidables = ["303", "420"];
+    private static readonly string[] ModelosLiquidables = ["303", "420", "200", "202"];
+    private static string Origen(string modelo) => modelo is "200" or "202" ? "IMPUESTO_SOCIEDADES" : "IVA";
 
     private sealed class DeclaracionFila
     {
@@ -67,7 +69,7 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
 
         var c = await CalcularAsync(cn, tx, empresaId, ejercicioId, declaracionId, cmd, ct);
         var d = c.Declaracion;
-        var a = await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId, c.Asiento, "IVA", null,
+        var a = await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId, c.Asiento, Origen(d.Modelo), null,
             $"{d.Modelo} {d.Anio} {d.Periodo}", ct);
 
         await cn.ExecuteAsync(new CommandDefinition(
@@ -94,7 +96,7 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         var posteriores = await cn.ExecuteScalarAsync<int>(new CommandDefinition("""
             SELECT count(*) FROM conta.asiento s, conta.asiento yo
             WHERE yo.id = @asientoId AND s.empresa_id = yo.empresa_id AND s.ejercicio_id = yo.ejercicio_id
-              AND s.origen = 'IVA' AND s.estado = 'CONTABILIZADO' AND s.id <> yo.id
+              AND s.origen = yo.origen AND s.estado = 'CONTABILIZADO' AND s.id <> yo.id
               AND (s.fecha > yo.fecha OR (s.fecha = yo.fecha AND s.id > yo.id))
             """, new { asientoId = d.AsientoId }, tx, cancellationToken: ct));
         if (posteriores > 0)
@@ -108,6 +110,71 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
     }
 
     // ------------------------------------------------------------------------------------------------
+
+    // ---------------------------------------------------------------- Impuesto sobre Sociedades
+    private async Task<Calculo> CalcularIsAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long ejercicioId, DeclaracionFila d,
+        LiquidacionIvaCmd cmd, CancellationToken ct)
+    {
+        if (d.Estado != "PRESENTADA") throw new ReglaContableException("Presenta la declaración antes de contabilizarla.");
+        if (d.AsientoId is not null && d.AsientoEstado != "ANULADO")
+            throw new ReglaContableException($"La declaración ya está contabilizada (asiento nº {d.AsientoNumero}).");
+        var ej = await EjercicioAsync(cn, tx, empresaId, ejercicioId, ct);
+        if (ej.Estado != "ABIERTO") throw new ReglaContableException("El ejercicio está cerrado.");
+        var fecha = cmd.Fecha ?? (d.Modelo == "200" ? ej.FechaFin : d.FechaFin);
+        if (fecha < ej.FechaInicio || fecha > ej.FechaFin)
+            throw new ReglaContableException($"La fecha del asiento ({fecha:dd/MM/yyyy}) está fuera del ejercicio seleccionado.",
+                d.Modelo == "200" ? "El impuesto del ejercicio se contabiliza en su último día: selecciona el ejercicio del modelo 200." : null);
+        var casillas = (await cn.QueryAsync<(string Casilla, decimal Importe)>(new CommandDefinition(
+            "SELECT casilla, importe FROM fiscal.declaracion_casilla WHERE declaracion_id = @id", new { id = d.Id }, tx, cancellationToken: ct)))
+            .ToDictionary(x => x.Casilla, x => x.Importe);
+        // Claves oficiales y, en las declaraciones guardadas antes de usarlas, las descriptivas
+        decimal C(string k, string? antigua = null) => casillas.TryGetValue(k, out var v) ? v : antigua is null ? 0 : casillas.GetValueOrDefault(antigua);
+        var resultado = d.Modelo == "202" ? C("34") + C("03") + casillas.GetValueOrDefault("RES") : C("00621", "RES");
+
+        async Task<long> Cuenta(string codigo) => await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "SELECT inmov.asegurar_cuenta(@empresaId, @codigo)", new { empresaId, codigo }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException($"No se encuentra la cuenta {codigo} en el plan de la empresa.");
+        var cuentas = new CuentasIs(await Cuenta("6300"), await Cuenta("6301"), await Cuenta("4730"), await Cuenta("4752"), await Cuenta("4709"),
+            await Cuenta("4740"), await Cuenta("4790"));
+        var canal = await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "SELECT id FROM canal.canal WHERE empresa_id = @empresaId AND tipo = 'BASE' AND activo ORDER BY codigo LIMIT 1", new { empresaId }, tx,
+            cancellationToken: ct)) ?? throw new ReglaContableException("La empresa no tiene canales base.");
+        var avisos = new List<string>();
+        IReadOnlyList<Domain.Cierre.ApunteGenerado> apuntes;
+        string concepto;
+        if (d.Modelo == "202")
+        {
+            concepto = $"Pago fraccionado del Impuesto sobre Sociedades {d.Periodo} {d.Anio}";
+            apuntes = GeneradorAsientoSociedades.PagoFraccionado(resultado, cuentas, canal);
+            avisos.Add("El pago se contabiliza al pagar (4752 contra el banco), desde tesorería o con un asiento.");
+        }
+        else
+        {
+            concepto = $"Impuesto sobre Sociedades del ejercicio {ej.FechaInicio:yyyy}" + (ej.FechaInicio.Year != ej.FechaFin.Year ? $"/{ej.FechaFin:yy}" : "");
+            var tipo = C("00558", "TG");
+            var dif = await inmovilizado.DiferenciasFiscalesAsync(empresaId, ejercicioId, tipo, ct);
+            var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, fecha, [], [cuentas.ActivoDiferido, cuentas.PasivoDiferido], ct,
+                sinAsientosDeCierre: true);
+            var saldoActivo = saldos.Where(s => s.CuentaId == cuentas.ActivoDiferido).Sum(s => s.Saldo);
+            var saldoPasivo = -saldos.Where(s => s.CuentaId == cuentas.PasivoDiferido).Sum(s => s.Saldo);
+            apuntes = GeneradorAsientoSociedades.Liquidacion(C("00592", "CL"), C("01766", "RET"),
+                C("00601") + C("00603") + C("00605") + casillas.GetValueOrDefault("PF"), dif.ActivoDiferido, saldoActivo, dif.PasivoDiferido,
+                saldoPasivo, cuentas, canal);
+            if (dif.ActivoDiferido != saldoActivo || dif.PasivoDiferido != saldoPasivo)
+                avisos.Add($"Impuesto diferido de las diferencias de amortización al {tipo:0.##} %: activo (4740) {dif.ActivoDiferido:N2}, pasivo (479) {dif.PasivoDiferido:N2}.");
+            avisos.Add("El impuesto diferido solo recoge las diferencias entre la amortización contable y la fiscal; otras diferencias temporarias " +
+                       "y los créditos por bases imponibles negativas se contabilizan a mano.");
+        }
+        var diarioId = await ConsultasContables.DiarioAsync(cn, tx, empresaId, cmd.DiarioId, ct);
+        var cmdAsiento = new CrearAsientoCmd { Fecha = fecha, DiarioId = diarioId, Concepto = concepto, Apuntes = ConsultasContables.AApuntes(apuntes, concepto) };
+        var codigos = (await cn.QueryAsync<(long Id, string Codigo, string Nombre)>(new CommandDefinition(
+            "SELECT id, codigo, nombre FROM conta.cuenta WHERE id = ANY(@ids)", new { ids = apuntes.Select(x => x.CuentaId).Distinct().ToArray() }, tx,
+            cancellationToken: ct))).ToDictionary(x => x.Id);
+        var previo = apuntes.Select(x => new ApuntePrevioDto(x.CuentaId, codigos[x.CuentaId].Codigo, codigos[x.CuentaId].Nombre, x.CanalId, x.Debe, x.Haber, concepto)).ToList();
+        var vista = new LiquidacionIvaVista(d.Id, d.Modelo, d.Anio, d.Periodo, fecha, diarioId, concepto, resultado,
+            [], previo, avisos, null, null);
+        return new Calculo(d, cmdAsiento, vista);
+    }
 
     private static async Task<DeclaracionFila> CargarAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long declaracionId, CancellationToken ct)
         => await cn.QuerySingleOrDefaultAsync<DeclaracionFila>(new CommandDefinition($"""
@@ -148,14 +215,15 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
                new { ejercicioId, empresaId }, tx, cancellationToken: ct))
            ?? throw new ReglaContableException("El ejercicio no existe en la empresa.");
 
-    private static async Task<Calculo> CalcularAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long ejercicioId, long declaracionId,
+    private async Task<Calculo> CalcularAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, long ejercicioId, long declaracionId,
         LiquidacionIvaCmd cmd, CancellationToken ct)
     {
         var d = await CargarAsync(cn, tx, empresaId, declaracionId, ct);
         var avisos = new List<string>();
 
         if (!ModelosLiquidables.Contains(d.Modelo))
-            throw new ReglaContableException($"El modelo {d.Modelo} no genera asiento de liquidación (solo 303 y 420).");
+            throw new ReglaContableException($"El modelo {d.Modelo} no genera asiento de liquidación (solo 303, 420, 200 y 202).");
+        if (d.Modelo is "200" or "202") return await CalcularIsAsync(cn, tx, empresaId, ejercicioId, d, cmd, ct);
         if (PeriodoFiscal.Resolver(d.Anio, d.Periodo).EsAnual)
             throw new ReglaContableException("Los resúmenes anuales no generan asiento de liquidación.");
         if (await cn.ExecuteScalarAsync<string>(new CommandDefinition("SELECT regimen_iva FROM core.empresa WHERE id = @empresaId",

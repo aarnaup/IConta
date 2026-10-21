@@ -4,8 +4,9 @@ namespace Contabilidad.Domain.Fiscal;
 public sealed record LineaCaja(long TipoIvaId, decimal Porcentaje, decimal PorcentajeRecargo, bool EsBienInversion,
     decimal Base, decimal Cuota, decimal CuotaRecargo, decimal CuotaDeducible);
 
+/// <param name="RectificadaId">En una rectificativa, la factura que rectifica (si también está en criterio de caja).</param>
 public sealed record FacturaCaja(long Id, string Libro, bool Rectificativa, DateOnly FechaOperacion, DateOnly FechaContable, decimal Total,
-    long? CanalId, IReadOnlyList<LineaCaja> Lineas);
+    long? CanalId, IReadOnlyList<LineaCaja> Lineas, long? RectificadaId = null);
 
 /// <summary>Cobro o pago de una factura (negativo si es una devolución del recibo).</summary>
 public sealed record CobroCaja(long FacturaId, DateOnly Fecha, decimal Importe);
@@ -23,7 +24,11 @@ public sealed record DevengoCaja(FacturaCaja Factura, IReadOnlyList<LineaCaja> L
 /// operaciones interiores se devenga al cobrar (emitidas) y se deduce al pagar (recibidas), en proporción a lo cobrado o pagado
 /// sobre el total de la factura, y como tarde el 31 de diciembre del año siguiente al de la operación.
 /// Para no arrastrar redondeos se calcula lo acumulado a cada fecha y el periodo es la diferencia.
-/// Las rectificativas se devengan en su fecha contable.
+/// Una rectificativa de una factura en criterio de caja sigue el cobro de la original: la factura y sus rectificativas se tratan como
+/// una sola operación (total y líneas sumados desde la fecha de cada rectificativa) y se devenga la parte cobrada de ese total. Así, si la
+/// original ya estaba cobrada, la rectificación se devenga en su fecha; si estaba pendiente, solo reduce lo que queda por devengar; y el
+/// límite es el 31 de diciembre del año siguiente al de la operación original. Una rectificativa sin factura rectificada en el régimen se
+/// devenga en su fecha contable.
 /// </summary>
 public static class CriterioCaja
 {
@@ -41,10 +46,34 @@ public static class CriterioCaja
         return Math.Clamp(cobrado / f.Total, 0m, 1m);
     }
 
-    public static DevengoCaja Devengado(FacturaCaja f, IReadOnlyList<CobroCaja> cobros, DateOnly desde, DateOnly hasta)
+    /// <summary>Parte (0 a 1) cobrada hasta la fecha de una factura y sus rectificativas, sobre el total que suman a esa fecha.</summary>
+    public static decimal ProporcionGrupo(FacturaCaja original, IReadOnlyList<FacturaCaja> rectificativas, IEnumerable<CobroCaja> cobros, DateOnly hasta)
     {
-        var p1 = Proporcion(f, cobros, hasta);
-        var p0 = Proporcion(f, cobros, desde.AddDays(-1));
+        if (hasta < original.FechaContable && hasta < original.FechaOperacion) return 0;
+        if (hasta >= FechaLimite(original)) return 1;
+        var vigentes = rectificativas.Where(r => r.FechaContable <= hasta).ToList();
+        var total = original.Total + vigentes.Sum(r => r.Total);
+        if (total <= 0) return 1;
+        var ids = vigentes.Select(r => r.Id).Append(original.Id).ToHashSet();
+        var cobrado = cobros.Where(c => ids.Contains(c.FacturaId) && c.Fecha <= hasta).Sum(c => c.Importe);
+        return Math.Clamp(cobrado / total, 0m, 1m);
+    }
+
+    /// <summary>Lo devengado entre dos fechas por una factura (o rectificativa) de un grupo factura + rectificativas.</summary>
+    public static DevengoCaja DevengadoEnGrupo(FacturaCaja f, FacturaCaja original, IReadOnlyList<FacturaCaja> rectificativas,
+        IReadOnlyList<CobroCaja> cobros, DateOnly desde, DateOnly hasta)
+    {
+        decimal P(DateOnly d) => f.Id != original.Id && d < f.FechaContable ? 0 : ProporcionGrupo(original, rectificativas, cobros, d);
+        var p1 = P(hasta);
+        var p0 = P(desde.AddDays(-1));
+        return Prorratear(f, p0, p1);
+    }
+
+    public static DevengoCaja Devengado(FacturaCaja f, IReadOnlyList<CobroCaja> cobros, DateOnly desde, DateOnly hasta)
+        => Prorratear(f, Proporcion(f, cobros, desde.AddDays(-1)), Proporcion(f, cobros, hasta));
+
+    private static DevengoCaja Prorratear(FacturaCaja f, decimal p0, decimal p1)
+    {
         decimal D(decimal v) => R(v * p1) - R(v * p0);
         var lineas = f.Lineas.Select(l => l with
             {
@@ -55,7 +84,31 @@ public static class CriterioCaja
     }
 
     public static IReadOnlyList<DevengoCaja> DelPeriodo(IEnumerable<FacturaCaja> facturas, IReadOnlyList<CobroCaja> cobros, PeriodoFiscal p)
-        => facturas.Select(f => Devengado(f, cobros, p.Inicio, p.Fin)).Where(d => d.Lineas.Count > 0).ToList();
+        => DelIntervalo(facturas.ToList(), cobros, p.Inicio, p.Fin);
+
+    /// <summary>Lo devengado por cada factura entre dos fechas, agrupando cada factura con sus rectificativas.</summary>
+    public static IReadOnlyList<DevengoCaja> DelIntervalo(IReadOnlyList<FacturaCaja> facturas, IReadOnlyList<CobroCaja> cobros, DateOnly desde, DateOnly hasta)
+    {
+        var porId = facturas.ToDictionary(f => f.Id);
+        var rects = facturas.Where(f => f.Rectificativa && f.RectificadaId is { } o && porId.ContainsKey(o))
+            .ToLookup(f => f.RectificadaId!.Value);
+        return facturas.Select(f =>
+            {
+                var original = f.Rectificativa && f.RectificadaId is { } o && porId.TryGetValue(o, out var orig) ? orig : rects.Contains(f.Id) ? f : null;
+                return original is null ? Devengado(f, cobros, desde, hasta)
+                    : DevengadoEnGrupo(f, original, rects[original.Id].ToList(), cobros, desde, hasta);
+            })
+            .Where(d => d.Lineas.Count > 0).ToList();
+    }
+
+    /// <summary>Proporción devengada a una fecha de la factura, teniendo en cuenta su grupo (factura + rectificativas) si lo tiene.</summary>
+    public static decimal ProporcionEn(FacturaCaja f, IReadOnlyList<FacturaCaja> facturas, IReadOnlyList<CobroCaja> cobros, DateOnly hasta)
+    {
+        var original = f.Rectificativa && f.RectificadaId is { } o ? facturas.FirstOrDefault(x => x.Id == o) : f;
+        if (original is null) return Proporcion(f, cobros, hasta);
+        var rs = facturas.Where(x => x.Rectificativa && x.RectificadaId == original.Id).ToList();
+        return rs.Count == 0 && !f.Rectificativa ? Proporcion(f, cobros, hasta) : ProporcionGrupo(original, rs, cobros, hasta);
+    }
 
     /// <summary>Lo devengado como grupos para el 303/420 (sin rectificativas aparte: ya están en su signo).</summary>
     public static IReadOnlyList<GrupoIva> Grupos(IEnumerable<DevengoCaja> devengos)

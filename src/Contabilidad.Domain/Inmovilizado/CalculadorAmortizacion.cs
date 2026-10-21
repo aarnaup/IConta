@@ -13,6 +13,7 @@ public sealed record FichaAmortizacion(decimal ValorAdquisicion, decimal ValorRe
     public bool Amortiza => BaseAmortizable > 0 && Metodo switch
     {
         "LINEAL" or "DEGRESIVO" => VidaUtilMeses is > 0,
+        "DIGITOS_DECRECIENTE" or "DIGITOS_CRECIENTE" => VidaUtilMeses is > 0 && VidaUtilMeses % 12 == 0,
         "COEFICIENTE_TABLA" => Coeficiente is > 0 and <= 100,
         "LIBRE" => true,
         _ => false
@@ -52,13 +53,18 @@ public sealed record TramoCuadro(DateOnly Desde, DateOnly Hasta, decimal Cuota, 
 /// <item>COEFICIENTE_TABLA: lineal al % anual de las tablas (base × % × días / 365) hasta amortizar la base.</item>
 /// <item>DEGRESIVO: porcentaje constante sobre el valor pendiente, por años desde el inicio (el año en curso, por días);
 /// el último año de la vida útil se amortiza lo que falta.</item>
+/// <item>DIGITOS_DECRECIENTE / DIGITOS_CRECIENTE (art. 12.1.b LIS y art. 4 RIS): por años completos de vida útil n, el año k
+/// amortiza base × (n − k + 1) / S (decreciente) o base × k / S (creciente), con S = n(n + 1)/2; el año en curso, por días.</item>
 /// <item>LIBRE (solo fiscal): libertad de amortización, todo el primer día.</item>
 /// </list>
 /// </summary>
 public static class CalculadorAmortizacion
 {
-    public static readonly string[] Metodos = ["LINEAL", "DEGRESIVO", "COEFICIENTE_TABLA", "NO_AMORTIZA"];
-    public static readonly string[] MetodosFiscales = ["LINEAL", "DEGRESIVO", "COEFICIENTE_TABLA", "LIBRE"];
+    public static readonly string[] Metodos = ["LINEAL", "DEGRESIVO", "DIGITOS_DECRECIENTE", "DIGITOS_CRECIENTE", "COEFICIENTE_TABLA", "NO_AMORTIZA"];
+    public static readonly string[] MetodosFiscales = ["LINEAL", "DEGRESIVO", "DIGITOS_DECRECIENTE", "DIGITOS_CRECIENTE", "COEFICIENTE_TABLA", "LIBRE"];
+
+    /// <summary>Métodos que se calculan con la vida útil (en meses).</summary>
+    public static bool UsaVidaUtil(string metodo) => metodo is "LINEAL" or "DEGRESIVO" or "DIGITOS_DECRECIENTE" or "DIGITOS_CRECIENTE";
 
     private static decimal R(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
@@ -69,6 +75,7 @@ public static class CalculadorAmortizacion
         var fin = f.Fin!.Value;
         if (fecha >= fin) return f.BaseAmortizable;
         if (f.Metodo == "DEGRESIVO") return Degresiva(f, fecha, fin);
+        if (f.Metodo is "DIGITOS_DECRECIENTE" or "DIGITOS_CRECIENTE") return SumaDigitos(f, fecha, fin);
         var transcurridos = fecha.DayNumber - f.Inicio.DayNumber + 1;
         var totales = fin.DayNumber - f.Inicio.DayNumber + 1;
         return R(f.BaseAmortizable * transcurridos / totales);
@@ -85,6 +92,26 @@ public static class CalculadorAmortizacion
             var ultimo = finAnio >= fin;
             if (ultimo) finAnio = fin;
             var cuota = ultimo ? f.BaseAmortizable - acumulada : R((f.BaseAmortizable - acumulada) * tasa);
+            if (fecha >= finAnio) { acumulada += cuota; inicio = finAnio.AddDays(1); continue; }
+            var dias = fecha.DayNumber - inicio.DayNumber + 1;
+            var total = finAnio.DayNumber - inicio.DayNumber + 1;
+            acumulada += R(cuota * dias / total);
+            break;
+        }
+        return Math.Min(acumulada, f.BaseAmortizable);
+    }
+
+    private static decimal SumaDigitos(FichaAmortizacion f, DateOnly fecha, DateOnly fin)
+    {
+        var n = f.VidaUtilMeses!.Value / 12;
+        var suma = n * (n + 1) / 2m;
+        decimal acumulada = 0;
+        var inicio = f.Inicio;
+        for (var k = 1; inicio <= fecha; k++)
+        {
+            var finAnio = k == n ? fin : inicio.AddYears(1).AddDays(-1);
+            var digito = f.Metodo == "DIGITOS_DECRECIENTE" ? n - k + 1 : k;
+            var cuota = k == n ? f.BaseAmortizable - acumulada : R(f.BaseAmortizable * digito / suma);
             if (fecha >= finAnio) { acumulada += cuota; inicio = finAnio.AddDays(1); continue; }
             var dias = fecha.DayNumber - inicio.DayNumber + 1;
             var total = finAnio.DayNumber - inicio.DayNumber + 1;

@@ -85,4 +85,15 @@ public class BienesInversionTests
         CalculadorImpuestoIndirecto.Calcular(true, new EntradaImpuestoIndirecto([], 0, 0, false, true, 630), igic);
         Assert.Equal(630m, igic["RBI"]);
     }
+
+    [Fact]
+    public void Cambio_de_afectacion_sin_prorrata()
+    {
+        // Empresa sin prorrata: deducción inicial del 100 %; en 2027 el bien se usa al 50 % en operaciones con derecho
+        var b = new BienInversionRegularizable(3, "F", "Furgón", 2026, 5, 10500, 100);
+        Assert.Equal(-1050m, RegularizacionBienesInversion.Anual(b, 2027, 50)!.Importe);
+        var igual = RegularizacionBienesInversion.Anual(b, 2028, 100)!;
+        Assert.Equal(0m, igual.Importe);
+        Assert.StartsWith("Mismo porcentaje", igual.Nota);
+    }
 }

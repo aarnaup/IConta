@@ -41,9 +41,28 @@ public sealed class ModulosRepositorio(IConexionFactory conexiones) : IModulosRe
 
     internal static async Task<IReadOnlyList<ModulosActividad>> DelAnioAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, int anio,
         CancellationToken ct)
-        => (await cn.QueryAsync<ModulosDto>(new CommandDefinition(Select, new { empresaId, anio = (short)anio }, tx, cancellationToken: ct)))
+        => (await cn.QueryAsync<ModulosConEpigrafe>(new CommandDefinition("""
+                SELECT m.actividad_id, m.descripcion, m.rendimiento_neto_irpf, m.personas_asalariadas, m.agricola, m.cuota_iva_devengada,
+                       m.cuota_iva_soportada, m.porcentaje_ingreso_iva, m.porcentaje_cuota_minima, ep.codigo AS epigrafe
+                FROM fiscal.modulos m LEFT JOIN core.empresa_actividad a ON a.id = m.actividad_id LEFT JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+                WHERE m.empresa_id = @empresaId AND m.anio = @anio ORDER BY m.id
+                """, new { empresaId, anio = (short)anio }, tx, cancellationToken: ct)))
             .Select(m => new ModulosActividad(m.ActividadId, m.Descripcion, m.RendimientoNetoIrpf, m.PersonasAsalariadas, m.Agricola,
-                m.CuotaIvaDevengada, m.CuotaIvaSoportada, m.PorcentajeIngresoIva, m.PorcentajeCuotaMinima)).ToList();
+                m.CuotaIvaDevengada, m.CuotaIvaSoportada, m.PorcentajeIngresoIva, m.PorcentajeCuotaMinima, m.Epigrafe)).ToList();
+
+    private sealed class ModulosConEpigrafe
+    {
+        public long? ActividadId { get; set; }
+        public string Descripcion { get; set; } = "";
+        public decimal RendimientoNetoIrpf { get; set; }
+        public decimal PersonasAsalariadas { get; set; }
+        public bool Agricola { get; set; }
+        public decimal CuotaIvaDevengada { get; set; }
+        public decimal CuotaIvaSoportada { get; set; }
+        public decimal PorcentajeIngresoIva { get; set; }
+        public decimal PorcentajeCuotaMinima { get; set; }
+        public string? Epigrafe { get; set; }
+    }
 
     public async Task<IReadOnlyList<ModulosDto>> GuardarAsync(long empresaId, int anio, IReadOnlyList<ModulosDto> actividades, CancellationToken ct)
     {

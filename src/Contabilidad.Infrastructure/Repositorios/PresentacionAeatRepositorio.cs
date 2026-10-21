@@ -40,6 +40,7 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         string? nifDesarrollador, CancellationToken ct)
     {
         var v = await fiscal.ObtenerAsync(empresaId, declaracionId, ct);
+        if (v.Modelo is "420" or "425") return await FicheroAtcAsync(empresaId, v, cmd, ct);
         if (!FicheroModelo.Modelos.Contains(v.Modelo))
             throw new ReglaContableException($"El modelo {v.Modelo} no tiene fichero de presentación todavía.",
                 $"Disponible para {string.Join(", ", FicheroModelo.Modelos)}.");
@@ -90,10 +91,199 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             if (string.IsNullOrWhiteSpace(cmd.ActividadNombre)) cmd.ActividadNombre = e.Actividad;
         }
 
+        var extra = v.Modelo switch
+        {
+            "200" or "202" => await DatosSociedadesAsync(cn, empresaId, v, ct),
+            "131" => await EpigrafesModulosAsync(cn, empresaId, v.Anio, ct),
+            // Situación tributaria del 309: 1 régimen especial de la agricultura, 2 recargo de equivalencia
+            "309" => new Dictionary<string, object?> { ["D:situacion309"] = e.RegimenIva == "AGRICULTURA_GYP" ? 1 : e.RegimenIva == "RECARGO_EQUIVALENCIA" ? 2 : 6 },
+            _ => null,
+        };
         var d = new DeclaracionParaFichero(v.Id ?? 0, v.Modelo, v.Anio, v.Periodo, v.TipoDeclaracion, NifEspanol(e.Nif), e.Nombre,
             v.Casillas, v.Resultado, v.ADevolver, anterior?.Trim(), registros,
-            CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347);
+            CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347,
+            Inicio: v.FechaInicio, Fin: v.FechaFin, Extra: extra);
         return FicheroModelo.Generar(d, cmd, nifDesarrollador);
+    }
+
+    /// <summary>Epígrafe IAE (4 caracteres, sin puntos) de cada actividad no agrícola del 131, en el orden de sus casillas.</summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> EpigrafesModulosAsync(Npgsql.NpgsqlConnection cn, long empresaId, int anio,
+        CancellationToken ct)
+    {
+        var modulos = await ModulosRepositorio.DelAnioAsync(cn, null, empresaId, anio, ct);
+        var x = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var i = 0;
+        foreach (var m in modulos.Where(m => !m.Agricola))
+        {
+            var ep = new string((m.Epigrafe ?? "").Where(char.IsLetterOrDigit).ToArray());
+            x[$"D:epigrafe{++i}"] = ep.Length > 4 ? ep[..4] : ep;
+        }
+        return x;
+    }
+
+    private sealed class SociedadesFila
+    {
+        public long EjercicioId { get; set; }
+        public string IsTipo { get; set; } = "GENERAL";
+        public decimal? IsPorcentaje { get; set; }
+        public decimal Incn { get; set; }
+    }
+
+    /// <summary>
+    /// Datos del 200 y del 202 que no están en las casillas guardadas: caracteres de la declaración, cifra de negocios y, en el 200,
+    /// el balance y la cuenta de pérdidas y ganancias al cierre del periodo impositivo.
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> DatosSociedadesAsync(Npgsql.NpgsqlConnection cn, long empresaId, DeclaracionVista v,
+        CancellationToken ct)
+    {
+        var f = await cn.QuerySingleOrDefaultAsync<SociedadesFila>(new CommandDefinition("""
+            SELECT e.id AS ejercicio_id, em.is_tipo, em.is_porcentaje,
+                   -- cifra de negocios de los doce meses anteriores: la del periodo impositivo anterior o, si no hay, la del actual
+                   COALESCE((SELECT a.incn FROM fiscal.impuesto_sociedades a JOIN core.ejercicio ea ON ea.id = a.ejercicio_id
+                             WHERE a.empresa_id = e.empresa_id AND ea.fecha_fin < e.fecha_inicio AND a.incn > 0
+                             ORDER BY ea.fecha_fin DESC LIMIT 1), i.incn, 0) AS incn
+            FROM core.ejercicio e JOIN core.empresa em ON em.id = e.empresa_id
+            LEFT JOIN fiscal.impuesto_sociedades i ON i.empresa_id = e.empresa_id AND i.ejercicio_id = e.id
+            WHERE e.empresa_id = @empresaId AND e.fecha_inicio = @inicio
+            """, new { empresaId, inicio = v.FechaInicio }, cancellationToken: ct))
+            ?? throw new ReglaContableException("No se encuentra el ejercicio del periodo impositivo de la declaración.");
+        var x = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["D:incn"] = f.Incn,
+            // Reducida dimensión (art. 101 LIS) con el tipo específico de estas entidades y microempresas (INCN inferior a 1 M€)
+            ["D:reducidaDimension202"] = f.IsTipo is "REDUCIDA_DIMENSION" or "MICRO" ? "X" : "",
+            ["D:incnMenor1M202"] = f.IsTipo == "MICRO" ? "X" : "",
+            ["D:tipoGravamen202"] = TipoGravamen202(new TipoGravamenIs(f.IsTipo, f.IsPorcentaje), v.FechaInicio.Year),
+        };
+        if (v.Modelo != "200") return x;
+
+        decimal C(string k) => FicheroModelo.Importe(v.Casillas, k) ?? 0;
+        x["F:00006"] = f.IsTipo is "REDUCIDA_DIMENSION" or "MICRO" ? 1 : 0;   // incentivos de reducida dimensión
+        x["F:00071"] = f.IsTipo == "NUEVA_CREACION" ? 1 : 0;                 // tipo reducido de nueva creación (art. 29.1)
+        x["F:00088"] = f.IsTipo == "MICRO" ? 1 : 0;                           // tipo reducido con INCN inferior a 1 M€
+        x["F:00027"] = C("00552") <= 0 ? 1 : 0;                               // base imponible negativa o cero
+        x["D:tipoEjercicio"] = 1;
+
+        var saldos = (await ConsultasContables.SaldosAsync(cn, null, empresaId, f.EjercicioId, v.FechaFin, null, null, ct, sinAsientosDeCierre: true))
+            .GroupBy(s => s.Codigo).Select(g => new Domain.Balances.SaldoBalance(g.Key, g.Key, g.Sum(s => s.Saldo))).ToList();
+        var estados = Estados200.Casillas(saldos, out var sinClasificar);
+        foreach (var (k, valor) in estados) x[k] = valor;
+        if (sinClasificar.Count > 0)
+            throw new ReglaContableException("Hay cuentas con saldo que no van a ninguna casilla del balance del 200: " +
+                string.Join(", ", sinClasificar.Select(s => s.Codigo)) + ".");
+        // El resultado antes de impuestos de la contabilidad tiene que ser el del 200 guardado
+        var antes = (decimal)x["B:00325"]!;
+        if (antes != C("00501"))
+            throw new ReglaContableException($"El resultado antes de impuestos de la contabilidad ({antes:N2}) no coincide con el del 200 ({C("00501"):N2}).",
+                "Ha cambiado la contabilidad desde que calculaste la declaración: vuelve a calcularla.");
+        // Corrección por el impuesto: el gasto contabilizado ahora (puede haberse registrado después de calcular)
+        var impuesto = -(decimal)x["B:00326"]!;
+        x["C:00500"] = (decimal)x["B:00500"]!;
+        x["C:00301"] = impuesto > 0 ? impuesto : 0m;
+        x["C:00302"] = impuesto < 0 ? -impuesto : 0m;
+        return x;
+    }
+
+    /// <summary>Tipo de gravamen del ejercicio en curso para el 202 (texto de 15 posiciones): «25» o, con dos tipos, «21/22».</summary>
+    private static string TipoGravamen202(TipoGravamenIs tipo, int anio)
+    {
+        var (t1, resto) = CalculadorSociedades.Tipos(tipo, anio);
+        var i = System.Globalization.CultureInfo.InvariantCulture;
+        return t1 == resto ? resto.ToString("0.##", i) : $"{t1.ToString("0.##", i)}/{resto.ToString("0.##", i)}";
+    }
+
+    private sealed class DomicilioFila
+    {
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string? Direccion { get; set; }
+        public string? CodigoPostal { get; set; }
+        public string? Provincia { get; set; }
+        public string? Telefono { get; set; }
+        public string? Email { get; set; }
+    }
+
+    /// <summary>XML del 420 o del 425 para el programa de ayuda de la Agencia Tributaria Canaria.</summary>
+    private async Task<(byte[] Contenido, string Nombre)> FicheroAtcAsync(long empresaId, DeclaracionVista v, FicheroAeatCmd cmd, CancellationToken ct)
+    {
+        if (v.Estado is not ("CALCULADA" or "PRESENTADA"))
+            throw new ReglaContableException("Guarda (calcula) la declaración antes de descargar el fichero.");
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var e = await cn.QuerySingleAsync<DomicilioFila>(new CommandDefinition("""
+            SELECT n.numero AS nif, e.nombre, n.direccion, n.codigo_postal, pr.codigo AS provincia, n.telefono, n.email
+            FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
+            WHERE e.id = @empresaId
+            """, new { empresaId }, cancellationToken: ct));
+        string? anterior = null;
+        if (v.TipoDeclaracion == "COMPLEMENTARIA")
+            anterior = await cn.ExecuteScalarAsync<string?>(new CommandDefinition("""
+                SELECT d.justificante FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
+                WHERE d.empresa_id = @empresaId AND m.codigo = @modelo AND d.anio = @anio AND d.periodo = @periodo
+                  AND d.estado = 'PRESENTADA' AND d.numero_presentacion < @numero
+                ORDER BY d.numero_presentacion DESC LIMIT 1
+                """, new { empresaId, modelo = v.Modelo, anio = (short)v.Anio, periodo = v.Periodo, numero = v.NumeroPresentacion }, cancellationToken: ct));
+        var cp = (e.CodigoPostal ?? "").Trim();
+        var datos = new FicheroAtcDatos
+        {
+            Nif = NifEspanol(e.Nif), Nombre = e.Nombre, SiglasVia = string.IsNullOrWhiteSpace(cmd.SiglasVia) ? "CL" : cmd.SiglasVia.Trim(),
+            NombreVia = e.Direccion ?? "", Provincia = e.Provincia ?? (cp.Length >= 2 ? cp[..2] : ""), Municipio = (cmd.CodigoMunicipio ?? "").Trim(),
+            CodigoPostal = cp, Telefono = cmd.Telefono ?? e.Telefono, Email = cmd.Email ?? e.Email,
+            FormaPago = string.IsNullOrWhiteSpace(cmd.FormaPagoAtc) ? "5" : cmd.FormaPagoAtc.Trim(), Iban = cmd.Iban, JustificanteAnterior = anterior,
+        };
+        if (v.Modelo == "425") await DatosEstadisticosAsync(cn, empresaId, v.Anio, datos, ct);
+        if (datos.FormaPago is not ("1" or "2" or "3" or "4" or "5"))
+            throw new ReglaContableException("Forma de pago no válida: 1 efectivo, 2 adeudo en cuenta, 3 pago fraccionado, 4 domiciliación o 5 pago telemático.");
+        var doc = v.Modelo == "420"
+            ? XmlAtc.Modelo420(v.Anio, v.Periodo, v.TipoDeclaracion, v.Casillas, v.Resultado, v.ADevolver > 0, datos)
+            : XmlAtc.Modelo425(v.Anio, v.Casillas, DateOnly.FromDateTime(DateTime.Today), datos);
+        return (XmlAtc.Bytes(doc), $"{v.Modelo}_{datos.Nif}_{v.Anio}_{v.Periodo}.xml");
+    }
+
+    private sealed class ActividadFila
+    {
+        public string Epigrafe { get; set; } = "";
+        public decimal Importe { get; set; }
+        public decimal ConDerecho { get; set; }
+        public short? Provisional { get; set; }
+        public short? Definitivo { get; set; }
+        public string? TipoProrrata { get; set; }
+    }
+
+    /// <summary>
+    /// Datos estadísticos del 425: por actividad, las operaciones del año (las facturas sin actividad van a la principal), las que dan
+    /// derecho a deducir (todas menos las exentas) y la prorrata de su sector; si es destinataria del criterio de caja y si presenta el 415.
+    /// </summary>
+    private static async Task DatosEstadisticosAsync(Npgsql.NpgsqlConnection cn, long empresaId, int anio, FicheroAtcDatos datos, CancellationToken ct)
+    {
+        var q = new { empresaId, desde = new DateOnly(anio, 1, 1), hasta = new DateOnly(anio, 12, 31), anio = (short)anio };
+        datos.Actividades = (await cn.QueryAsync<ActividadFila>(new CommandDefinition("""
+            WITH act AS (
+                SELECT a.id, ep.codigo AS epigrafe, a.es_principal, a.sector_diferenciado FROM core.empresa_actividad a
+                JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+                WHERE a.empresa_id = @empresaId AND a.fecha_alta <= @hasta AND (a.fecha_baja IS NULL OR a.fecha_baja >= @desde)),
+            principal AS (SELECT id FROM act ORDER BY es_principal DESC, id LIMIT 1),
+            ops AS (
+                SELECT COALESCE(f.actividad_id, (SELECT id FROM principal)) AS actividad_id, SUM(fi.base) AS importe,
+                       SUM(fi.base) FILTER (WHERE fi.tipo_operacion <> 'EXENTA') AS con_derecho
+                FROM fiscal.factura f JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+                WHERE f.empresa_id = @empresaId AND f.libro = 'EMITIDAS' AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @desde AND @hasta
+                GROUP BY 1)
+            SELECT act.epigrafe, COALESCE(ops.importe, 0) AS importe, COALESCE(ops.con_derecho, 0) AS con_derecho,
+                   p.porcentaje_provisional AS provisional, p.porcentaje_definitivo AS definitivo, p.tipo AS tipo_prorrata
+            FROM act LEFT JOIN ops ON ops.actividad_id = act.id
+            LEFT JOIN fiscal.prorrata p ON p.empresa_id = @empresaId AND p.anio = @anio
+                 AND COALESCE(p.sector_diferenciado, 0) = COALESCE(act.sector_diferenciado, 0)
+            ORDER BY act.es_principal DESC, act.id
+            """, q, cancellationToken: ct)))
+            .Select(a => new ActividadAtc(a.Epigrafe, a.Importe, a.ConDerecho, a.Provisional, a.Definitivo, a.TipoProrrata == "ESPECIAL")).ToList();
+        datos.DestinatarioCaja = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.factura WHERE empresa_id = @empresaId AND libro = 'RECIBIDAS' AND estado = 'CONTABILIZADA'
+                           AND criterio_caja AND fecha_contable BETWEEN @desde AND @hasta)
+            """, q, cancellationToken: ct));
+        datos.Obligado415 = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.factura WHERE empresa_id = @empresaId AND estado = 'CONTABILIZADA'
+                           AND fecha_contable BETWEEN @desde AND @hasta GROUP BY tercero_id, libro HAVING SUM(total) > 3005.06)
+            """, q, cancellationToken: ct));
     }
 
     private static string NifEspanol(string nif)
@@ -160,14 +350,41 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
                         "Indica la factura rectificada para declararla como rectificación.");
                 break;
             }
+            case "180":
+            {
+                var lineas = det.Deserialize<List<PerceptorResumen>>(Json) ?? [];
+                var sinInmueble = lineas.Where(l => l.Inmueble is null).Select(l => l.Nombre).Distinct().ToList();
+                if (sinInmueble.Count > 0)
+                    throw new ReglaContableException("Faltan los datos del inmueble de: " + string.Join(", ", sinInmueble) + ".",
+                        "Dalo de alta en Modelos fiscales → Inmuebles arrendados, indícalo en sus facturas y vuelve a calcular el 180.");
+                r["registros"] = lineas.Select(l => Diseno180.Registro(l, l.Inmueble!)).ToList();
+                break;
+            }
             case "190":
             {
                 var lineas = det.Deserialize<List<PerceptorResumen>>(Json) ?? [];
-                r["registros"] = lineas.Select(l => new RegistroAeat
+                r["registros"] = lineas.Select(l =>
                 {
-                    ["nif"] = NifEspanol(l.Nif), ["nombre"] = l.Nombre, ["provincia"] = l.Provincia, ["clave"] = l.Clave,
-                    ["subclave"] = l.Subclave ?? "00", ["signoBase"] = l.Base < 0 ? "N" : " ", ["base"] = Math.Abs(l.Base),
-                    ["retencion"] = Math.Abs(l.Retencion),
+                    var reg = new RegistroAeat
+                    {
+                        ["nif"] = NifEspanol(l.Nif), ["nombre"] = l.Nombre, ["provincia"] = l.Provincia, ["clave"] = l.Clave,
+                        ["subclave"] = l.Subclave ?? "00", ["signoBase"] = l.Base < 0 ? "N" : " ", ["base"] = Math.Abs(l.Base),
+                        ["retencion"] = Math.Abs(l.Retencion),
+                        ["signoEspecie"] = l.Especie < 0 ? "N" : " ", ["especie"] = Math.Abs(l.Especie),
+                        ["ingresoCuenta"] = l.IngresoACuenta, ["ingresoCuentaRepercutido"] = l.IngresoRepercutido,
+                    };
+                    // Datos adicionales: solo para los trabajadores (clave A)
+                    if (l.Datos is { } t)
+                    {
+                        reg["anioNacimiento"] = (decimal)(t.AnioNacimiento ?? 0);
+                        reg["situacionFamiliar"] = (decimal)t.SituacionFamiliar;
+                        reg["nifConyuge"] = t.NifConyuge ?? "";
+                        reg["discapacidad"] = (decimal)t.Discapacidad;
+                        reg["contrato"] = (decimal)t.Contrato;
+                        reg["movilidad"] = t.MovilidadGeografica ? 1m : 0m;
+                        reg["gastosDeducibles"] = l.GastosDeducibles;
+                    }
+                    return reg;
                 }).ToList();
                 break;
             }

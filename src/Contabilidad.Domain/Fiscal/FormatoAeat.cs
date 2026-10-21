@@ -130,11 +130,13 @@ public static class FormatoAeat
         _ => "F1",
     };
 
-    /// <summary>S1 sujeta y no exenta, S2 con inversión del sujeto pasivo, N1 no sujeta; las exentas van en «Operación Exenta».</summary>
+    /// <summary>S1 sujeta y no exenta, S2 con inversión del sujeto pasivo, N1 no sujeta (arts. 7, 14 y otros), N2 no sujeta por
+    /// reglas de localización; las exentas van en «Operación Exenta».</summary>
     public static string? Calificacion(string tipoOperacion) => tipoOperacion switch
     {
         "INVERSION_SUJETO_PASIVO" => "S2",
         "NO_SUJETA" => "N1",
+        "NO_SUJETA_LOCAL" or "NO_SUJETA_OSS" => "N2",
         "EXENTA" or "EXPORTACION" or "INTRACOM_ENTREGA" => null,
         _ => "S1",
     };

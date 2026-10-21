@@ -47,8 +47,8 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
     {
         if (string.IsNullOrWhiteSpace(cmd.Nif) || string.IsNullOrWhiteSpace(cmd.Nombre))
             throw new ReglaContableException("NIF y nombre son obligatorios.");
-        if (!cmd.EsCliente && !cmd.EsProveedor)
-            throw new ReglaContableException("Indica si es cliente, proveedor o ambos.");
+        if (!cmd.EsCliente && !cmd.EsProveedor && !cmd.EsEmpleado)
+            throw new ReglaContableException("Indica si es cliente, proveedor, ambos o trabajador.");
 
         var nif = cmd.Nif.Trim().ToUpperInvariant().Replace(" ", "").Replace("-", "");
         var pais = string.IsNullOrWhiteSpace(cmd.Pais) ? "ES" : cmd.Pais.Trim().ToUpperInvariant();
@@ -79,7 +79,7 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
 
         var cli = cmd.EsCliente ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4300", digitos, $"Cliente {cmd.Nombre.Trim()}", "DEUDORA", ct) : null;
         var pro = cmd.EsProveedor ? await SiguienteSubcuentaAsync(cn, tx, empresaId, "4000", digitos, $"Proveedor {cmd.Nombre.Trim()}", "ACREEDORA", ct) : null;
-        var codigo = (cli ?? pro)!.Codigo;
+        var codigo = (cli ?? pro)?.Codigo ?? ("EMP-" + nif)[..Math.Min(15, nif.Length + 4)];
 
         long id;
         try
@@ -103,6 +103,10 @@ public sealed class TerceroRepositorio(IConexionFactory conexiones) : ITerceroRe
             throw new ReglaContableException("Ya existe un tercero con ese NIF o código en la empresa.");
         }
 
+        if (cmd.EsEmpleado)
+            await cn.ExecuteAsync(new CommandDefinition(
+                "INSERT INTO conta.empleado (tercero_id, empresa_id) VALUES (@id, @empresaId) ON CONFLICT (tercero_id) DO NOTHING",
+                new { id, empresaId }, tx, cancellationToken: ct));
         await tx.CommitAsync(ct);
         return new TerceroDto
         {

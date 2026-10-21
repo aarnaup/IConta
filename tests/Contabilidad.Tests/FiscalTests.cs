@@ -180,6 +180,39 @@ public class CalculadorImpuestoIndirectoTests
     }
 
     [Fact]
+    public void No_sujetas_por_localizacion_en_las_casillas_120_y_123()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("EMITIDAS", 0, 900, 0, op: "NO_SUJETA_LOCAL"), G("EMITIDAS", 0, 250, 0, op: "NO_SUJETA_OSS"),
+            G("EMITIDAS", 0, 5000, 0, op: "NO_SUJETA"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
+        Assert.Equal((900m, 250m), (d["120"], d["123"]));
+        Assert.Equal(21m, d["46"]);                                  // informativas: no cambian el resultado
+    }
+
+    [Fact]
+    public void IGIC_simplificado_suma_la_cuota_de_los_modulos()
+    {
+        var d = new DeclaracionCalculada { Modelo = "420" };
+        CalculadorImpuestoIndirecto.Calcular(true, new([G("RECIBIDAS", 7, 1000, 70, ded: 70, inv: true)], 0, 0, false, false, CuotaSimplificado: 300), d);
+        Assert.Equal(230m, d["RES"]);
+        Assert.Equal(230m, d.AIngresar);
+    }
+
+    [Fact]
+    public void Compensaciones_REAGP_en_la_casilla_42()
+    {
+        var d = Nueva();
+        CalculadorImpuestoIndirecto.Calcular(false, new([
+            G("RECIBIDAS", 12, 1000, 120, ded: 120, op: "COMPENSACION_REAGP"), G("RECIBIDAS", 10.5m, -100, -10.5m, ded: -10.5m, rect: true, op: "COMPENSACION_REAGP"),
+            G("RECIBIDAS", 21, 200, 42, ded: 42), G("EMITIDAS", 21, 1000, 210)], 0, 0, false, false), d);
+        Assert.Equal(109.5m, d["42"]);
+        Assert.Equal((200m, 42m), (d["28"], d["29"]));
+        Assert.DoesNotContain(d.Casillas, c => c.Clave is "40" or "41");
+        Assert.Equal(151.5m, d["45"]);
+    }
+
+    [Fact]
     public void Con_prorrata_la_autorrepercusion_deja_cuota_a_ingresar()
     {
         var d = Nueva();
@@ -198,6 +231,7 @@ public class CalculadorImpuestoIndirectoTests
             G("EMITIDAS", 0, 400, 0, op: "INVERSION_SUJETO_PASIVO"), G("EMITIDAS", 21, 100, 21)], 0, 0, false, false), d);
         Assert.Equal((800m, 168m, 5000m, 1050m), (d["32"], d["33"], d["34"], d["35"]));
         Assert.Equal((3000m, 700m, 400m), (d["59"], d["60"], d["122"]));
+        Assert.DoesNotContain(d.Casillas, c => c.Clave is "120" or "123");
         Assert.Equal(21m, d["27"]);
         Assert.Equal(21m - 1218m, d["46"]);
     }

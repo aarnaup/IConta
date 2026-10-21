@@ -57,6 +57,16 @@ public class SiiTests
     }
 
     [Fact]
+    public void No_sujeta_por_articulos_7_y_14_y_por_reglas_de_localizacion()
+    {
+        var doc = Sii.Mensaje("EMITIDAS", "B12345678", "Mi Empresa", "A0",
+            [F("EMITIDAS", "003", "A11111111", "ES", [L1("NO_SUJETA", 0, 300), L1("NO_SUJETA_LOCAL", 0, 800), L1("NO_SUJETA_OSS", 0, 50)])]);
+        var ns = doc.Descendants(I + "NoSujeta").Single();
+        Assert.Equal(["ImportePorArticulos7_14_Otros", "ImporteTAIReglasLocalizacion"], ns.Elements().Select(e => e.Name.LocalName));
+        Assert.Equal(["300.00", "850.00"], ns.Elements().Select(e => e.Value));
+    }
+
+    [Fact]
     public void Rectificativa_por_diferencias_con_la_factura_rectificada()
     {
         var doc = Sii.Mensaje("EMITIDAS", "B12345678", "Mi Empresa", "A0",
@@ -87,6 +97,19 @@ public class SiiTests
         var fr2 = regs[1].Element(L + "FacturaRecibida")!;
         Assert.Equal("09", fr2.Element(I + "ClaveRegimenEspecialOTrascendencia")!.Value);
         Assert.Equal("DE123456789", regs[1].Descendants(I + "IDEmisorFactura").Single().Descendants(I + "ID").Single().Value);
+    }
+
+    [Fact]
+    public void Recibo_de_compensacion_REAGP_con_clave_02()
+    {
+        var doc = Sii.Mensaje("RECIBIDAS", "B12345678", "Mi Empresa", "A0",
+            [F("RECIBIDAS", "RC-1", "12345678Z", "ES", [new LineaSii("COMPENSACION_REAGP", 12, 1000, 120, 0, 0, 120, false)])]);
+        var fr = doc.Descendants(L + "FacturaRecibida").Single();
+        Assert.Equal(("F6", "02"), (fr.Element(I + "TipoFactura")!.Value, fr.Element(I + "ClaveRegimenEspecialOTrascendencia")!.Value));
+        var det = fr.Descendants(I + "DetalleIVA").Single();
+        Assert.Equal(["BaseImponible", "PorcentCompensacionREAGYP", "ImporteCompensacionREAGYP"], det.Elements().Select(e => e.Name.LocalName));
+        Assert.Equal(["1000.00", "12", "120.00"], det.Elements().Select(e => e.Value));
+        Assert.Equal("120.00", fr.Element(I + "CuotaDeducible")!.Value);
     }
 
     [Fact]

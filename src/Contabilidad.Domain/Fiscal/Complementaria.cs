@@ -16,7 +16,7 @@ public static class Complementaria
     // Casilla de «a deducir (resultado de la anterior)» y de «resultado» en cada autoliquidación
     private static readonly Dictionary<string, (string Deducir, string Resultado)> Casillas = new()
     {
-        ["303"] = ("70", "71"), ["111"] = ("29", "30"), ["115"] = ("04", "05"), ["130"] = ("18", "19"), ["131"] = ("DED", "RES"), ["200"] = ("ANT", "RES"), ["202"] = ("ANT", "RES"), ["420"] = ("DED", "LIQ"),
+        ["303"] = ("70", "71"), ["111"] = ("29", "30"), ["115"] = ("04", "05"), ["130"] = ("18", "19"), ["131"] = ("14", "15"), ["200"] = ("ANT", "00621"), ["202"] = ("31", "34"), ["420"] = ("DED", "LIQ"), ["309"] = ("23", "24"),
     };
 
     public static bool EsAutoliquidacion(string modelo) => Casillas.ContainsKey(modelo);
@@ -41,6 +41,7 @@ public static class Complementaria
             throw new ReglaContableException($"El resultado ({d.Resultado:N2}) es menor que el de la presentación anterior ({anterior.Resultado:N2}).",
                 "Una complementaria solo puede aumentar lo que se ingresa o reducir lo que se devuelve o compensa; para reducirlo usa una sustitutiva o rectificativa.");
         var (kd, kr) = Casillas[modelo];
+        if (modelo == "202" && d.Casillas.Any(c => c.Clave == "03")) (kd, kr) = ("02", "03");   // modalidad del art. 40.2
         var aIngresar = Math.Max(0, d.Resultado) - anterior.Ingresado;
         if (aIngresar < 0) aIngresar = 0;
         d.Casillas.RemoveAll(c => c.Clave == kd);

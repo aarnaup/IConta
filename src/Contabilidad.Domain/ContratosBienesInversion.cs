@@ -42,6 +42,13 @@ public sealed class AltaBienInversionCmd
     public bool TransmisionExenta { get; set; }
 }
 
+/// <summary>% de deducción de un bien en un año (cambio de afectación en una empresa sin prorrata, o afectación parcial); null lo quita.</summary>
+public sealed class PorcentajeBienInversionCmd
+{
+    public int Anio { get; set; }
+    public int? Porcentaje { get; set; }
+}
+
 public sealed class AnioBienInversionDto
 {
     public int Anio { get; set; }
@@ -74,6 +81,8 @@ public sealed class BienInversionDto
     public string Estado { get; set; } = "";
     public DateOnly? FechaBaja { get; set; }
     public List<AnioBienInversionDto> Cuadro { get; set; } = [];
+    /// <summary>Porcentajes de deducción fijados para el bien por año (cambio de afectación).</summary>
+    public List<PorcentajeBienInversionCmd> Porcentajes { get; set; } = [];
 }
 
 /// <summary>Libro registro de bienes de inversión (art. 65 RIVA) con la regularización de cada año.</summary>

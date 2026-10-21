@@ -153,31 +153,31 @@
     <div class="panel">
       <h2>Catálogos</h2>
       <div class="cab2">
-        <label>Catálogo <select id="caTipo">
+        <label>Catálogo <select id="cgTipo">
           <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
           <option value="mod">Modelos fiscales</option><option value="pais">Países</option><option value="banco">Bancos</option>
           <option value="iae">Epígrafes del IAE</option><option value="fp">Formas de pago de una empresa</option></select></label>
-        <label id="caEmpresaL" hidden>Empresa <select id="caEmpresa"></select></label>
-        <label id="caBuscaL" hidden>Buscar <input id="caBusca" placeholder="código o descripción"></label>
+        <label id="cgEmpresaL" hidden>Empresa <select id="cgEmpresa"></select></label>
+        <label id="cgBuscaL" hidden>Buscar <input id="cgBusca" placeholder="código o descripción"></label>
       </div>
-      <p class="ayuda" id="caAyuda"></p>
-      <table><thead id="caHead"></thead><tbody id="caBody"></tbody></table>
-      <span id="caMsg" role="status"></span>
+      <p class="ayuda" id="cgAyuda"></p>
+      <table><thead id="cgHead"></thead><tbody id="cgBody"></tbody></table>
+      <span id="cgMsg" role="status"></span>
     </div>
-    <div class="panel" id="caFormPanel">
-      <h2 id="caFormTitulo">Nuevo</h2>
-      <div class="cab2" id="caForm"></div>
-      <div class="acciones"><button class="btn primario" id="caGuardar" type="button">Guardar</button>
-        <button class="btn" id="caNuevo" type="button">Limpiar</button><span id="caFormMsg" role="status"></span></div>
+    <div class="panel" id="cgFormPanel">
+      <h2 id="cgFormTitulo">Nuevo</h2>
+      <div class="cab2" id="cgForm"></div>
+      <div class="acciones"><button class="btn primario" id="cgGuardar" type="button">Guardar</button>
+        <button class="btn" id="cgNuevo" type="button">Limpiar</button><span id="cgFormMsg" role="status"></span></div>
     </div>
-    <div class="panel" id="caVigPanel" hidden>
-      <h2 id="caVigTitulo">Nueva vigencia</h2>
+    <div class="panel" id="cgVigPanel" hidden>
+      <h2 id="cgVigTitulo">Nueva vigencia</h2>
       <div class="cab2">
-        <label>Porcentaje <input id="caVigPct" type="number" step="0.01" min="0" max="100"></label>
-        <label id="caVigRecL">Recargo de equivalencia <input id="caVigRec" type="number" step="0.01" min="0" max="100" value="0"></label>
-        <label>Se aplica desde <input id="caVigDesde" type="date"></label>
+        <label>Porcentaje <input id="cgVigPct" type="number" step="0.01" min="0" max="100"></label>
+        <label id="cgVigRecL">Recargo de equivalencia <input id="cgVigRec" type="number" step="0.01" min="0" max="100" value="0"></label>
+        <label>Se aplica desde <input id="cgVigDesde" type="date"></label>
       </div>
-      <div class="acciones"><button class="btn" id="caVigGuardar" type="button">Abrir vigencia</button><span id="caVigMsg" role="status"></span></div>
+      <div class="acciones"><button class="btn" id="cgVigGuardar" type="button">Abrir vigencia</button><span id="cgVigMsg" role="status"></span></div>
       <p class="ayuda">La vigencia anterior se cierra en esa fecha: las facturas anteriores siguen con su porcentaje.</p>
     </div>
   </div>
@@ -194,6 +194,7 @@
     <button data-tab="diario" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Diario</button>
     <button data-tab="mayor" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Mayor</button>
     <button data-tab="tesoreria" data-req="TESORERIA:LECTURA" aria-pressed="false">Tesorería</button>
+    <button data-tab="nominas" data-req="CONTABILIDAD:LECTURA" aria-pressed="false">Nóminas</button>
     <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false">Modelos fiscales</button>
     <button data-tab="pendientes" data-req="REVISOR" aria-pressed="false">Pendientes de revisión</button>
     <button data-tab="inmovilizado" data-req="INMOVILIZADO:LECTURA" aria-pressed="false">Inmovilizado</button>
@@ -258,6 +259,7 @@
           <label>Retención IRPF <select id="fRet"></select></label>
           <label>Forma de pago <select id="fForma"></select></label>
           <label id="f349Label" hidden>Clave del 349 <select id="f349"></select></label>
+          <label id="fInmL" hidden>Inmueble arrendado <select id="fInm"></select></label>
         </div>
         <table>
           <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th><th style="width:220px">Operación</th>
@@ -295,7 +297,7 @@
           <div class="cab2">
             <label>NIF / CIF <input id="tNif"></label>
             <label>Nombre <input id="tNombre"></label>
-            <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option></select></label>
+            <label>Tipo <select id="tTipo"><option value="CLIENTE">Cliente</option><option value="PROVEEDOR">Proveedor</option><option value="AMBOS">Cliente y proveedor</option><option value="EMPLEADO">Trabajador (nóminas)</option></select></label>
             <label>Código postal <input id="tCp" inputmode="numeric" maxlength="10"></label>
             <label>País <input id="tPais" maxlength="2" value="ES" style="width:4em" title="Código ISO de 2 letras (FR, DE, IE…)"></label>
             <label><input type="checkbox" id="tCaja"> Proveedor en criterio de caja</label>
@@ -311,6 +313,48 @@
       <h2>Últimos asientos del ejercicio</h2>
       <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
       <tbody id="diarioBody"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-nominas" hidden>
+    <div class="panel" data-req="CONTABILIDAD_DIRECTO">
+      <h2>Nueva nómina</h2>
+      <div class="cab2">
+        <label>Trabajador <select id="noTercero"></select></label>
+        <label>Fecha de devengo <input type="date" id="noFecha"></label>
+        <label>Periodo <input id="noPeriodo" maxlength="60" placeholder="Octubre 2026, paga extra…"></label>
+        <label>Canal <select id="noCanal"></select></label>
+        <label>Bruto dinerario <input id="noBruto" inputmode="decimal"></label>
+        <label>Retención IRPF (%) <input id="noPct" inputmode="decimal" placeholder="o el importe abajo"></label>
+        <label>Retención IRPF (importe) <input id="noRet" inputmode="decimal"></label>
+        <label>Seguridad Social del trabajador <input id="noSsT" inputmode="decimal"></label>
+        <label>Seguridad Social de la empresa <input id="noSsE" inputmode="decimal"></label>
+        <label>Anticipos descontados <input id="noAnt" inputmode="decimal" value="0"></label>
+        <label>Retribución en especie <input id="noEsp" inputmode="decimal" value="0"></label>
+        <label>Ingreso a cuenta de la especie <input id="noIc" inputmode="decimal" value="0"></label>
+        <label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" id="noRep" checked> El ingreso a cuenta se descuenta al trabajador</label>
+      </div>
+      <p class="ayuda" id="noLiquido"></p>
+      <div class="acciones"><button class="btn primario" id="noGuardar" type="button">Contabilizar nómina</button><span id="noMsg" role="status"></span></div>
+      <p class="ayuda">Asiento: 640 por el bruto y 642 por la Seguridad Social de la empresa, contra 4751 (retención e ingreso a cuenta), 476
+        (cuotas del trabajador y de la empresa), 460 (anticipos) y 465 (líquido a pagar). Las retenciones van al 111 del trimestre y al 190.
+        El trabajador es un tercero con su NIF (créalo en Facturas → Terceros si no existe).</p>
+    </div>
+    <div class="panel">
+      <h2>Nóminas del ejercicio</h2>
+      <table><thead><tr><th>Fecha</th><th>Trabajador</th><th>Periodo</th><th class="num">Bruto</th><th class="num">IRPF</th><th class="num">SS trab.</th>
+        <th class="num">SS emp.</th><th class="num">Especie</th><th class="num">Líquido</th><th>Asiento</th><th></th></tr></thead>
+      <tbody id="noLista"></tbody></table>
+      <span id="noListaMsg" role="status"></span>
+    </div>
+    <div class="panel">
+      <h2>Trabajadores (datos del modelo 190)</h2>
+      <table><thead><tr><th>Trabajador</th><th>NIF</th><th>Año de nacimiento</th><th>Situación familiar</th><th>NIF del cónyuge</th><th>Discapacidad</th>
+        <th>Contrato</th><th>Movilidad geográfica</th><th></th></tr></thead>
+      <tbody id="noEmpleados"></tbody></table>
+      <p class="ayuda">Situación familiar: 1 sin cónyuge con hijos a cargo, 2 con cónyuge a cargo, 3 resto. Discapacidad: 0 no, 1 del 33 al 65 %,
+        2 con movilidad reducida o ayuda de terceros, 3 del 65 % o más. Contrato: 1 general, 2 inferior al año, 3 relación especial, 4 esporádico.</p>
+      <span id="noEmpMsg" role="status"></span>
     </div>
   </section>
 
@@ -548,6 +592,11 @@
             <label id="mfFIbanL">IBAN (domiciliación o devolución) <input id="mfFIban" maxlength="34" placeholder="ES00 0000 0000 0000 0000 0000"></label>
             <label id="mfFTelL">Teléfono de contacto <input id="mfFTel" maxlength="15"></label>
             <label id="mfFConL">Persona de contacto <input id="mfFCon" maxlength="40"></label>
+            <label id="mfFCnaeL" hidden>CNAE de la actividad principal <input id="mfFCnae" maxlength="4" inputmode="numeric" style="width:6em"></label>
+            <label id="mfFSvpL" hidden>Siglas de la vía (CL, AV…) <input id="mfFSvp" maxlength="2" value="CL" style="width:4em"></label>
+            <label id="mfFMunL" hidden>Código del municipio <input id="mfFMun" maxlength="5" style="width:6em"></label>
+            <label id="mfFPagoL" hidden>Forma de pago (ATC) <select id="mfFPago"><option value="5">Pago telemático</option><option value="4">Domiciliación</option>
+              <option value="2">Adeudo en cuenta</option><option value="1">Efectivo</option><option value="3">Pago fraccionado</option></select></label>
             <label id="mfFExoL">Exonerado del 390 <select id="mfFExo"><option value="false">No (presento el 390)</option><option value="true">Sí (página 4)</option></select></label>
             <label>&nbsp;<button class="btn primario" id="mfFDescargar" type="button">Descargar fichero</button></label>
           </div>
@@ -643,7 +692,9 @@
           Las compras a proveedores acogidos al criterio de caja también se deducen al pagar.</p>
         <div class="fila-acciones">
           <label>IVA <select id="ccRegimen"><option value="GENERAL">General</option><option value="CRITERIO_CAJA">Criterio de caja</option>
-            <option value="SIMPLIFICADO">Simplificado (módulos)</option><option value="RECARGO_EQUIVALENCIA">Recargo de equivalencia</option></select></label>
+            <option value="SIMPLIFICADO">Simplificado (módulos)</option><option value="RECARGO_EQUIVALENCIA">Recargo de equivalencia</option>
+            <option value="AGRICULTURA_GYP">Agricultura, ganadería y pesca (REAGP)</option>
+            <option value="COMERCIANTE_MINORISTA">Comerciante minorista (IGIC)</option></select></label>
           <label>IRPF <select id="ccIrpf"><option value="">Sociedad (sin IRPF)</option><option value="DIRECTA_NORMAL">Estimación directa normal</option>
             <option value="DIRECTA_SIMPLIFICADA">Estimación directa simplificada</option><option value="OBJETIVA">Estimación objetiva (módulos)</option></select></label>
           <label>SII <select id="ccSii"><option value="false">No</option><option value="true">Sí</option></select></label>
@@ -681,8 +732,13 @@
           <label>Importe neto de la cifra de negocios <input id="is_incn" class="num" inputmode="decimal"></label>
           <label>Bases negativas anteriores a la aplicación <input id="is_binsAnteriores" class="num" inputmode="decimal"></label>
         </div>
+        <details class="nuevo"><summary>Bases negativas anteriores por año de origen</summary>
+          <p class="ayuda">Para el detalle de la página 15 del 200. Si las indicas, su suma sustituye al total de arriba; si no, se toman del año anterior al del periodo.</p>
+          <table><thead><tr><th style="width:120px">Año</th><th class="num">Importe pendiente</th><th></th></tr></thead><tbody id="isBins"></tbody></table>
+          <button class="btn" id="isBinAnadir" type="button">Añadir año</button>
+        </details>
         <h3>Ajustes extracontables</h3>
-        <table><thead><tr><th>Concepto</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
+        <table><thead><tr><th>Concepto</th><th>Casilla del 200</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
         <ul id="isSugerencias" class="avisos"></ul>
         <div class="fila-acciones">
           <button class="btn" id="isAnadir" type="button">Añadir ajuste</button>
@@ -709,6 +765,29 @@
       </div>
 
       <div class="panel">
+        <h2>Inmuebles arrendados (modelo 180)</h2>
+        <p class="ayuda">Cada arrendador con sus inmuebles: el 180 lleva la referencia catastral y la dirección de cada uno. En las facturas del
+          arrendador se indica el inmueble (si tiene uno solo, se toma ese).</p>
+        <table><thead><tr><th>Arrendador</th><th>Situación</th><th>Referencia catastral</th><th>Dirección</th><th>Municipio</th><th></th></tr></thead>
+        <tbody id="imLista"></tbody></table>
+        <div class="cab2" data-req="FISCAL:ESCRITURA">
+          <label>Arrendador <select id="imTercero"></select></label>
+          <label>Situación <select id="imSit"><option value="1">1 · España, salvo País Vasco y Navarra</option>
+            <option value="2">2 · País Vasco</option><option value="3">3 · Navarra</option><option value="4">4 · Sin referencia catastral</option></select></label>
+          <label>Referencia catastral <input id="imRc" maxlength="20"></label>
+          <label>Tipo de vía <input id="imTv" maxlength="5" placeholder="CL, AV…" style="width:6em"></label>
+          <label>Nombre de la vía <input id="imVia" maxlength="100"></label>
+          <label>Número <input id="imNum" maxlength="10" style="width:6em"></label>
+          <label>Escalera, piso, puerta <input id="imComp" maxlength="40"></label>
+          <label>Municipio <input id="imMun" maxlength="60"></label>
+          <label>Código INE del municipio <input id="imMuni" maxlength="5" inputmode="numeric" style="width:7em"></label>
+          <label>Código postal <input id="imCp" maxlength="5" inputmode="numeric" style="width:7em"></label>
+        </div>
+        <div class="acciones" data-req="FISCAL:ESCRITURA"><button class="btn" id="imGuardar" type="button">Guardar inmueble</button>
+          <button class="btn" id="imNuevo" type="button">Nuevo</button><span id="imMsg" role="status"></span></div>
+      </div>
+
+      <div class="panel">
         <h2>Prorrata</h2>
         <p class="ayuda">Porcentaje de deducción por año natural. Durante el año se aplica el provisional; en el último periodo se regulariza con el
           definitivo, que se calcula con las operaciones del año (redondeado a la unidad superior).</p>
@@ -716,6 +795,7 @@
           <th class="num">Op. totales</th></tr></thead><tbody id="prLista"></tbody></table>
         <div data-req="FISCAL:ESCRITURA" class="fila-acciones">
           <label>Año <input id="prAnio" type="number" min="2000" max="2100" style="width:7em"></label>
+          <label>Sector diferenciado <input id="prSector" inputmode="numeric" style="width:5em" placeholder="—"></label>
           <label>Provisional % <input id="prProv" inputmode="numeric" style="width:5em"></label>
           <label>Definitivo % <input id="prDef" inputmode="numeric" style="width:5em"></label>
           <label>Op. con derecho <input id="prCon" inputmode="decimal" style="width:9em"></label>
@@ -773,7 +853,8 @@
           <label>Valor de adquisición <input id="inValor" inputmode="decimal"></label>
           <label>Valor residual <input id="inResidual" inputmode="decimal" value="0"></label>
           <label>Método <select id="inMetodo"><option value="">El de la categoría</option><option value="LINEAL">Lineal</option>
-            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
+            <option value="DEGRESIVO">Degresivo (porcentaje constante)</option><option value="DIGITOS_DECRECIENTE">Suma de dígitos decreciente</option>
+            <option value="DIGITOS_CRECIENTE">Suma de dígitos creciente</option><option value="COEFICIENTE_TABLA">Coeficiente de tablas</option>
             <option value="NO_AMORTIZA">No se amortiza</option></select></label>
           <label>Vida útil (meses) <input id="inMeses" inputmode="numeric"></label>
           <label>Coeficiente anual (%) <input id="inCoef" inputmode="decimal" placeholder="Tablas; en degresivo, opcional"></label>
@@ -801,7 +882,8 @@
           <p id="inFiscalResumen" class="ayuda"></p>
           <div class="cab2" data-req="INMOVILIZADO:ESCRITURA">
             <label>Método fiscal <select id="inFMetodo"><option value="">Igual que la contable</option><option value="LINEAL">Lineal</option>
-              <option value="DEGRESIVO">Degresivo</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
+              <option value="DEGRESIVO">Degresivo</option><option value="DIGITOS_DECRECIENTE">Suma de dígitos decreciente</option>
+              <option value="DIGITOS_CRECIENTE">Suma de dígitos creciente</option><option value="COEFICIENTE_TABLA">Coeficiente máximo de tablas</option>
               <option value="LIBRE">Libertad de amortización</option></select></label>
             <label>Vida útil fiscal (meses) <input id="inFMeses" inputmode="numeric"></label>
             <label>Coeficiente fiscal (%) <input id="inFCoef" inputmode="decimal"></label>
@@ -816,10 +898,17 @@
               <label>Cuota soportada <input id="inBICuota" inputmode="decimal" placeholder="La de la factura"></label>
               <label>Prorrata del año de inicio (%) <input id="inBIProrrata" inputmode="numeric" placeholder="La del año"></label>
               <label>Año de inicio de utilización <input id="inBIAnio" inputmode="numeric" placeholder="El de inicio de amortización"></label>
+              <label>Sector diferenciado <input id="inBISector" inputmode="numeric" placeholder="Ninguno" style="width:6em"></label>
               <label><input type="checkbox" id="inBIInmueble"> Inmueble (10 años)</label>
               <label><input type="checkbox" id="inBIExenta"> Su venta será exenta o no sujeta</label>
             </div>
             <div class="fila-acciones"><button class="btn" id="inBIAlta" type="button">Registrar como bien de inversión</button></div>
+          </div>
+          <div id="inBIAfecta" class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA" hidden>
+            <label>Año <input id="inBIPAnio" inputmode="numeric" style="width:6em"></label>
+            <label>% de deducción <input id="inBIPPct" inputmode="numeric" style="width:5em" placeholder="vacío: quitar"></label>
+            <button class="btn" id="inBIPGuardar" type="button">Fijar el % del año</button>
+            <span class="ayuda">Cambio de afectación (o empresa sin prorrata): el % con el que se usa el bien en operaciones con derecho a deducción ese año.</span>
           </div>
           <div class="fila-acciones" data-req="INMOVILIZADO:ESCRITURA"><button class="btn" id="inBIQuitar" type="button" hidden>Quitar del registro</button></div>
         </div>
