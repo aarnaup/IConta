@@ -290,7 +290,10 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var apuntes = GeneradorAsientoFactura.Generar(libro, calculo, lineasPlantilla, resolutor,
             cmd.TerceroId, cmd.ActividadId, cmd.CanalId, tercero.Nombre, numeroCompleto, cmd.FechaExpedicion, plantilla.ConceptoModelo, criterioCaja,
-            empresa.RegimenIva == "RECARGO_EQUIVALENCIA");
+            empresa.RegimenIva == "RECARGO_EQUIVALENCIA",
+            // Minorista en recargo de equivalencia: recargo de sus adquisiciones intracomunitarias de bienes (no de servicios, clave I)
+            libro == LibroFactura.Recibidas && empresa.RegimenIva == "RECARGO_EQUIVALENCIA" && clave349 != "I"
+                ? tipos.Values.ToDictionary(t => t.TipoIvaId, t => t.Recargo ?? 0m) : null);
         if (apuntes.Count < 2)
             throw new ReglaContableException("La plantilla no generó apuntes suficientes para esta factura.");
 

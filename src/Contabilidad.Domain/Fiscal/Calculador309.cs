@@ -51,7 +51,8 @@ public static class Calculador309
         d.AIngresar = Math.Max(0, d.Resultado);
         if (lineas.Count == 0) d.Avisos.Add("No hay adquisiciones intracomunitarias ni operaciones con inversión del sujeto pasivo en el periodo: no hay que presentar el 309.");
         if (recargoEquivalencia && lineas.Any(l => l.Clase == "ADQUISICION"))
-            d.Avisos.Add("El recargo de equivalencia de las adquisiciones intracomunitarias no está en el asiento de la factura: contabilízalo como más coste (contra 4750) al pagar el 309.");
+            d.Avisos.Add("El IVA y el recargo de equivalencia de las adquisiciones intracomunitarias están en el asiento de cada factura (más coste " +
+                         "contra el IVA repercutido): al pagar el 309 se salda esa cuenta.");
         d.Avisos.Add("Claves descriptivas: VERIFICA la numeración de casillas con el formulario del 309 antes de presentar.");
     }
 }

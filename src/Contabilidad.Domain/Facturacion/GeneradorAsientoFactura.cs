@@ -10,7 +10,9 @@ namespace Contabilidad.Domain.Facturacion;
 ///  - Cuota autorrepercutida (adquisición intracomunitaria, inversión del sujeto pasivo): además de lo que diga la plantilla
 ///    (472 por la parte deducible, gasto por la no deducible), se abona por tipo a la cuenta del rol IVA_REPERCUTIDO (477).
 ///  - Criterio de caja: el impuesto de las líneas interiores va a los roles IVA_REPERCUTIDO_CAJA / IVA_SOPORTADO_CAJA (4779 / 4729).
-///  - Recargo de equivalencia (empresa minorista): el IVA repercutido en las ventas interiores no se ingresa y va a VENTAS.
+///  - Recargo de equivalencia (empresa minorista): el IVA repercutido en las ventas interiores no se ingresa y va a VENTAS. En sus
+///    adquisiciones intracomunitarias de bienes liquida además el recargo (art. 156 LIVA, en el 309): <paramref name="recargoAdquisicion"/>
+///    da el % por tipo; se carga a la cuenta de la cuota no deducible (o de la base) y se abona a la del IVA repercutido.
 /// </summary>
 public static class GeneradorAsientoFactura
 {
@@ -18,7 +20,7 @@ public static class GeneradorAsientoFactura
         LibroFactura libro, FacturaCalculada f, IEnumerable<LineaPlantilla> plantilla, ResolutorCuentas cuentas,
         long terceroId, long? actividadId, long canalFactura,
         string terceroNombre, string numeroFactura, DateOnly fecha, string? conceptoModelo, bool criterioCaja = false,
-        bool recargoEquivalencia = false)
+        bool recargoEquivalencia = false, IReadOnlyDictionary<long, decimal>? recargoAdquisicion = null)
     {
         var t = f.Totales;
         var invertir = t.Base < 0 || (t.Base == 0 && t.Total < 0);
@@ -103,6 +105,22 @@ public static class GeneradorAsientoFactura
             var autorrepercusion = new LineaPlantilla(short.MaxValue, null, "IVA_REPERCUTIDO", "HABER", "CUOTA", null, false, null, null);
             foreach (var row in f.Lineas.Where(r => OperacionesIva.Autorrepercutida(libro, r.TipoOperacion) && r.Cuota != 0))
                 Añade(autorrepercusion, cuentas.Resolver(null, "IVA_REPERCUTIDO", row.TipoIvaId), row.Cuota);
+
+            if (recargoAdquisicion is { Count: > 0 })
+            {
+                // Mismo gasto que la cuota no deducible (o que la base si la plantilla no la separa)
+                var gasto = plantilla.Where(x => x.Lado == "DEBE").OrderBy(x => x.OrigenImporte == "CUOTA_NO_DEDUCIBLE" ? 0 : x.OrigenImporte == "BASE" ? 1 : 2)
+                    .FirstOrDefault(x => x.OrigenImporte is "CUOTA_NO_DEDUCIBLE" or "BASE")
+                    ?? throw new ReglaContableException("La plantilla no tiene una línea de gasto (base) al debe para el recargo de equivalencia.");
+                var cargo = gasto with { UsaTercero = false };
+                foreach (var row in f.Lineas.Where(r => r.TipoOperacion == "INTRACOM_ADQUISICION"))
+                {
+                    if (!recargoAdquisicion.TryGetValue(row.TipoIvaId, out var pct) || pct == 0) continue;
+                    var recargo = Math.Round(row.Base * pct / 100m, 2, MidpointRounding.AwayFromZero);
+                    Añade(cargo, cuentas.Resolver(gasto.CuentaId, gasto.CuentaRol, null), recargo);
+                    Añade(autorrepercusion, cuentas.Resolver(null, "IVA_REPERCUTIDO", row.TipoIvaId), recargo);
+                }
+            }
         }
 
         return apuntes;
