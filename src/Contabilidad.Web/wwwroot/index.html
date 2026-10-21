@@ -592,6 +592,10 @@
             <label id="mfFIbanL">IBAN (domiciliación o devolución) <input id="mfFIban" maxlength="34" placeholder="ES00 0000 0000 0000 0000 0000"></label>
             <label id="mfFTelL">Teléfono de contacto <input id="mfFTel" maxlength="15"></label>
             <label id="mfFConL">Persona de contacto <input id="mfFCon" maxlength="40"></label>
+            <label id="mfFSvpL" hidden>Siglas de la vía (CL, AV…) <input id="mfFSvp" maxlength="2" value="CL" style="width:4em"></label>
+            <label id="mfFMunL" hidden>Código del municipio <input id="mfFMun" maxlength="5" style="width:6em"></label>
+            <label id="mfFPagoL" hidden>Forma de pago (ATC) <select id="mfFPago"><option value="5">Pago telemático</option><option value="4">Domiciliación</option>
+              <option value="2">Adeudo en cuenta</option><option value="1">Efectivo</option><option value="3">Pago fraccionado</option></select></label>
             <label id="mfFExoL">Exonerado del 390 <select id="mfFExo"><option value="false">No (presento el 390)</option><option value="true">Sí (página 4)</option></select></label>
             <label>&nbsp;<button class="btn primario" id="mfFDescargar" type="button">Descargar fichero</button></label>
           </div>

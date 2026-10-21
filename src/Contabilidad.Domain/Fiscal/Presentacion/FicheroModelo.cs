@@ -17,6 +17,13 @@ public sealed class FicheroAeatCmd
     public string? ActividadIae { get; set; }
     /// <summary>Descripción de la actividad principal (datos estadísticos del 390).</summary>
     public string? ActividadNombre { get; set; }
+    // ---- XML de la ATC (420 y 425) ----
+    /// <summary>Siglas de la vía pública del domicilio (CL, AV…).</summary>
+    public string? SiglasVia { get; set; }
+    /// <summary>Código del municipio del domicilio.</summary>
+    public string? CodigoMunicipio { get; set; }
+    /// <summary>Forma de pago del ingreso en la ATC: 1 efectivo, 2 adeudo en cuenta, 3 pago fraccionado, 4 domiciliación, 5 pago telemático.</summary>
+    public string? FormaPagoAtc { get; set; }
 }
 
 /// <summary>Registro de detalle (un tercero del 347, un operador del 349, un perceptor del 190…).</summary>

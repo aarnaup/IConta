@@ -337,6 +337,37 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             return;
         }
 
+        if (anual && igic)
+        {
+            // 425 con la numeración del modelo de la ATC: necesita además los 420 presentados del año
+            var mid420 = await ModeloIdAsync(cn, tx, ModelosFiscales.Obtener("420"), ct);
+            var autoliq420 = (await cn.QueryAsync<Resumen303Fila>(new CommandDefinition("""
+                SELECT d.periodo,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'RES'), 0) AS resultado,
+                       COALESCE(d.a_ingresar, 0) AS a_ingresar, COALESCE(d.a_devolver, 0) AS a_devolver, COALESCE(d.a_compensar, 0) AS a_compensar,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'PEND_ANT'), 0) AS pendiente_inicial,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'COMP'), 0) AS aplicada,
+                       COALESCE((SELECT c.importe FROM fiscal.declaracion_casilla c WHERE c.declaracion_id = d.id AND c.casilla = 'PEND_SIG'), 0) AS pendiente_posterior
+                FROM fiscal.declaracion d
+                WHERE d.empresa_id = @empresaId AND d.modelo_id = @mid420 AND d.anio = @anio AND d.estado = 'PRESENTADA'
+                  AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                        WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+                ORDER BY d.fecha_inicio
+                """, new { empresaId, mid420, anio = (short)p.Anio }, tx, cancellationToken: ct)))
+                .Select(a => new Resumen303(a.Periodo, a.Resultado, a.AIngresar, a.ADevolver, a.ACompensar, a.PendienteInicial, a.Aplicada,
+                                            a.PendientePosterior)).ToList();
+            decimal cuotaAnualSimplificado = 0;
+            var grupos425 = grupos;
+            if (empresa.RegimenIva == "SIMPLIFICADO")
+            {
+                grupos425 = grupos.Where(g => g.Libro == "EMITIDAS" || g.EsBienInversion || g.TipoOperacion == "INVERSION_SUJETO_PASIVO").ToList();
+                cuotaAnualSimplificado = CalculadorModulos.CuotaAnualIva(await ModulosRepositorio.DelAnioAsync(cn, tx, empresaId, p.Anio, ct));
+            }
+            Calculador425.Calcular(new Entrada425(grupos425, regBienes, regularizacion, autoliq420, cuotaAnualSimplificado,
+                empresa.RegimenIva == "COMERCIANTE_MINORISTA"), d);
+            return;
+        }
+
         // Régimen simplificado: lo devengado por las ventas interiores y lo soportado en operaciones corrientes van en los módulos;
         // por el régimen general quedan las adquisiciones intracomunitarias, la inversión del sujeto pasivo y los bienes de inversión
         decimal cuotaSimplificado = 0;

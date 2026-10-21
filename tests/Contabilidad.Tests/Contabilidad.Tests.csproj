@@ -17,4 +17,7 @@
     <!-- Esquemas oficiales ISO 20022 para validar los ficheros SEPA generados -->
     <None Include="Esquemas\*.xsd" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="Esquemas\*.xsd" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

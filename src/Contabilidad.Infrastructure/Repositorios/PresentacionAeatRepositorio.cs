@@ -40,6 +40,7 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         string? nifDesarrollador, CancellationToken ct)
     {
         var v = await fiscal.ObtenerAsync(empresaId, declaracionId, ct);
+        if (v.Modelo is "420" or "425") return await FicheroAtcAsync(empresaId, v, cmd, ct);
         if (!FicheroModelo.Modelos.Contains(v.Modelo))
             throw new ReglaContableException($"El modelo {v.Modelo} no tiene fichero de presentación todavía.",
                 $"Disponible para {string.Join(", ", FicheroModelo.Modelos)}.");
@@ -94,6 +95,52 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             v.Casillas, v.Resultado, v.ADevolver, anterior?.Trim(), registros,
             CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347);
         return FicheroModelo.Generar(d, cmd, nifDesarrollador);
+    }
+
+    private sealed class DomicilioFila
+    {
+        public string Nif { get; set; } = "";
+        public string Nombre { get; set; } = "";
+        public string? Direccion { get; set; }
+        public string? CodigoPostal { get; set; }
+        public string? Provincia { get; set; }
+        public string? Telefono { get; set; }
+        public string? Email { get; set; }
+    }
+
+    /// <summary>XML del 420 o del 425 para el programa de ayuda de la Agencia Tributaria Canaria.</summary>
+    private async Task<(byte[] Contenido, string Nombre)> FicheroAtcAsync(long empresaId, DeclaracionVista v, FicheroAeatCmd cmd, CancellationToken ct)
+    {
+        if (v.Estado is not ("CALCULADA" or "PRESENTADA"))
+            throw new ReglaContableException("Guarda (calcula) la declaración antes de descargar el fichero.");
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var e = await cn.QuerySingleAsync<DomicilioFila>(new CommandDefinition("""
+            SELECT n.numero AS nif, e.nombre, n.direccion, n.codigo_postal, pr.codigo AS provincia, n.telefono, n.email
+            FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
+            WHERE e.id = @empresaId
+            """, new { empresaId }, cancellationToken: ct));
+        string? anterior = null;
+        if (v.TipoDeclaracion == "COMPLEMENTARIA")
+            anterior = await cn.ExecuteScalarAsync<string?>(new CommandDefinition("""
+                SELECT d.justificante FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
+                WHERE d.empresa_id = @empresaId AND m.codigo = @modelo AND d.anio = @anio AND d.periodo = @periodo
+                  AND d.estado = 'PRESENTADA' AND d.numero_presentacion < @numero
+                ORDER BY d.numero_presentacion DESC LIMIT 1
+                """, new { empresaId, modelo = v.Modelo, anio = (short)v.Anio, periodo = v.Periodo, numero = v.NumeroPresentacion }, cancellationToken: ct));
+        var cp = (e.CodigoPostal ?? "").Trim();
+        var datos = new FicheroAtcDatos
+        {
+            Nif = NifEspanol(e.Nif), Nombre = e.Nombre, SiglasVia = string.IsNullOrWhiteSpace(cmd.SiglasVia) ? "CL" : cmd.SiglasVia.Trim(),
+            NombreVia = e.Direccion ?? "", Provincia = e.Provincia ?? (cp.Length >= 2 ? cp[..2] : ""), Municipio = (cmd.CodigoMunicipio ?? "").Trim(),
+            CodigoPostal = cp, Telefono = cmd.Telefono ?? e.Telefono, Email = cmd.Email ?? e.Email,
+            FormaPago = string.IsNullOrWhiteSpace(cmd.FormaPagoAtc) ? "5" : cmd.FormaPagoAtc.Trim(), Iban = cmd.Iban, JustificanteAnterior = anterior,
+        };
+        if (datos.FormaPago is not ("1" or "2" or "3" or "4" or "5"))
+            throw new ReglaContableException("Forma de pago no válida: 1 efectivo, 2 adeudo en cuenta, 3 pago fraccionado, 4 domiciliación o 5 pago telemático.");
+        var doc = v.Modelo == "420"
+            ? XmlAtc.Modelo420(v.Anio, v.Periodo, v.TipoDeclaracion, v.Casillas, v.Resultado, v.ADevolver > 0, datos)
+            : XmlAtc.Modelo425(v.Anio, v.Casillas, DateOnly.FromDateTime(DateTime.Today), datos);
+        return (XmlAtc.Bytes(doc), $"{v.Modelo}_{datos.Nif}_{v.Anio}_{v.Periodo}.xml");
     }
 
     private static string NifEspanol(string nif)

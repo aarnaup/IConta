@@ -266,6 +266,11 @@ public static class CalculadorImpuestoIndirecto
             Add("71", "Resultado de la liquidación (69 − 70)", resultado);
         }
 
+        // IGIC: la casilla del modelo 420 de la ATC delante de la descripción (las claves internas no cambian)
+        if (igic)
+            for (var i = 0; i < d.Casillas.Count; i++)
+                if (Presentacion.XmlAtc.Casilla420(d.Casillas[i].Clave) is { } n && !d.Casillas[i].Descripcion.StartsWith('['))
+                    d.Casillas[i] = d.Casillas[i] with { Descripcion = $"[{n}] {d.Casillas[i].Descripcion}" };
         d.Resultado = resultado;
         if (resultado >= 0) d.AIngresar = resultado;
         else if (e.SolicitaDevolucion && e.EsUltimoPeriodo) d.ADevolver = -resultado;

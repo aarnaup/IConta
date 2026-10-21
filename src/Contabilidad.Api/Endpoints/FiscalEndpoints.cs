@@ -70,7 +70,7 @@ public static class FiscalEndpoints
             IConfiguration cfg, CancellationToken ct) =>
         {
             var (contenido, nombre) = await r.FicheroAsync(empresaId, id, cmd, cfg["Aeat:NifDesarrollador"], ct);
-            return Results.File(contenido, "text/plain; charset=iso-8859-1", nombre);
+            return Results.File(contenido, nombre.EndsWith(".xml", StringComparison.Ordinal) ? "application/xml" : "text/plain; charset=iso-8859-1", nombre);
         }).Requiere(Nivel.Lectura, Modulo.Fiscal);
 
         // ---- Módulos (estimación objetiva del IRPF y régimen simplificado del IVA) de cada año ----

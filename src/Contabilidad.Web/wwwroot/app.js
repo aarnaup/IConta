@@ -1393,13 +1393,18 @@ function muestraDeclaracion(v) {
   $('#mfRectBody').innerHTML = (rect || []).map(r => `<tr><td>${esc(r.nifComunitario)}</td><td>${esc(r.nombre)}</td><td>${esc(r.clave)}</td>
       <td>${esc(periodoTxt(r.periodo))} ${r.anio}</td><td class="num">${fmt(r.baseAnterior)}</td><td class="num">${fmt(r.baseRectificada)}</td></tr>`).join('');
   // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
-  const conFichero = !!v.id && ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo);
+  // 420/425: XML para el programa de ayuda de la Agencia Tributaria Canaria
+  const atc = ['420', '425'].includes(v.modelo);
+  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo));
   $('#mfFichero').hidden = !conFichero;
+  $('#mfFichero').querySelector('summary').textContent = atc ? 'Fichero XML para la Agencia Tributaria Canaria' : 'Fichero para la Agencia Tributaria';
   if (conFichero) {
     const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
     $('#mfFDomL').hidden = !autoliq || v.resultado <= 0;
-    $('#mfFIbanL').hidden = !autoliq;
-    $('#mfFTelL').hidden = $('#mfFConL').hidden = autoliq;
+    $('#mfFIbanL').hidden = !autoliq && v.modelo !== '420';
+    $('#mfFTelL').hidden = autoliq; $('#mfFConL').hidden = autoliq || atc;
+    $('#mfFSvpL').hidden = $('#mfFMunL').hidden = !atc;
+    $('#mfFPagoL').hidden = v.modelo !== '420' || v.resultado <= 0;
     $('#mfFExoL').hidden = !(v.modelo === '303' && ['4T', '12'].includes(v.periodo));
     msg($('#mfFMsg'), '', 'ayuda');
   }
@@ -1427,7 +1432,8 @@ $('#mfFDescargar').onclick = async () => {
     const nombre = await descargaPost(urlE(`/fiscal/declaraciones/${v.id}/fichero`), {
       domiciliar: $('#mfFDom').value === 'true' && !$('#mfFDomL').hidden, iban: $('#mfFIban').value || null,
       telefono: $('#mfFTel').value || null, contacto: $('#mfFCon').value || null,
-      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden }, 'modelo.txt');
+      exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden,
+      siglasVia: $('#mfFSvp').value || null, codigoMunicipio: $('#mfFMun').value || null, formaPagoAtc: $('#mfFPago').value }, 'modelo.txt');
     msg($('#mfFMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#mfFMsg'), e.message, 'ayuda err-texto'); }
 };
