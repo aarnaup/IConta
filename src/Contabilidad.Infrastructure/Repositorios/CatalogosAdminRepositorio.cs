@@ -89,6 +89,8 @@ public sealed class EpigrafeDto
     public string Codigo { get; set; } = "";
     public string Descripcion { get; set; } = "";
     public bool EsProfesional { get; set; }
+    /// <summary>Clave de actividad de la AEAT (303 y 390): A01 arrendamiento, A02 ganadería independiente, A03 empresarial, A04 artística, A05 profesional.</summary>
+    public string? ClaveActividad { get; set; }
 }
 
 public sealed class ModeloFiscalAdminDto
@@ -339,7 +341,7 @@ public sealed class CatalogosAdminRepositorio(IConexionFactory conexiones) : ICa
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         return (await cn.QueryAsync<EpigrafeDto>(new CommandDefinition("""
-            SELECT id, seccion, codigo, descripcion, es_profesional FROM cat.epigrafe_iae
+            SELECT id, seccion, codigo, descripcion, es_profesional, clave_actividad FROM cat.epigrafe_iae
             WHERE @q::text IS NULL OR codigo LIKE @q || '%' OR descripcion ILIKE '%' || @q || '%'
             ORDER BY seccion, codigo LIMIT 300
             """, new { q = string.IsNullOrWhiteSpace(q) ? null : q.Trim() }, cancellationToken: ct))).AsList();
@@ -350,12 +352,16 @@ public sealed class CatalogosAdminRepositorio(IConexionFactory conexiones) : ICa
         if (e.Seccion is < 1 or > 3) throw new ReglaContableException("La sección del IAE es 1 (empresarial), 2 (profesional) o 3 (artística).");
         var codigo = Texto(e.Codigo, "El código", 10);
         var desc = Texto(e.Descripcion, "La descripción", 300);
+        var clave = string.IsNullOrWhiteSpace(e.ClaveActividad) ? null : e.ClaveActividad.Trim().ToUpperInvariant();
+        if (clave is not null and not ("A01" or "A02" or "A03" or "A04" or "A05"))
+            throw new ReglaContableException("La clave de actividad es A01, A02, A03, A04 o A05.");
         await using var cn = await conexiones.AbrirAsync(ct);
         return await UnicoAsync(() => cn.ExecuteScalarAsync<int>(new CommandDefinition("""
-            INSERT INTO cat.epigrafe_iae (seccion, codigo, descripcion, es_profesional) VALUES (@s, @codigo, @desc, @prof)
-            ON CONFLICT (seccion, codigo) DO UPDATE SET descripcion = EXCLUDED.descripcion, es_profesional = EXCLUDED.es_profesional
+            INSERT INTO cat.epigrafe_iae (seccion, codigo, descripcion, es_profesional, clave_actividad) VALUES (@s, @codigo, @desc, @prof, @clave)
+            ON CONFLICT (seccion, codigo) DO UPDATE SET descripcion = EXCLUDED.descripcion, es_profesional = EXCLUDED.es_profesional,
+                clave_actividad = EXCLUDED.clave_actividad
             RETURNING id
-            """, new { s = e.Seccion, codigo, desc, prof = e.EsProfesional }, cancellationToken: ct)), "El epígrafe ya existe.");
+            """, new { s = e.Seccion, codigo, desc, prof = e.EsProfesional, clave }, cancellationToken: ct)), "El epígrafe ya existe.");
     }
 
     public async Task<IReadOnlyList<ModeloFiscalAdminDto>> ModelosFiscalesAsync(CancellationToken ct)
