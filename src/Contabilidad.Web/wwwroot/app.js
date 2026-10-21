@@ -63,8 +63,21 @@ function vista(id) {
   $('#usuarioNombre').textContent = S.user ? S.user.nombre : '';
   $('#btnCambiar').hidden = !(id === 'app' || id === 'admin');
   $('#btnCambiar').textContent = id === 'admin' ? 'Volver a las empresas' : 'Cambiar empresa';
-  $('#contexto').textContent = id === 'app' ? `${S.empresa.nombre} · Ejercicio ${S.ejercicio.codigo}` : id === 'admin' ? 'Administración' : '';
+  $('#contexto').textContent = id === 'app' ? S.empresa.nombre : id === 'admin' ? 'Administración' : '';
+  // Ejercicio de trabajo en la cabecera: todo lo que se consulta o se graba va referido a él
+  $('#ejCabL').hidden = id !== 'app';
+  if (id === 'app')
+    $('#ejCab').innerHTML = (S.listaEjercicios || []).map(x => `<option value="${x.id}" ${x.id === S.ejercicio.id ? 'selected' : ''}>${esc(x.codigo)}` +
+      `${x.estado === 'ABIERTO' ? '' : ' (' + esc(x.estado.toLowerCase()) + ')'}</option>`).join('');
 }
+
+$('#ejCab').addEventListener('change', async e => {
+  const nuevo = (S.listaEjercicios || []).find(x => String(x.id) === e.target.value);
+  if (!nuevo || nuevo.id === S.ejercicio.id) return;
+  const tab = ($$('#navApp button').find(b => b.getAttribute('aria-pressed') === 'true') || {}).dataset?.tab;
+  try { await entrarEmpresa(S.empresa, nuevo, tab); }
+  catch (err) { e.target.value = S.ejercicio.id; alert(err.message); }
+});
 
 $('#btnSalir').onclick = () => salir('');
 $('#btnCambiar').onclick = () => irSelector().catch(e => msg($('#selMsg'), e.message, 'ayuda err-texto'));
@@ -116,9 +129,11 @@ $('#listaEmpresas').addEventListener('click', async e => {
   try {
     const ejercicios = await api(`/api/empresas/${empresa.id}/ejercicios`);
     S.empresaElegida = empresa; S.listaEjercicios = ejercicios;
+    let ultimo = null;
+    try { ultimo = localStorage.getItem('iconta.ejercicio.' + empresa.id); } catch { /* sin almacenamiento */ }
     $('#tituloEjercicio').textContent = `${empresa.nombre}: ¿qué ejercicio?`;
     $('#listaEjercicios').innerHTML = ejercicios.length
-      ? ejercicios.map(x => `<button type="button" data-id="${x.id}"><span>Ejercicio ${esc(x.codigo)}${x.esPartido ? ' (partido)' : ''}<br><small>${fechaES(x.fechaInicio)} – ${fechaES(x.fechaFin)}</small></span>
+      ? ejercicios.map(x => `<button type="button" data-id="${x.id}"><span>Ejercicio ${esc(x.codigo)}${x.esPartido ? ' (partido)' : ''}${String(x.id) === ultimo ? ' · <small>último usado</small>' : ''}<br><small>${fechaES(x.fechaInicio)} – ${fechaES(x.fechaFin)}</small></span>
           <small class="${x.estado === 'ABIERTO' ? '' : 'estado-cerrado'}">${esc(x.estado.toLowerCase())}</small></button>`).join('')
       : '<p class="vacio">Esta empresa todavía no tiene ejercicios. Pide a tu gestor que cree uno.</p>';
     $('#paso-empresa').hidden = true; $('#paso-ejercicio').hidden = false;
@@ -153,8 +168,9 @@ function permitido(req) {
 }
 const aplicaPermisos = () => $$('#vista-app [data-req]').forEach(el => el.hidden = !permitido(el.dataset.req));
 
-async function entrarEmpresa(empresa, ejercicio) {
+async function entrarEmpresa(empresa, ejercicio, tab) {
   S.empresa = empresa; S.ejercicio = ejercicio;
+  try { localStorage.setItem('iconta.ejercicio.' + empresa.id, String(ejercicio.id)); } catch { /* sin almacenamiento */ }
   S.acceso = await api(urlE('/mi-acceso'));
   aplicaPermisos();
 
@@ -166,6 +182,9 @@ async function entrarEmpresa(empresa, ejercicio) {
   for (const id of ['#fecha', '#fFecha']) {
     $(id).min = ejercicio.fechaInicio; $(id).max = ejercicio.fechaFin; $(id).value = dentro(hoy());
   }
+  // Años y fechas por defecto de cada pestaña: los del ejercicio (se rellenan al abrirla)
+  for (const id of ['#noFecha', '#anDesde', '#anHasta', '#lrAnio', '#siiAnio', '#moAnio', '#ccAnio', '#prAnio', '#prRegAnio']) $(id).value = '';
+  $('#mfAnio').value = dentro(hoy()).slice(0, 4);
 
   const pide = [];
   if (permitido('CONTABILIDAD:LECTURA') || permitido('FACTURACION:LECTURA'))
@@ -187,7 +206,7 @@ async function entrarEmpresa(empresa, ejercicio) {
   pintaLineas(); recalcula();
 
   vista('app');
-  const primera = $$('#navApp button').find(b => !b.hidden);
+  const primera = $$('#navApp button').find(b => !b.hidden && (!tab || b.dataset.tab === tab)) || $$('#navApp button').find(b => !b.hidden);
   if (primera) abreTab(primera.dataset.tab);
   else $$('#vista-app section').forEach(s => s.hidden = true);
 }
