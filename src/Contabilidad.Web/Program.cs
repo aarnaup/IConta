@@ -19,8 +19,10 @@ try
         apiOrigen = u.GetLeftPart(UriPartial.Authority);
     }
     var configJs = $"window.ICONTA_CONFIG = {JsonSerializer.Serialize(new { api = apiUrl })};\n";
+    // En desarrollo, la recarga automática del navegador (Visual Studio / dotnet watch) abre un WebSocket a un puerto local aleatorio
+    var recarga = builder.Environment.IsDevelopment() ? " ws://localhost:* wss://localhost:*" : "";
     var csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
-              $"connect-src 'self'{(apiOrigen is null ? "" : " " + apiOrigen)}; frame-ancestors 'none'";
+              $"connect-src 'self'{(apiOrigen is null ? "" : " " + apiOrigen)}{recarga}; frame-ancestors 'none'";
 
     var app = builder.Build();
     app.UseSerilogRequestLogging();
