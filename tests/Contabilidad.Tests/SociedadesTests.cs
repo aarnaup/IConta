@@ -98,6 +98,37 @@ public class SociedadesTests
     }
 
     [Fact]
+    public void Pago_fraccionado_de_microempresa_con_dos_porcentajes()
+    {
+        // 2026: 19 % los primeros 50.000 € y 21 % el resto → 5/7: 13 % y 15 %
+        var d = new DeclaracionCalculada();
+        CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", new("MICRO"), 2026, 0, 80_000m, 0, 0, 0, 0), d);
+        Assert.Equal(50_000m, d["20"]);
+        Assert.Equal(13m, d["21"]);
+        Assert.Equal(30_000m, d["23"]);
+        Assert.Equal(15m, d["24"]);
+        Assert.Equal(6_500m + 4_500m, d["26"]);
+        Assert.Equal(11_000m, d["34"]);
+        Assert.Null(d.Casillas.FirstOrDefault(c => c.Clave == "16"));
+    }
+
+    [Fact]
+    public void Gran_empresa_con_19_veinteavos_del_tipo_y_pago_minimo()
+    {
+        Assert.Equal(24m, CalculadorSociedades.PorcentajeSobre(25m, 12_000_000m));
+        Assert.Equal(17m, CalculadorSociedades.PorcentajeSobre(25m, 9_999_999m));
+        // Base 1.000.000 con 300.000 de retenciones: 24 % = 240.000 − 300.000 → 0; mínimo 23 % = 230.000
+        var d = new DeclaracionCalculada();
+        CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", new("GENERAL"), 2026, 0, 1_000_000m, 0, 0, 300_000m, 0, 12_000_000m), d);
+        Assert.Equal(24m, d["17"]);
+        Assert.Equal(0m, d["32"]);
+        Assert.Equal(230_000m, d["33"]);
+        Assert.Equal(230_000m, d["34"]);
+        Assert.Throws<ReglaContableException>(() => CalculadorSociedades.Calcular202(
+            new Entrada202("ART_40_2", new("GENERAL"), 2026, 1m, 0, 0, 0, 0, 0, 12_000_000m), new DeclaracionCalculada()));
+    }
+
+    [Fact]
     public void Plazos_del_200_con_ejercicio_partido_y_del_202()
     {
         var p = new PeriodoFiscal(2025, "0A", new DateOnly(2025, 7, 1), new DateOnly(2026, 6, 30));

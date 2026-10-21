@@ -115,7 +115,11 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         CancellationToken ct)
     {
         var f = await cn.QuerySingleOrDefaultAsync<SociedadesFila>(new CommandDefinition("""
-            SELECT e.id AS ejercicio_id, em.is_tipo, em.is_porcentaje, COALESCE(i.incn, 0) AS incn
+            SELECT e.id AS ejercicio_id, em.is_tipo, em.is_porcentaje,
+                   -- cifra de negocios de los doce meses anteriores: la del periodo impositivo anterior o, si no hay, la del actual
+                   COALESCE((SELECT a.incn FROM fiscal.impuesto_sociedades a JOIN core.ejercicio ea ON ea.id = a.ejercicio_id
+                             WHERE a.empresa_id = e.empresa_id AND ea.fecha_fin < e.fecha_inicio AND a.incn > 0
+                             ORDER BY ea.fecha_fin DESC LIMIT 1), i.incn, 0) AS incn
             FROM core.ejercicio e JOIN core.empresa em ON em.id = e.empresa_id
             LEFT JOIN fiscal.impuesto_sociedades i ON i.empresa_id = e.empresa_id AND i.ejercicio_id = e.id
             WHERE e.empresa_id = @empresaId AND e.fecha_inicio = @inicio

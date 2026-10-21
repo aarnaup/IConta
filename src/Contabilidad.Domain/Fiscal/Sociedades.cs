@@ -50,7 +50,9 @@ public sealed record Entrada202(
     /// <summary>Art. 40.2: cuota líquida menos retenciones del último periodo declarado.</summary>
     decimal BaseUltimoPeriodo,
     /// <summary>Art. 40.3: resultado y ajustes desde el inicio del periodo impositivo hasta el día anterior al plazo.</summary>
-    decimal BaseAcumulada, decimal BinsDisponibles, decimal Bonificaciones, decimal Retenciones, decimal PagosAnteriores);
+    decimal BaseAcumulada, decimal BinsDisponibles, decimal Bonificaciones, decimal Retenciones, decimal PagosAnteriores,
+    /// <summary>Importe neto de la cifra de negocios de los doce meses anteriores al inicio del periodo impositivo.</summary>
+    decimal Incn = 0);
 
 /// <summary>
 /// Impuesto sobre Sociedades: liquidación anual (200) y pagos fraccionados (202). Tipos de gravamen de la Ley 27/2014 con los
@@ -166,23 +168,58 @@ public static class CalculadorSociedades
     /// <summary>Porcentaje del pago fraccionado del art. 40.3: 5/7 del tipo de gravamen, redondeado por defecto.</summary>
     public static decimal Porcentaje403(TipoGravamenIs t, int anio) => Math.Floor(Tipos(t, anio).Resto * 5m / 7m);
 
+    /// <summary>Cifra de negocios desde la que el 40.3 es obligatorio, con porcentaje de 19/20 del tipo y pago mínimo.</summary>
+    public const decimal IncnGranEmpresa = 10_000_000m;
+
+    /// <summary>Pago mínimo de las grandes empresas (DA 14ª LIS): 23 % del resultado positivo del periodo.</summary>
+    public const decimal PorcentajeMinimo = 23m;
+
+    /// <summary>Porcentaje sobre un tipo: 5/7 redondeado por defecto o, con 10 M€ de cifra de negocios o más, 19/20 redondeado por exceso.</summary>
+    public static decimal PorcentajeSobre(decimal tipo, decimal incn) => incn >= IncnGranEmpresa ? Math.Ceiling(tipo * 19m / 20m) : Math.Floor(tipo * 5m / 7m);
+
     public static void Calcular202(Entrada202 e, DeclaracionCalculada d)
     {
         void Add(string k, string desc, decimal v) => d.Casillas.Add(new Casilla(k, desc, R(v)));
         decimal pago;
         if (e.Modalidad == "ART_40_3")
         {
-            // Página 1: resultado contable y base imponible previa; página 2: caso general con un solo porcentaje
+            var grande = e.Incn >= IncnGranEmpresa;
+            // Página 1: resultado contable y base imponible previa
             Add("04", "Resultado contable del periodo", e.BaseAcumulada);
             Add("13", "Base imponible previa", e.BaseAcumulada);
             var comp = e.BaseAcumulada > 0 ? Math.Min(e.BinsDisponibles, e.BaseAcumulada) : 0;
             if (comp != 0) Add("14", "Compensación de bases negativas de ejercicios anteriores", comp);
-            var bi = e.BaseAcumulada - comp;
-            var pct = Porcentaje403(e.Tipo, e.AnioEjercicio);
-            Add("16", "Base del pago fraccionado", Math.Max(0, bi));
-            Add("17", "Porcentaje (5/7 del tipo de gravamen)", pct);
-            var cuota = bi > 0 ? R(bi * pct / 100m) : 0;
-            Add("18", "Resultado previo", cuota);
+            var bi = Math.Max(0, e.BaseAcumulada - comp);
+            var (t1, resto) = Tipos(e.Tipo, e.AnioEjercicio);
+            decimal cuota;
+            if (t1 == resto)
+            {
+                // B1: caso general, un solo porcentaje
+                var pct = PorcentajeSobre(resto, e.Incn);
+                Add("16", "Base del pago fraccionado", bi);
+                Add("17", grande ? "Porcentaje (19/20 del tipo de gravamen)" : "Porcentaje (5/7 del tipo de gravamen)", pct);
+                cuota = R(bi * pct / 100m);
+                Add("18", "Resultado previo", cuota);
+            }
+            else
+            {
+                // B2: más de un porcentaje (microempresas: primeros 50.000 € a un tipo y el resto a otro)
+                var tramo1 = Math.Min(bi, 50_000m);
+                var (p1, p2) = (PorcentajeSobre(t1, e.Incn), PorcentajeSobre(resto, e.Incn));
+                Add("19", "Base del pago fraccionado", bi);
+                Add("20", "Base a tipo 1", tramo1);
+                Add("21", "Porcentaje sobre el tipo 1", p1);
+                var c1 = R(tramo1 * p1 / 100m);
+                Add("22", "Importe del pago fraccionado al tipo 1", c1);
+                Add("23", "Base a tipo 2", bi - tramo1);
+                Add("24", "Porcentaje sobre el tipo 2", p2);
+                var c2 = R((bi - tramo1) * p2 / 100m);
+                Add("25", "Importe del pago fraccionado al tipo 2", c2);
+                cuota = c1 + c2;
+                Add("26", "Resultado previo", cuota);
+                d.Avisos.Add("Microempresa: los primeros 50.000 € de la base van al porcentaje del tipo reducido (B2). VERIFICA si el tramo debe " +
+                             "reducirse en proporción a los meses transcurridos.");
+            }
             if (e.Bonificaciones != 0) Add("27", "Bonificaciones del periodo", e.Bonificaciones);
             if (e.Retenciones != 0) Add("28", "Retenciones e ingresos a cuenta del periodo", e.Retenciones);
             Add("29", "Volumen de operaciones en territorio común (%)", 100m);
@@ -190,8 +227,18 @@ public static class CalculadorSociedades
             pago = cuota - e.Bonificaciones - e.Retenciones - e.PagosAnteriores;
             var res = Math.Max(0, R(pago));
             Add("32", "Resultado", res);
-            Add("34", "Cantidad a ingresar", res);
-            d.Resultado = res;
+            var aIngresar = res;
+            if (grande)
+            {
+                // Pago mínimo: 23 % del resultado positivo menos las bases negativas compensadas y los pagos anteriores
+                var minimo = Math.Max(0, R(Math.Max(0, e.BaseAcumulada - comp) * PorcentajeMinimo / 100m) - e.PagosAnteriores);
+                Add("33", "Mínimo a ingresar (23 % del resultado contable positivo)", minimo);
+                aIngresar = Math.Max(res, minimo);
+                d.Avisos.Add("Cifra de negocios de 10 M€ o más: porcentaje de 19/20 del tipo y pago mínimo del 23 % (25 % en las entidades al 30 %). " +
+                             "VERIFICA la base del pago mínimo en el formulario.");
+            }
+            Add("34", "Cantidad a ingresar", aIngresar);
+            d.Resultado = aIngresar;
         }
         else
         {
@@ -203,7 +250,8 @@ public static class CalculadorSociedades
         }
         d.AIngresar = d.Resultado;
         if (pago < 0) d.Avisos.Add("El cálculo sale negativo: no hay pago fraccionado (se presenta sin ingreso).");
-        d.Avisos.Add("Con un importe neto de la cifra de negocios de 10 M€ o más la modalidad del art. 40.3 es obligatoria y tiene un porcentaje " +
-                     "y un pago mínimo distintos: no se calculan aquí.");
+        if (e.Modalidad != "ART_40_3" && e.Incn >= IncnGranEmpresa)
+            throw new ReglaContableException("Con una cifra de negocios de 10 M€ o más el pago fraccionado se calcula por el art. 40.3.",
+                "Cambia la modalidad del 202 en la configuración fiscal.");
     }
 }

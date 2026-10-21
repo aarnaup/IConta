@@ -549,7 +549,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             throw new ReglaContableException("El periodo impositivo empieza el mismo mes del plazo: no hay pago fraccionado en este periodo.");
         d.FechaInicio = ej.FechaInicio; d.FechaFin = finBase; d.EjercicioId = ej.Id;
         var tipo = new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje);
-        if (empresa.IsModalidad202 == "ART_40_3")
+        // Cifra de negocios de los doce meses anteriores: la del periodo impositivo anterior (o la indicada en el actual si no hay)
+        var incn = await cn.ExecuteScalarAsync<decimal?>(new CommandDefinition("""
+            SELECT i.incn FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
+            WHERE i.empresa_id = @empresaId AND e.fecha_fin < @inicio AND i.incn > 0 ORDER BY e.fecha_fin DESC LIMIT 1
+            """, new { empresaId, inicio = ej.FechaInicio }, tx, cancellationToken: ct))
+            ?? await cn.ExecuteScalarAsync<decimal?>(new CommandDefinition(
+                "SELECT incn FROM fiscal.impuesto_sociedades WHERE empresa_id = @empresaId AND ejercicio_id = @id", new { empresaId, id = ej.Id }, tx,
+                cancellationToken: ct)) ?? 0;
+        if (empresa.IsModalidad202 == "ART_40_3" || incn >= CalculadorSociedades.IncnGranEmpresa)
         {
             var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = finBase };
             var baseAcum = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
@@ -561,7 +569,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
             var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
             CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", tipo, ej.FechaInicio.Year, 0, baseAcum, bins, datos.Bonificaciones,
-                ret, anteriores), d);
+                ret, anteriores, incn), d);
         }
         else
         {
