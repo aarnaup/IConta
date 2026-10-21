@@ -636,6 +636,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal Porcentaje { get; set; }
         public decimal Base { get; set; }
         public decimal Retencion { get; set; }
+        public long? InmuebleId { get; set; }
     }
     private sealed class TrabajoFila
     {
@@ -677,7 +678,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var trimestral = modelo.Codigo == "190" ? "111" : "115";
         var filas = (await cn.QueryAsync<PercepcionAnualFila>(new CommandDefinition("""
             SELECT f.tercero_id, n.numero AS nif, t.nombre, pa.iso2 AS pais, pr.codigo AS provincia, tr.codigo AS tipo_retencion,
-                   r.porcentaje, SUM(r.base) AS base, SUM(r.importe) AS retencion
+                   r.porcentaje, SUM(r.base) AS base, SUM(r.importe) AS retencion,
+                   COALESCE(f.inmueble_id, (SELECT min(i.id) FROM conta.inmueble i WHERE i.tercero_id = f.tercero_id HAVING count(*) = 1)) AS inmueble_id
             FROM fiscal.factura f
             JOIN fiscal.factura_retencion r ON r.factura_id = f.id
             JOIN cat.tipo_retencion_irpf tr ON tr.id = r.tipo_retencion_id
@@ -687,9 +689,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
             WHERE f.empresa_id = @empresaId AND f.libro = 'RECIBIDAS' AND f.estado = 'CONTABILIZADA'
               AND f.fecha_contable BETWEEN @inicio AND @fin AND tr.modelo_ingreso = @trimestral
-            GROUP BY 1, 2, 3, 4, 5, 6, 7
-            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct)))
-            .Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje, f.Base, f.Retencion)).ToList();
+            GROUP BY 1, 2, 3, 4, 5, 6, 7, 10
+            """, new { empresaId, inicio = p.Inicio, fin = p.Fin, trimestral }, tx, cancellationToken: ct))).AsList();
+        var inmuebles = (await cn.QueryAsync<InmuebleDto>(new CommandDefinition(InmuebleRepositorio.Select + " WHERE i.empresa_id = @empresaId",
+            new { empresaId }, tx, cancellationToken: ct))).ToDictionary(i => i.Id);
+        var percepciones = filas.Select(f => new PercepcionAnual(f.TerceroId, f.Nif, f.Nombre, f.Pais, f.Provincia, f.TipoRetencion, f.Porcentaje,
+            f.Base, f.Retencion, f.InmuebleId is { } im ? inmuebles.GetValueOrDefault(im) : null)).ToList();
 
         List<TrabajoAnual>? trabajo = null;
         if (modelo.Codigo == "190")
@@ -722,7 +727,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                     WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
             """, new { empresaId, mid, anio = (short)p.Anio, casilla = trimestral == "111" ? "28" : "03" }, tx, cancellationToken: ct));
-        CalculadorResumenRetenciones.Calcular(modelo.Codigo, filas, t.Importe, t.Presentados, d, trabajo);
+        CalculadorResumenRetenciones.Calcular(modelo.Codigo, percepciones, t.Importe, t.Presentados, d, trabajo);
     }
 
     private static async Task CalcularRetencionesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, ModeloSoportado modelo,

@@ -5,7 +5,8 @@ using Contabilidad.Infrastructure.Repositorios;
 
 namespace Contabilidad.Api.Endpoints;
 
-/// <summary>Nóminas (asiento y retenciones del trabajo para el 111 y el 190) y datos de los trabajadores para el 190.</summary>
+/// <summary>Nóminas (asiento y retenciones del trabajo para el 111 y el 190), datos de los trabajadores para el 190 e inmuebles arrendados
+/// para el 180.</summary>
 public static class NominasEndpoints
 {
     public static void MapNominas(this IEndpointRouteBuilder app)
@@ -32,6 +33,22 @@ public static class NominasEndpoints
             await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "NOMINA_ANULADA", "nomina", nominaId, null, ct);
             return Results.NoContent();
         }).RequiereDirecto(Nivel.Escritura, Modulo.Contabilidad);
+
+        // ---- Inmuebles arrendados (modelo 180) ----
+        emp.MapGet("/inmuebles", (long empresaId, long? terceroId, IInmuebleRepositorio r, CancellationToken ct) => r.ListarAsync(empresaId, terceroId, ct))
+            .Requiere(Nivel.Lectura, Modulo.Facturacion, Modulo.Fiscal);
+        emp.MapPut("/inmuebles", async (long empresaId, InmuebleDto i, HttpContext http, IInmuebleRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var id = await r.GuardarAsync(empresaId, i, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "INMUEBLE_GUARDADO", "inmueble", id, null, ct);
+            return Results.Ok(new { id });
+        }).Requiere(Nivel.Escritura, Modulo.Facturacion, Modulo.Fiscal);
+        emp.MapDelete("/inmuebles/{id:long}", async (long empresaId, long id, HttpContext http, IInmuebleRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.EliminarAsync(empresaId, id, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "INMUEBLE_ELIMINADO", "inmueble", id, null, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Facturacion, Modulo.Fiscal);
 
         emp.MapGet("/empleados", (long empresaId, INominaRepositorio r, CancellationToken ct) => r.EmpleadosAsync(empresaId, ct))
             .Requiere(Nivel.Lectura, Modulo.Contabilidad, Modulo.Fiscal);

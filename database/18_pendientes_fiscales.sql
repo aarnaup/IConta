@@ -86,3 +86,20 @@ ALTER TABLE core.empresa ADD CONSTRAINT empresa_regimen_iva_check
 INSERT INTO fiscal.modelo_fiscal (administracion, codigo, nombre, impuesto, periodicidades)
 VALUES ('AEAT', '309', 'IVA - Declaración-liquidación no periódica', 'IVA', '{TRIMESTRAL}')
 ON CONFLICT (administracion, codigo) DO NOTHING;
+
+-- ---------------------------------------------------------------- inmuebles arrendados (modelo 180)
+CREATE TABLE IF NOT EXISTS conta.inmueble (
+  id                   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  empresa_id           bigint NOT NULL REFERENCES core.empresa(id),
+  tercero_id           bigint NOT NULL REFERENCES conta.tercero(id),
+  situacion            smallint NOT NULL DEFAULT 1 CHECK (situacion BETWEEN 1 AND 4),
+  referencia_catastral varchar(20),
+  tipo_via             varchar(5),
+  nombre_via           varchar(100) NOT NULL,
+  numero               varchar(10),
+  complemento          varchar(40),
+  municipio            varchar(60),
+  codigo_municipio     char(5),
+  codigo_postal        varchar(5)
+);
+ALTER TABLE fiscal.factura ADD COLUMN IF NOT EXISTS inmueble_id bigint REFERENCES conta.inmueble(id);

@@ -412,6 +412,7 @@ function cmdFactura(borrador) {
     terceroId: +$('#fTercero').value || 0, formaPagoId: +$('#fForma').value || null, canalId: +$('#fCanal').value || 0,
     fechaExpedicion: $('#fFecha').value, tipoRetencionId: +$('#fRet').value || null, borrador,
     clave349: fst.lineas.some(l => (l.op || '').startsWith('INTRACOM')) ? $('#f349').value : null,
+    inmuebleId: !$('#fInmL').hidden && $('#fInm').value ? +$('#fInm').value : null,
     lineas: fst.lineas.filter(l => l.tipoIvaId && num(l.base)).map(l => {
       const t = fst.tipos.find(x => x.id === l.tipoIvaId);
       return { tipoIvaId: l.tipoIvaId, base: num(l.base), tipoOperacion: l.op || (t && t.esExento ? 'EXENTA' : 'INTERIOR'),
@@ -1030,7 +1031,7 @@ async function cargaFiscal() {
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
     pintaPeriodos();
   }
-  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja()]);
+  await Promise.all([cargaDeclaraciones(), listaProrratas(), cargaCriterioCaja(), cargaInmuebles()]);
   cargaSii();
   if (!$('#lrAnio').value) $('#lrAnio').value = $('#mfAnio').value;
   if (!$('#lrPeriodo').options.length)
@@ -1256,6 +1257,50 @@ $('#prGuardar').onclick = async () => {
     msg($('#prMsg'), `Prorrata de ${p.anio} guardada${p.porcentajeDefinitivo != null ? ': definitivo ' + p.porcentajeDefinitivo + ' %' : ''}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#prMsg'), e.message, 'ayuda err-texto'); }
 };
+
+// ------------------------------------------------------------ inmuebles arrendados (180)
+const IM = { lista: [], sel: null };
+const sitTxt = { 1: 'con referencia catastral', 2: 'País Vasco o Navarra', 3: 'sin referencia catastral', 4: 'extranjero' };
+async function cargaInmuebles() {
+  const [lista, terceros] = await Promise.all([api(urlE('/inmuebles')), api(urlE('/terceros'))]);
+  IM.lista = lista;
+  $('#imTercero').innerHTML = terceros.filter(t => t.esProveedor).map(t => `<option value="${t.id}">${esc(t.nombre)}</option>`).join('');
+  $('#imLista').innerHTML = lista.map((i, n) => `<tr><td>${esc(i.arrendador)}</td><td>${i.situacion} · ${sitTxt[i.situacion]}</td><td>${esc(i.referenciaCatastral || '')}</td>
+      <td>${esc([i.tipoVia, i.nombreVia, i.numero, i.complemento].filter(Boolean).join(' '))}</td><td>${esc(i.municipio || '')} ${esc(i.codigoPostal || '')}</td>
+      <td class="fila-acciones" data-req="FISCAL:ESCRITURA"><button class="btn" data-imed="${n}">Modificar</button><button class="btn" data-imdel="${i.id}">Borrar</button></td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">No hay inmuebles arrendados.</td></tr>';
+  aplicaPermisos();
+}
+const IM_CAMPOS = { imTercero: 'terceroId', imSit: 'situacion', imRc: 'referenciaCatastral', imTv: 'tipoVia', imVia: 'nombreVia', imNum: 'numero',
+                    imComp: 'complemento', imMun: 'municipio', imMuni: 'codigoMunicipio', imCp: 'codigoPostal' };
+function formInmueble(i) {
+  IM.sel = i;
+  Object.entries(IM_CAMPOS).forEach(([id, k]) => { $('#' + id).value = i ? (i[k] ?? '') : (id === 'imSit' ? '1' : id === 'imTercero' ? $('#imTercero').value : ''); });
+}
+$('#imNuevo').onclick = () => formInmueble(null);
+$('#imLista').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.imed !== undefined) { formInmueble(IM.lista[+b.dataset.imed]); return; }
+  if (!confirm('¿Borrar el inmueble?')) return;
+  try { await api(urlE(`/inmuebles/${b.dataset.imdel}`), { method: 'DELETE' }); await cargaInmuebles(); msg($('#imMsg'), 'Inmueble borrado.', 'ok-texto'); }
+  catch (err) { msg($('#imMsg'), err.message, 'err-texto'); }
+});
+$('#imGuardar').onclick = async () => {
+  const o = { id: IM.sel?.id || 0 };
+  Object.entries(IM_CAMPOS).forEach(([id, k]) => { const v = $('#' + id).value.trim(); o[k] = v === '' ? null : v; });
+  o.terceroId = +o.terceroId; o.situacion = +o.situacion; o.nombreVia = o.nombreVia || '';
+  try { await put(urlE('/inmuebles'), o); formInmueble(null); await cargaInmuebles(); msg($('#imMsg'), 'Inmueble guardado.', 'ok-texto'); }
+  catch (err) { msg($('#imMsg'), err.message, 'err-texto'); }
+};
+// En la factura recibida: el inmueble del arrendador, si tiene alguno
+async function pintaInmueblesFactura() {
+  const t = +$('#fTercero').value;
+  const lista = !esEmitida() && t ? await api(urlE(`/inmuebles?terceroId=${t}`)).catch(() => []) : [];
+  $('#fInmL').hidden = lista.length === 0;
+  $('#fInm').innerHTML = lista.map(i => `<option value="${i.id}">${esc([i.tipoVia, i.nombreVia, i.numero].filter(Boolean).join(' '))}${i.referenciaCatastral ? ' · ' + esc(i.referenciaCatastral) : ''}</option>`).join('');
+}
+$('#fTercero').addEventListener('change', pintaInmueblesFactura);
+$('#fLibro').addEventListener('change', pintaInmueblesFactura);
 
 // ------------------------------------------------------------ libros registro de IVA/IGIC
 const consultaLibro = () => `/fiscal/libros/${$('#lrLibro').value}?anio=${+$('#lrAnio').value}&periodo=${$('#lrPeriodo').value}`;

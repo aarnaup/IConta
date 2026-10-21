@@ -35,6 +35,8 @@ public sealed class CrearFacturaCmd
     public string? Clave349 { get; set; }
     /// <summary>Factura que rectifica (rectificativas): mismo libro y tercero.</summary>
     public long? FacturaRectificadaId { get; set; }
+    /// <summary>Inmueble arrendado (recibidas de un arrendador): para el 180. Si el arrendador tiene uno solo, se toma ese.</summary>
+    public long? InmuebleId { get; set; }
     public List<FacturaLineaCmd> Lineas { get; set; } = [];
 }
 

@@ -259,6 +259,7 @@
           <label>Retención IRPF <select id="fRet"></select></label>
           <label>Forma de pago <select id="fForma"></select></label>
           <label id="f349Label" hidden>Clave del 349 <select id="f349"></select></label>
+          <label id="fInmL" hidden>Inmueble arrendado <select id="fInm"></select></label>
         </div>
         <table>
           <thead><tr><th>Tipo de impuesto</th><th class="num" style="width:130px">Base imponible</th><th style="width:220px">Operación</th>
@@ -751,6 +752,29 @@
           <th class="num">Asalariados</th><th>Agrícola</th><th class="num">IVA devengado</th><th class="num">IVA soportado</th>
           <th class="num">% ingreso a cuenta</th><th class="num">% cuota mínima</th><th></th></tr></thead><tbody id="moLista"></tbody></table></div>
         <p id="moMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel">
+        <h2>Inmuebles arrendados (modelo 180)</h2>
+        <p class="ayuda">Cada arrendador con sus inmuebles: el 180 lleva la referencia catastral y la dirección de cada uno. En las facturas del
+          arrendador se indica el inmueble (si tiene uno solo, se toma ese).</p>
+        <table><thead><tr><th>Arrendador</th><th>Situación</th><th>Referencia catastral</th><th>Dirección</th><th>Municipio</th><th></th></tr></thead>
+        <tbody id="imLista"></tbody></table>
+        <div class="cab2" data-req="FISCAL:ESCRITURA">
+          <label>Arrendador <select id="imTercero"></select></label>
+          <label>Situación <select id="imSit"><option value="1">1 · Con ref. catastral (salvo País Vasco y Navarra)</option>
+            <option value="2">2 · País Vasco o Navarra</option><option value="3">3 · Sin referencia catastral</option><option value="4">4 · En el extranjero</option></select></label>
+          <label>Referencia catastral <input id="imRc" maxlength="20"></label>
+          <label>Tipo de vía <input id="imTv" maxlength="5" placeholder="CL, AV…" style="width:6em"></label>
+          <label>Nombre de la vía <input id="imVia" maxlength="100"></label>
+          <label>Número <input id="imNum" maxlength="10" style="width:6em"></label>
+          <label>Escalera, piso, puerta <input id="imComp" maxlength="40"></label>
+          <label>Municipio <input id="imMun" maxlength="60"></label>
+          <label>Código INE del municipio <input id="imMuni" maxlength="5" inputmode="numeric" style="width:7em"></label>
+          <label>Código postal <input id="imCp" maxlength="5" inputmode="numeric" style="width:7em"></label>
+        </div>
+        <div class="acciones" data-req="FISCAL:ESCRITURA"><button class="btn" id="imGuardar" type="button">Guardar inmueble</button>
+          <button class="btn" id="imNuevo" type="button">Nuevo</button><span id="imMsg" role="status"></span></div>
       </div>
 
       <div class="panel">

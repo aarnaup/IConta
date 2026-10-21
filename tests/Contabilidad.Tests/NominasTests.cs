@@ -79,3 +79,25 @@ public class NominasTests
         Assert.DoesNotContain(d.Avisos, x => x.Contains("no coinciden"));        // 4.560 frente a los 111 presentados
     }
 }
+
+public class Modelo180Tests
+{
+    [Fact]
+    public void Una_linea_por_arrendador_e_inmueble_con_sus_datos()
+    {
+        var local = new InmuebleDto { Id = 1, Situacion = 1, ReferenciaCatastral = "1234567AB1234C0001DE", NombreVia = "Mayor", Numero = "1" };
+        var nave = new InmuebleDto { Id = 2, Situacion = 3, NombreVia = "Polígono Sur", Numero = "7" };
+        var d = new DeclaracionCalculada { Modelo = "180", Anio = 2026, Periodo = "0A" };
+        CalculadorResumenRetenciones.Calcular("180",
+        [
+            new PercepcionAnual(5, "11111111H", "Casero", "ES", "28", "ARREND", 19, 6000, 1140, local),
+            new PercepcionAnual(5, "11111111H", "Casero", "ES", "28", "ARREND", 19, 3000, 570, nave),
+            new PercepcionAnual(6, "22222222J", "Otra", "ES", "28", "ARREND", 19, 1000, 190),
+        ], 1900m, 4, d);
+        var l = Assert.IsType<List<PerceptorResumen>>(d.Detalle);
+        Assert.Equal(3, l.Count);
+        Assert.Equal("1234567AB1234C0001DE", l.Single(x => x.Base == 6000).Inmueble!.ReferenciaCatastral);
+        Assert.Equal(2m, d.Casillas.Single(c => c.Clave == "01").Importe);           // dos arrendadores
+        Assert.Contains(d.Avisos, a => a.Contains("sin inmueble") && a.Contains("Otra"));
+    }
+}

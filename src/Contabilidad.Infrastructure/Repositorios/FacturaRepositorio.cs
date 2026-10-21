@@ -76,7 +76,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
     private sealed record Preparada(
         LibroFactura Libro, FacturaCalculada Calculo, long EjercicioId, DateOnly FechaContable,
         long PlantillaId, string PlantillaNombre, long DiarioId, string Concepto, IReadOnlyList<ApunteCmd> Apuntes,
-        bool CriterioCaja, string? Clave349);
+        bool CriterioCaja, string? Clave349, long? InmuebleId = null);
 
 
     // =====================================================================
@@ -302,8 +302,23 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
 
         var concepto = !string.IsNullOrWhiteSpace(cmd.Descripcion) ? cmd.Descripcion.Trim() : apuntes[0].Concepto ?? $"Factura {numeroCompleto}";
 
+        // --- Inmueble arrendado (180): el indicado o, si el arrendador tiene uno solo, ese ---
+        long? inmuebleId = null;
+        if (cmd.InmuebleId is { } inm)
+        {
+            if (libro != LibroFactura.Recibidas) throw new ReglaContableException("El inmueble arrendado se indica en las facturas recibidas.");
+            inmuebleId = await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
+                "SELECT id FROM conta.inmueble WHERE id = @inm AND empresa_id = @empresaId AND tercero_id = @terceroId",
+                new { inm, empresaId, terceroId = cmd.TerceroId }, tx, cancellationToken: ct))
+                ?? throw new ReglaContableException("El inmueble no es de este arrendador.");
+        }
+        else if (libro == LibroFactura.Recibidas && retencion is not null)
+            inmuebleId = await cn.ExecuteScalarAsync<long?>(new CommandDefinition("""
+                SELECT min(id) FROM conta.inmueble WHERE empresa_id = @empresaId AND tercero_id = @terceroId HAVING count(*) = 1
+                """, new { empresaId, terceroId = cmd.TerceroId }, tx, cancellationToken: ct));
+
         return new Preparada(libro, calculo, ejercicioId, fechaContable, plantilla.Id, plantilla.Nombre, diarioId, concepto, apuntes,
-            criterioCaja, clave349);
+            criterioCaja, clave349, inmuebleId);
     }
 
     // =====================================================================
@@ -339,12 +354,12 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                   (empresa_id, ejercicio_id, libro, tipo_factura, serie, numero, tercero_id, actividad_id, canal_id, plantilla_id,
                    fecha_expedicion, fecha_operacion, fecha_contable, descripcion,
                    base_total, cuota_total, recargo_total, retencion_total, total, clave_operacion_347, estado, creado_por, comando,
-                   criterio_caja, clave_operacion_349, factura_rectificada_id)
+                   criterio_caja, clave_operacion_349, factura_rectificada_id, inmueble_id)
                 VALUES
                   (@empresaId, @ejercicioId, @libro, @tipoFactura, @serie, @numero, @terceroId, @actividadId, @canalId, @plantillaId,
                    @fechaExpedicion, @fechaOperacion, @fechaContable, @descripcion,
                    @base, @cuota, @recargo, @retencion, @total, @clave347, 'BORRADOR', @usuarioId, @comando::jsonb,
-                   @criterioCaja, @clave349, @rectificada)
+                   @criterioCaja, @clave349, @rectificada, @inmueble)
                 RETURNING id
                 """, new
             {
@@ -355,7 +370,7 @@ public sealed class FacturaRepositorio(IConexionFactory conexiones, IAsientoRepo
                 @base = t.Base, cuota = t.Cuota, recargo = t.Recargo, retencion = t.Retencion, total = t.Total,
                 clave347 = p.Libro == LibroFactura.Emitidas ? "B" : "A",
                 usuarioId, comando = JsonSerializer.Serialize(cmd, JsonOpts),
-                criterioCaja = p.CriterioCaja, clave349 = p.Clave349, rectificada = cmd.FacturaRectificadaId
+                criterioCaja = p.CriterioCaja, clave349 = p.Clave349, rectificada = cmd.FacturaRectificadaId, inmueble = p.InmuebleId
             }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)

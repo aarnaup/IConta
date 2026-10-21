@@ -2,7 +2,7 @@ namespace Contabilidad.Domain.Fiscal;
 
 /// <summary>Percepciones del año de un perceptor con un tipo de retención.</summary>
 public sealed record PercepcionAnual(long TerceroId, string Nif, string Nombre, string Pais, string? Provincia, string TipoRetencion, decimal Porcentaje,
-    decimal Base, decimal Retencion);
+    decimal Base, decimal Retencion, InmuebleDto? Inmueble = null);
 
 /// <summary>Datos personales del trabajador para la clave A del 190.</summary>
 public sealed record DatosTrabajador(short? AnioNacimiento, short SituacionFamiliar, string? NifConyuge, short Discapacidad, short Contrato,
@@ -17,7 +17,7 @@ public sealed record TrabajoAnual(long TerceroId, string Nif, string Nombre, str
 /// <summary>Línea del resumen anual: una por perceptor, clave/subclave y porcentaje.</summary>
 public sealed record PerceptorResumen(string Nif, string Nombre, string? Provincia, string Clave, string? Subclave, decimal Porcentaje,
     decimal Base, decimal Retencion, decimal Especie = 0, decimal IngresoACuenta = 0, decimal IngresoRepercutido = 0,
-    decimal GastosDeducibles = 0, DatosTrabajador? Datos = null);
+    decimal GastosDeducibles = 0, DatosTrabajador? Datos = null, InmuebleDto? Inmueble = null);
 
 /// <summary>
 /// Resúmenes anuales de retenciones: 190 (clave A, trabajadores por cuenta ajena, desde las nóminas; clave G, actividades
@@ -40,12 +40,12 @@ public static class CalculadorResumenRetenciones
         DeclaracionCalculada d, IReadOnlyList<TrabajoAnual>? trabajo = null)
     {
         var lineas = filas
-            .GroupBy(f => (f.TerceroId, Clave: modelo == "190" ? Clave190(f.TipoRetencion) : ("", null), f.Porcentaje))
+            .GroupBy(f => (f.TerceroId, Clave: modelo == "190" ? Clave190(f.TipoRetencion) : ("", null), f.Porcentaje, Inmueble: f.Inmueble?.Id))
             .Select(g =>
             {
                 var f = g.First();
                 return new PerceptorResumen(f.Nif, f.Nombre, Provincia(f), g.Key.Clave.Item1, g.Key.Clave.Item2, g.Key.Porcentaje,
-                    g.Sum(x => x.Base), g.Sum(x => x.Retencion));
+                    g.Sum(x => x.Base), g.Sum(x => x.Retencion), Inmueble: modelo == "180" ? f.Inmueble : null);
             })
             .Where(l => l.Base != 0 || l.Retencion != 0)
             .ToList();
@@ -80,6 +80,11 @@ public static class CalculadorResumenRetenciones
                 d.Avisos.Add($"Trabajadores sin año de nacimiento (complétalo en Nóminas → Trabajadores): {string.Join(", ", sinDatos)}.");
         }
         else
-            d.Avisos.Add("Cada arrendador debe llevar la referencia catastral y la dirección del inmueble arrendado: complétalas al presentar.");
+        {
+            var sinInmueble = lineas.Where(l => l.Inmueble is null).Select(l => l.Nombre).Distinct().ToList();
+            if (sinInmueble.Count > 0)
+                d.Avisos.Add($"Arrendadores sin inmueble (referencia catastral y dirección): {string.Join(", ", sinInmueble)}. " +
+                             "Dalo de alta en Modelos fiscales → Inmuebles arrendados e indícalo en sus facturas.");
+        }
     }
 }
