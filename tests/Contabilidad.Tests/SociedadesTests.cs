@@ -75,3 +75,40 @@ public class SociedadesTests
         Assert.Equal(new DateOnly(2026, 10, 1), PlazoPresentacion.Calcular("202", PeriodoFiscal.Resolver(2026, "2P")).Desde);
     }
 }
+
+public class AsientoSociedadesTests
+{
+    private static readonly Contabilidad.Domain.Fiscal.CuentasIs C = new(6300, 6301, 473, 4752, 4709, 4740, 479);
+
+    [Fact]
+    public void Pago_fraccionado_a_473_contra_4752()
+    {
+        var a = Contabilidad.Domain.Fiscal.GeneradorAsientoSociedades.PagoFraccionado(1500, C, 1);
+        Assert.Equal([(473L, 1500m, 0m), (4752L, 0m, 1500m)], a.Select(x => (x.CuentaId, x.Debe, x.Haber)));
+        Assert.Throws<Contabilidad.Domain.ReglaContableException>(() => Contabilidad.Domain.Fiscal.GeneradorAsientoSociedades.PagoFraccionado(0, C, 1));
+    }
+
+    [Fact]
+    public void Liquidacion_con_cuota_a_ingresar_y_diferido_de_amortizaciones()
+    {
+        // Cuota 10.000, retenciones 1.000, pagos 3.000: 6.000 a ingresar; el activo diferido sube de 500 a 800 y aparece un pasivo de 200
+        var a = Contabilidad.Domain.Fiscal.GeneradorAsientoSociedades.Liquidacion(10000, 1000, 3000, 800, 500, 200, 0, C, 1);
+        Assert.Equal(a.Sum(x => x.Debe), a.Sum(x => x.Haber));
+        Assert.Equal(10000m, a.Single(x => x.CuentaId == 6300).Debe);
+        Assert.Equal(4000m, a.Single(x => x.CuentaId == 473).Haber);
+        Assert.Equal(6000m, a.Single(x => x.CuentaId == 4752).Haber);
+        Assert.Equal(300m, a.Single(x => x.CuentaId == 4740).Debe);
+        Assert.Equal(200m, a.Single(x => x.CuentaId == 479).Haber);
+        Assert.Equal(100m, a.Single(x => x.CuentaId == 6301).Haber);       // ingreso neto por impuesto diferido: 300 − 200
+    }
+
+    [Fact]
+    public void Liquidacion_a_devolver_y_reversion_del_diferido()
+    {
+        var a = Contabilidad.Domain.Fiscal.GeneradorAsientoSociedades.Liquidacion(2000, 500, 2500, 0, 400, 0, 0, C, 1);
+        Assert.Equal(a.Sum(x => x.Debe), a.Sum(x => x.Haber));
+        Assert.Equal(1000m, a.Single(x => x.CuentaId == 4709).Debe);
+        Assert.Equal(400m, a.Single(x => x.CuentaId == 4740).Haber);
+        Assert.Equal(400m, a.Single(x => x.CuentaId == 6301).Debe);
+    }
+}

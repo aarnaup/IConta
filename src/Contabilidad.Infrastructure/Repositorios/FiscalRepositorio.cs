@@ -436,12 +436,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
           AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta
         """;
-    // Retenciones e ingresos a cuenta soportados (473)
+    // Retenciones e ingresos a cuenta soportados (473), sin los pagos fraccionados ni la liquidación del propio impuesto
     private const string SqlRetencionesIs = """
         SELECT COALESCE(SUM(a.debe), 0)
         FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
         WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
-          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta AND c.codigo LIKE '473%'
+          AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE', 'IMPUESTO_SOCIEDADES') AND s.fecha BETWEEN @desde AND @hasta AND c.codigo LIKE '473%'
         """;
 
     private static void ExigeIs(EmpresaFila e)

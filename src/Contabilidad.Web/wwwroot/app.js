@@ -1413,7 +1413,8 @@ async function cargaDeclaraciones() {
       ${d.asientoNumero && directo ? `<button class="btn" data-anliq="${d.id}" ${abierto ? '' : 'disabled'}>Anular asiento</button>` : ''}</td></tr>`).join('')
     : '<tr><td colspan="8" class="vacio">No hay declaraciones guardadas en este año.</td></tr>';
 }
-const liquidable = d => d.estado === 'PRESENTADA' && ['303', '420'].includes(d.modelo) && d.periodo !== '0A';
+// 303/420: liquidación del IVA/IGIC; 202: pago fraccionado; 200: impuesto corriente y diferido del ejercicio
+const liquidable = d => d.estado === 'PRESENTADA' && (['303', '420', '202'].includes(d.modelo) && d.periodo !== '0A' || d.modelo === '200');
 $('#mfAnio').onchange = () => cargaDeclaraciones().catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto'));
 
 $('#mfLista').addEventListener('click', async e => {
