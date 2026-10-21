@@ -208,12 +208,60 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             CodigoPostal = cp, Telefono = cmd.Telefono ?? e.Telefono, Email = cmd.Email ?? e.Email,
             FormaPago = string.IsNullOrWhiteSpace(cmd.FormaPagoAtc) ? "5" : cmd.FormaPagoAtc.Trim(), Iban = cmd.Iban, JustificanteAnterior = anterior,
         };
+        if (v.Modelo == "425") await DatosEstadisticosAsync(cn, empresaId, v.Anio, datos, ct);
         if (datos.FormaPago is not ("1" or "2" or "3" or "4" or "5"))
             throw new ReglaContableException("Forma de pago no válida: 1 efectivo, 2 adeudo en cuenta, 3 pago fraccionado, 4 domiciliación o 5 pago telemático.");
         var doc = v.Modelo == "420"
             ? XmlAtc.Modelo420(v.Anio, v.Periodo, v.TipoDeclaracion, v.Casillas, v.Resultado, v.ADevolver > 0, datos)
             : XmlAtc.Modelo425(v.Anio, v.Casillas, DateOnly.FromDateTime(DateTime.Today), datos);
         return (XmlAtc.Bytes(doc), $"{v.Modelo}_{datos.Nif}_{v.Anio}_{v.Periodo}.xml");
+    }
+
+    private sealed class ActividadFila
+    {
+        public string Epigrafe { get; set; } = "";
+        public decimal Importe { get; set; }
+        public decimal ConDerecho { get; set; }
+        public short? Provisional { get; set; }
+        public short? Definitivo { get; set; }
+        public string? TipoProrrata { get; set; }
+    }
+
+    /// <summary>
+    /// Datos estadísticos del 425: por actividad, las operaciones del año (las facturas sin actividad van a la principal), las que dan
+    /// derecho a deducir (todas menos las exentas) y la prorrata de su sector; si es destinataria del criterio de caja y si presenta el 415.
+    /// </summary>
+    private static async Task DatosEstadisticosAsync(Npgsql.NpgsqlConnection cn, long empresaId, int anio, FicheroAtcDatos datos, CancellationToken ct)
+    {
+        var q = new { empresaId, desde = new DateOnly(anio, 1, 1), hasta = new DateOnly(anio, 12, 31), anio = (short)anio };
+        datos.Actividades = (await cn.QueryAsync<ActividadFila>(new CommandDefinition("""
+            WITH act AS (
+                SELECT a.id, ep.codigo AS epigrafe, a.es_principal, a.sector_diferenciado FROM core.empresa_actividad a
+                JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+                WHERE a.empresa_id = @empresaId AND a.fecha_alta <= @hasta AND (a.fecha_baja IS NULL OR a.fecha_baja >= @desde)),
+            principal AS (SELECT id FROM act ORDER BY es_principal DESC, id LIMIT 1),
+            ops AS (
+                SELECT COALESCE(f.actividad_id, (SELECT id FROM principal)) AS actividad_id, SUM(fi.base) AS importe,
+                       SUM(fi.base) FILTER (WHERE fi.tipo_operacion <> 'EXENTA') AS con_derecho
+                FROM fiscal.factura f JOIN fiscal.factura_iva fi ON fi.factura_id = f.id
+                WHERE f.empresa_id = @empresaId AND f.libro = 'EMITIDAS' AND f.estado = 'CONTABILIZADA' AND f.fecha_contable BETWEEN @desde AND @hasta
+                GROUP BY 1)
+            SELECT act.epigrafe, COALESCE(ops.importe, 0) AS importe, COALESCE(ops.con_derecho, 0) AS con_derecho,
+                   p.porcentaje_provisional AS provisional, p.porcentaje_definitivo AS definitivo, p.tipo AS tipo_prorrata
+            FROM act LEFT JOIN ops ON ops.actividad_id = act.id
+            LEFT JOIN fiscal.prorrata p ON p.empresa_id = @empresaId AND p.anio = @anio
+                 AND COALESCE(p.sector_diferenciado, 0) = COALESCE(act.sector_diferenciado, 0)
+            ORDER BY act.es_principal DESC, act.id
+            """, q, cancellationToken: ct)))
+            .Select(a => new ActividadAtc(a.Epigrafe, a.Importe, a.ConDerecho, a.Provisional, a.Definitivo, a.TipoProrrata == "ESPECIAL")).ToList();
+        datos.DestinatarioCaja = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.factura WHERE empresa_id = @empresaId AND libro = 'RECIBIDAS' AND estado = 'CONTABILIZADA'
+                           AND criterio_caja AND fecha_contable BETWEEN @desde AND @hasta)
+            """, q, cancellationToken: ct));
+        datos.Obligado415 = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.factura WHERE empresa_id = @empresaId AND estado = 'CONTABILIZADA'
+                           AND fecha_contable BETWEEN @desde AND @hasta GROUP BY tercero_id, libro HAVING SUM(total) > 3005.06)
+            """, q, cancellationToken: ct));
     }
 
     private static string NifEspanol(string nif)

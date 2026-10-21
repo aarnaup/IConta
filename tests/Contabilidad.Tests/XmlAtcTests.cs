@@ -78,6 +78,28 @@ public class XmlAtcTests
     }
 
     [Fact]
+    public void El_425_lleva_los_datos_estadisticos_por_actividad()
+    {
+        var d = new DeclaracionCalculada { Modelo = "425", Anio = 2026, Periodo = "0A" };
+        Calculador425.Calcular(new Entrada425([new GrupoIva("EMITIDAS", false, "INTERIOR", 7, 0, false, 10000, 700, 0, 0)], 0, 0, []), d);
+        var datos = new FicheroAtcDatos
+        {
+            Nif = Datos.Nif, Nombre = Datos.Nombre, SiglasVia = "CL", NombreVia = "Triana 1", Provincia = "35", Municipio = "35016", CodigoPostal = "35002",
+            Obligado415 = true,
+            Actividades = [new ActividadAtc("6599", 10000, 8000, 80, 82), new ActividadAtc("8331", 0, 0)],
+        };
+        var doc = XmlAtc.Modelo425(2026, d.Casillas, new DateOnly(2027, 1, 20), datos);
+        Valida(doc, "425");
+        var est = doc.Root!.Element("EST")!;
+        Assert.Equal(("S", "N"), (est.Attribute("DTP")!.Value, est.Attribute("RECC")!.Value));
+        var act = est.Elements("ACT").ToList();
+        Assert.Equal(2, act.Count);
+        Assert.Equal(("6599", "8000", "8200", "G", "1000000", "800000"), (act[0].Attribute("EPI")!.Value, act[0].Attribute("PRO")!.Value,
+            act[0].Attribute("DEF")!.Value, act[0].Attribute("TIP")!.Value, act[0].Attribute("IMP")!.Value, act[0].Attribute("IMD")!.Value));
+        Assert.Null(act[1].Attribute("PRO"));
+    }
+
+    [Fact]
     public void La_validacion_detecta_un_XML_incorrecto()
     {
         var doc = XmlAtc.Modelo420(2026, "3T", "ORDINARIA", Calcula420().Casillas, 225, false, Datos);

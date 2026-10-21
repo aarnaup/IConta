@@ -24,7 +24,18 @@ public sealed class FicheroAtcDatos
     public string? Iban { get; set; }
     /// <summary>Justificante de la declaración que se complementa.</summary>
     public string? JustificanteAnterior { get; set; }
+    // ---- datos estadísticos del 425 ----
+    /// <summary>Actividades del año con su epígrafe, volumen de operaciones y prorrata.</summary>
+    public List<ActividadAtc> Actividades { get; set; } = [];
+    /// <summary>Destinataria de operaciones en el régimen especial del criterio de caja.</summary>
+    public bool DestinatarioCaja { get; set; }
+    /// <summary>Obligada a presentar el 415 (operaciones con terceros de más de 3.005,06 €).</summary>
+    public bool Obligado415 { get; set; }
 }
+
+/// <summary>Actividad de los datos estadísticos del 425: epígrafe, operaciones totales y con derecho a deducir y prorrata (%).</summary>
+public sealed record ActividadAtc(string Epigrafe, decimal Importe, decimal ConDerecho, decimal? ProrrataProvisional = null,
+    decimal? ProrrataDefinitiva = null, bool ProrrataEspecial = false);
 
 /// <summary>
 /// XML de los modelos 420 y 425 de la Agencia Tributaria Canaria, según sus esquemas (Presentacion-420/425-XMLSchema.xsd), que es lo que
@@ -146,6 +157,20 @@ public static class XmlAtc
         var dec = new XElement("DEC", new XAttribute("MOD", "425"), new XAttribute("ANY", anio.ToString(CultureInfo.InvariantCulture)),
             new XAttribute("PER", "0A"), new XAttribute("FIM", fecha.ToString("yyyyMMdd", CultureInfo.InvariantCulture)));
         dec.Add(Identificacion(d));
+        if (d.Actividades.Count > 0)
+        {
+            var est = new XElement("EST", new XAttribute("DTP", d.Obligado415 ? "S" : "N"), new XAttribute("RECC", d.DestinatarioCaja ? "S" : "N"));
+            foreach (var a in d.Actividades)
+            {
+                var act = new XElement("ACT", new XAttribute("EPI", a.Epigrafe));
+                if (a.ProrrataProvisional is { } pp) act.Add(new XAttribute("PRO", Porcentaje(pp)));
+                if (a.ProrrataDefinitiva is { } pd) act.Add(new XAttribute("DEF", Porcentaje(pd)));
+                if (a.ProrrataProvisional is not null || a.ProrrataDefinitiva is not null) act.Add(new XAttribute("TIP", a.ProrrataEspecial ? "E" : "G"));
+                act.Add(new XAttribute("IMP", Importe(a.Importe)), new XAttribute("IMD", Importe(a.ConDerecho)));
+                est.Add(act);
+            }
+            dec.Add(est);
+        }
 
         if (c.ContainsKey("95"))
         {
