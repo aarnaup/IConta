@@ -103,3 +103,6 @@ CREATE TABLE IF NOT EXISTS conta.inmueble (
   codigo_postal        varchar(5)
 );
 ALTER TABLE fiscal.factura ADD COLUMN IF NOT EXISTS inmueble_id bigint REFERENCES conta.inmueble(id);
+
+-- ---------------------------------------------------------------- bases negativas anteriores por año de origen (página 15 del 200)
+ALTER TABLE fiscal.impuesto_sociedades ADD COLUMN IF NOT EXISTS bins_detalle jsonb NOT NULL DEFAULT '[]';

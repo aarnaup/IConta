@@ -1046,8 +1046,24 @@ async function verSociedades() {
   $('#isTitulo').textContent = `Impuesto sobre Sociedades · periodo impositivo ${S.ejercicio.codigo} (${fechaES(S.ejercicio.fechaInicio)} – ${fechaES(S.ejercicio.fechaFin)})`;
   for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores'])
     $('#is_' + k).value = IS[k] ? String(IS[k]).replace('.', ',') : '';
-  pintaAjustesIs();
+  pintaAjustesIs(); pintaBinsIs();
 }
+function pintaBinsIs() {
+  IS.binsDetalle = IS.binsDetalle || [];
+  $('#isBins').innerHTML = IS.binsDetalle.map((b, i) => `<tr><td><input data-b="${i}" data-k="anio" inputmode="numeric" value="${b.anio || ''}" aria-label="Año"></td>
+    <td><input class="num" data-b="${i}" data-k="importe" inputmode="decimal" value="${String(b.importe || '').replace('.', ',')}" aria-label="Importe"></td>
+    <td><button class="x" type="button" data-delb="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="3" class="vacio">Sin detalle por año.</td></tr>';
+  const tot = IS.binsDetalle.reduce((a, b) => a + (+b.importe || 0), 0);
+  $('#is_binsAnteriores').readOnly = IS.binsDetalle.length > 0;
+  if (IS.binsDetalle.length) $('#is_binsAnteriores').value = String(tot).replace('.', ',');
+}
+$('#isBins').addEventListener('change', e => {
+  const t = e.target; if (t.dataset.b === undefined) return;
+  IS.binsDetalle[+t.dataset.b][t.dataset.k] = t.dataset.k === 'anio' ? +t.value : num(t.value); pintaBinsIs();
+});
+$('#isBins').addEventListener('click', e => { if (e.target.dataset.delb !== undefined) { IS.binsDetalle.splice(+e.target.dataset.delb, 1); pintaBinsIs(); } });
+$('#isBinAnadir').onclick = () => { IS.binsDetalle = IS.binsDetalle || []; IS.binsDetalle.push({ anio: new Date(S.ejercicio.fechaInicio).getFullYear() - 1, importe: 0 }); pintaBinsIs(); };
 function pintaAjustesIs() {
   const clases = IS.clases || [];
   const opcClase = c => clases.map(x => `<option value="${x.codigo}" ${x.codigo === (c || 'OTRAS') ? 'selected' : ''}>${esc(x.texto)}</option>`).join('');
@@ -1073,7 +1089,7 @@ $('#isGuardar').onclick = async () => {
   try {
     const cuerpo = { ...IS };
     for (const k of ['reservaCapitalizacion', 'bonificaciones', 'deducciones', 'incn', 'binsAnteriores']) cuerpo[k] = num($('#is_' + k).value);
-    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs();
+    IS = await put(urlE('/fiscal/sociedades/' + S.ejercicio.id), cuerpo); pintaAjustesIs(); pintaBinsIs();
     msg($('#isMsg'), 'Datos del Impuesto sobre Sociedades guardados. Calcula el 200 en la lista de modelos.', 'ayuda ok-texto');
   } catch (e) { msg($('#isMsg'), e.message, 'ayuda err-texto'); }
 };

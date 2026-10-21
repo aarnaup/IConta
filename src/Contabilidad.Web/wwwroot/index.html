@@ -732,6 +732,11 @@
           <label>Importe neto de la cifra de negocios <input id="is_incn" class="num" inputmode="decimal"></label>
           <label>Bases negativas anteriores a la aplicación <input id="is_binsAnteriores" class="num" inputmode="decimal"></label>
         </div>
+        <details class="nuevo"><summary>Bases negativas anteriores por año de origen</summary>
+          <p class="ayuda">Para el detalle de la página 15 del 200. Si las indicas, su suma sustituye al total de arriba; si no, se toman del año anterior al del periodo.</p>
+          <table><thead><tr><th style="width:120px">Año</th><th class="num">Importe pendiente</th><th></th></tr></thead><tbody id="isBins"></tbody></table>
+          <button class="btn" id="isBinAnadir" type="button">Añadir año</button>
+        </details>
         <h3>Ajustes extracontables</h3>
         <table><thead><tr><th>Concepto</th><th>Casilla del 200</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
         <ul id="isSugerencias" class="avisos"></ul>

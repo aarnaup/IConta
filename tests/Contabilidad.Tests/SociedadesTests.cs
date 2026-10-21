@@ -66,6 +66,26 @@ public class SociedadesTests
     }
 
     [Fact]
+    public void Detalle_de_bases_negativas_por_anio_compensando_las_mas_antiguas()
+    {
+        var d = new DeclaracionCalculada { Modelo = "200" };
+        CalculadorSociedades.Calcular200(new Entrada200(50_000m, [], 0, 80_000m, 0, 0, 0, 0, (0, 0, 0), new("GENERAL"), Ini, Fin,
+            BinsPorAnio: [new(2023, 30_000m), new(2021, 50_000m)]), d);
+        Assert.Equal(50_000m, d["00547"]);
+        Assert.Equal((50_000m, 50_000m, 0m), (d["BIN2021P"], d["BIN2021A"], d["BIN2021F"]));
+        Assert.Equal((30_000m, 30_000m), (d["BIN2023P"], d["BIN2023F"]));
+        Assert.Null(d.Casillas.FirstOrDefault(c => c.Clave == "BIN2023A"));
+        Assert.Equal((80_000m, 30_000m), (d["00670"], d["00671"]));
+        // Base negativa del periodo: se genera en su año
+        var n = Calc(-10_000m, new("GENERAL"), bins: 5_000m);
+        Assert.Equal((5_000m, 5_000m), (n["BIN2025P"], n["BIN2025F"]));      // sin detalle: del año anterior
+        Assert.Equal((10_000m, 10_000m), (n["BIN2026P"], n["BIN2026F"]));
+        Assert.Equal(15_000m, n["00671"]);
+        Assert.Throws<ReglaContableException>(() => CalculadorSociedades.Calcular200(new Entrada200(1m, [], 0, 10m, 0, 0, 0, 0, (0, 0, 0),
+            new("GENERAL"), Ini, Fin, BinsPorAnio: [new(2020, 5m)]), new DeclaracionCalculada()));
+    }
+
+    [Fact]
     public void Tipos_de_microempresa_por_tramos_y_proporcionales_en_ejercicio_corto()
     {
         Assert.Equal(50_000m * 0.19m + 50_000m * 0.21m, CalculadorSociedades.CuotaIntegra(100_000m, new("MICRO"), Ini, Fin));

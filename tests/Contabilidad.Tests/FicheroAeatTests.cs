@@ -327,6 +327,8 @@ public class FicheroAeatTests
         Assert.Equal("00000000000500000", t.Substring(p14b + 608, 17));                   // [00601] primer pago
         Assert.Equal("00000000001594000", t.Substring(p14b + 710, 17));                   // [00611] cuota diferencial
         Assert.Equal("00000000001594000", t.Substring(p14b + 1050, 17));                  // [01586]
+        var p15 = P("15000");                                                             // página 15: detalle de bases negativas
+        Assert.True(p15 > 0);
         var did = P("DID00");
         Assert.Equal("0" + "2025" + "1" + "0A" + "010125" + "311225" + "B12345678", t.Substring(did + 12, 29));
         Assert.Equal("I" + "00000000001594000", t.Substring(did + 424, 18));

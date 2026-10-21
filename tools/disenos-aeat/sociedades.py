@@ -12,7 +12,7 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 DIR = os.path.join(AQUI, "aeat")
 
 PAGINAS_200 = ["DP200000", "DP200001", "DP200003", "DP200004", "DP200005", "DP200006", "DP200007", "DP200008",
-               "DP200012", "DP200013", "DP200014", "DP200014B", "DP200DID"]
+               "DP200012", "DP200013", "DP200014", "DP200014B", "DP200015", "DP200DID"]
 PAGINAS_202 = ["dr M202 (0)", "dr M202 (1)", "dr M202 (2)"]
 CAMPOS = ["pagina", "n", "pos", "lon", "tipo", "descripcion", "contenido"]
 
@@ -140,6 +140,17 @@ def campo(f, mapa):
         if f is FILAS_PAGINA[pagina][-1]: return f"new CampoAeat({nombre}, TipoCampoAeat.Alfanumerico, {lon}, Plantilla: {cs(sobre[1])})"
     if clave is None:
         fijo = constante(f["contenido"])
+    if clave is None and fijo is None and pagina == "DP200015":
+        # Página 15: solo el detalle de la compensación de bases negativas, por año de origen («BIN2019A» aplicado en 2019…)
+        m = re.match(r"Detalle compensación bases imponibles negativas - (\d{4}|TOTAL)(\(\*\))? - (.*)", desc)
+        con_asterisco = {re.match(r".* - (\d{4})\(\*\) - ", x["descripcion"]).group(1) for x in FILAS_PAGINA[pagina]
+                         if re.match(r".* - (\d{4})\(\*\) - ", x["descripcion"])}
+        # El año del periodo sale dos veces: con «(*)» (el que se usa) y sin él (otro detalle del mismo año, que se deja a cero)
+        if not m or (m.group(1) in con_asterisco and not m.group(2)):
+            return f"new CampoAeat({', '.join([nombre, 'TipoCampoAeat.' + tipo, str(lon)] + extra)})"
+        col = "A" if m.group(3).startswith("Aplicad") else "F" if "futuros" in m.group(3) else "P"
+        clave = {"P": "C:00670", "A": "C:00547", "F": "C:00671"}[col] if m.group(1) == "TOTAL" else f"C:BIN{m.group(1)}{col}"
+        return f"new CampoAeat({', '.join([nombre, 'TipoCampoAeat.' + tipo, str(lon)] + extra + [f'Clave: {cs(clave)}'])})"
     if clave is None and fijo is None:
         # La casilla del campo es la última citada («Resultado previo (clave [16] x [17]) [18]»)
         m = re.findall(r"\[(\d{5}|\d{2})\]", desc)
@@ -154,6 +165,7 @@ def campo(f, mapa):
 
 
 FILAS_PAGINA = {}
+
 
 
 def bloque(pagina, filas, mapa, ind):

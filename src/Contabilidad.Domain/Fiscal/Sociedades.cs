@@ -33,6 +33,9 @@ public sealed record TipoGravamenIs(string Clase, decimal? Porcentaje = null)
     public static readonly string[] Clases = ["GENERAL", "NUEVA_CREACION", "REDUCIDA_DIMENSION", "MICRO", "PERSONALIZADO"];
 }
 
+/// <summary>Base imponible negativa pendiente de compensar, por año de origen (el del periodo impositivo que la generó).</summary>
+public sealed record BinAnio(int Anio, decimal Importe);
+
 /// <param name="ResultadoAntesDeImpuestos">Resultado contable sin el gasto por Impuesto sobre Sociedades.</param>
 /// <param name="Pagos">Pagos fraccionados (202) presentados del periodo: primero, segundo y tercero.</param>
 /// <param name="ImpuestoContabilizado">Gasto por impuesto ya contabilizado (630, 633, 638): el resultado de la cuenta de pérdidas y
@@ -40,7 +43,7 @@ public sealed record TipoGravamenIs(string Clase, decimal? Porcentaje = null)
 public sealed record Entrada200(
     decimal ResultadoAntesDeImpuestos, IReadOnlyList<AjusteIs> Ajustes, decimal ReservaCapitalizacion, decimal BinsDisponibles,
     decimal ImporteNetoCifraNegocios, decimal Bonificaciones, decimal Deducciones, decimal Retenciones, (decimal P1, decimal P2, decimal P3) Pagos,
-    TipoGravamenIs Tipo, DateOnly Inicio, DateOnly Fin, decimal ImpuestoContabilizado = 0)
+    TipoGravamenIs Tipo, DateOnly Inicio, DateOnly Fin, decimal ImpuestoContabilizado = 0, IReadOnlyList<BinAnio>? BinsPorAnio = null)
 {
     public decimal PagosFraccionados => Pagos.P1 + Pagos.P2 + Pagos.P3;
 }
@@ -58,7 +61,8 @@ public sealed record Entrada202(
 /// Impuesto sobre Sociedades: liquidación anual (200) y pagos fraccionados (202). Tipos de gravamen de la Ley 27/2014 con los
 /// cambios de la Ley 7/2024 (reducida dimensión y microempresas en transición hasta 2029). VERIFICA el tipo que te corresponde
 /// en cada ejercicio. Las casillas son las de los diseños de registro de 2025 (200: «00552» base imponible…; 202: «16» base del pago
-/// fraccionado…); las pocas que no tienen número en el modelo llevan una clave descriptiva (BNP, TG1).
+/// fraccionado…); las pocas que no tienen número en el modelo llevan una clave descriptiva (TG1; BIN2019P/A/F: detalle de las bases
+/// negativas de 2019 en la página 15).
 /// </summary>
 public static class CalculadorSociedades
 {
@@ -123,10 +127,10 @@ public static class CalculadorSociedades
         if (reserva != 0) Add("01032", "Reserva de capitalización", reserva);
         var antesBins = basePrevia - reserva;
         var comp = antesBins > 0 ? Math.Min(e.BinsDisponibles, Math.Min(antesBins, LimiteBins(antesBins, e.ImporteNetoCifraNegocios))) : 0;
-        Add("BNP", "Bases imponibles negativas de periodos anteriores pendientes", e.BinsDisponibles);
         Add("00547", "Compensación de bases imponibles negativas de periodos anteriores", comp);
         var bi = antesBins - comp;
         Add("00552", "Base imponible", bi);
+        DetalleBins(e, comp, bi, Add);
         if (bi < 0) d.Avisos.Add($"Base imponible negativa: {(-bi):N2} € se podrán compensar en los periodos siguientes.");
 
         var (t1, resto) = Tipos(e.Tipo, e.Inicio.Year);
@@ -163,6 +167,32 @@ public static class CalculadorSociedades
         if (e.Retenciones != 0)
             d.Avisos.Add("Las retenciones (473) van como «otros conceptos» (01798): si son de capital mobiliario o de alquileres, muévelas a su casilla en el formulario.");
         d.Avisos.Add("VERIFICA el tipo de gravamen que te corresponde en el formulario del modelo 200 del año.");
+    }
+
+    /// <summary>
+    /// Detalle de la página 15 del 200 por año de origen: pendiente al inicio (o generada en el periodo), aplicada y pendiente para
+    /// periodos futuros. Se compensan primero las más antiguas.
+    /// </summary>
+    private static void DetalleBins(Entrada200 e, decimal comp, decimal bi, Action<string, string, decimal> add)
+    {
+        var porAnio = (e.BinsPorAnio ?? (e.BinsDisponibles > 0 ? [new BinAnio(e.Inicio.Year - 1, e.BinsDisponibles)] : []))
+            .Where(b => b.Importe > 0).GroupBy(b => b.Anio).ToDictionary(g => g.Key, g => g.Sum(b => b.Importe));
+        if (porAnio.Values.Sum() != e.BinsDisponibles)
+            throw new ReglaContableException("El detalle de bases negativas por año no suma el total pendiente.");
+        var generada = bi < 0 ? -bi : 0;
+        if (generada > 0) porAnio[e.Inicio.Year] = porAnio.GetValueOrDefault(e.Inicio.Year) + generada;
+        if (porAnio.Count == 0) return;
+        var resto = comp;
+        foreach (var (anio, pendiente) in porAnio.OrderBy(x => x.Key))
+        {
+            var aplicada = anio == e.Inicio.Year && generada > 0 ? 0 : Math.Min(resto, pendiente);
+            resto -= aplicada;
+            add($"BIN{anio}P", $"Bases negativas de {anio}: pendientes al inicio o generadas en el periodo", pendiente);
+            if (aplicada != 0) add($"BIN{anio}A", $"Bases negativas de {anio}: aplicadas en esta liquidación", aplicada);
+            add($"BIN{anio}F", $"Bases negativas de {anio}: pendientes para periodos futuros", pendiente - aplicada);
+        }
+        add("00670", "Total bases negativas pendientes al inicio o generadas en el periodo", porAnio.Values.Sum());
+        add("00671", "Total bases negativas pendientes para periodos futuros", porAnio.Values.Sum() - comp);
     }
 
     /// <summary>Porcentaje del pago fraccionado del art. 40.3: 5/7 del tipo de gravamen, redondeado por defecto.</summary>

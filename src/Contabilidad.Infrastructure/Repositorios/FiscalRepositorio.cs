@@ -481,20 +481,49 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             throw new ReglaContableException("La empresa no tributa por el Impuesto sobre Sociedades.", "Márcalo en la configuración fiscal de la empresa.");
     }
 
-    /// <summary>Bases negativas pendientes al empezar el periodo: las de antes de la aplicación más las generadas en los 200 presentados, menos lo compensado.</summary>
-    private static async Task<decimal> BinsDisponiblesAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, DateOnly inicio, CancellationToken ct)
-        => Math.Max(0, await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-            SELECT COALESCE((SELECT SUM(i.bins_anteriores) FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
-                             WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio), 0)
-                 + COALESCE((SELECT SUM(GREATEST(-COALESCE(bi.importe, 0), 0) - COALESCE(cp.importe, 0))
-                             FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
-                             LEFT JOIN fiscal.declaracion_casilla bi ON bi.declaracion_id = d.id AND bi.casilla IN ('BI', '00552')
-                             LEFT JOIN fiscal.declaracion_casilla cp ON cp.declaracion_id = d.id AND cp.casilla IN ('COMP', '00547')
-                             WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
-                               AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
-                                    WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo
-                                      AND x.estado = 'PRESENTADA')), 0)
-            """, new { empresaId, inicio }, tx, cancellationToken: ct)));
+    private sealed class OrigenBinFila
+    {
+        public int Anio { get; set; }
+        public decimal Generada { get; set; }
+        public decimal Compensada { get; set; }
+    }
+
+    /// <summary>
+    /// Bases negativas pendientes al empezar el periodo, por año de origen: las de antes de la aplicación (con su año o, si no se indicó,
+    /// el anterior al del periodo en que se anotaron) y las generadas en los 200 presentados; lo compensado en ellos se descuenta de las
+    /// más antiguas.
+    /// </summary>
+    private static async Task<List<BinAnio>> BinsPorAnioAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, DateOnly inicio, CancellationToken ct)
+    {
+        var filas = (await cn.QueryAsync<OrigenBinFila>(new CommandDefinition("""
+            SELECT (x->>'anio')::int AS anio, (x->>'importe')::numeric AS generada, 0::numeric AS compensada
+            FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id, jsonb_array_elements(i.bins_detalle) x
+            WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio
+            UNION ALL
+            SELECT EXTRACT(YEAR FROM e.fecha_inicio)::int - 1, i.bins_anteriores, 0
+            FROM fiscal.impuesto_sociedades i JOIN core.ejercicio e ON e.id = i.ejercicio_id
+            WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio AND i.bins_anteriores > 0 AND jsonb_array_length(i.bins_detalle) = 0
+            UNION ALL
+            SELECT d.anio, GREATEST(-COALESCE(bi.importe, 0), 0), COALESCE(cp.importe, 0)
+            FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('BI', '00552')) bi ON true
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('COMP', '00547')) cp ON true
+            WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
+              AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
+                   WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+            """, new { empresaId, inicio }, tx, cancellationToken: ct))).ToList();
+        var pendientes = filas.Where(f => f.Generada > 0).GroupBy(f => f.Anio).OrderBy(g => g.Key)
+            .Select(g => new BinAnio(g.Key, g.Sum(f => f.Generada))).ToList();
+        var compensado = filas.Sum(f => f.Compensada);
+        var r = new List<BinAnio>();
+        foreach (var b in pendientes)
+        {
+            var usado = Math.Min(compensado, b.Importe);
+            compensado -= usado;
+            if (b.Importe - usado > 0) r.Add(b with { Importe = b.Importe - usado });
+        }
+        return r;
+    }
 
     private static async Task Calcular200Async(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, EmpresaFila empresa, PeriodoFiscal p,
         DeclaracionCalculada d, CancellationToken ct)
@@ -525,10 +554,11 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
               AND (c.codigo LIKE '630%' OR c.codigo LIKE '633%' OR c.codigo LIKE '638%')
             """, q, tx, cancellationToken: ct));
         var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
-        var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+        var binsAnio = await BinsPorAnioAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+        var bins = binsAnio.Sum(b => b.Importe);
         CalculadorSociedades.Calcular200(new Entrada200(resultado, datos.Lista, datos.ReservaCapitalizacion, bins, datos.Incn, datos.Bonificaciones,
             datos.Deducciones, retenciones, (pagos.GetValueOrDefault("1P"), pagos.GetValueOrDefault("2P"), pagos.GetValueOrDefault("3P")),
-            new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin, impuesto), d);
+            new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin, impuesto, binsAnio), d);
         if (ej.FechaFin.DayNumber - ej.FechaInicio.DayNumber < 364)
             d.Avisos.Add("Periodo impositivo inferior al año: revisa los límites proporcionales (reserva de capitalización, compensación de bases negativas).");
     }
@@ -567,7 +597,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @hasta
                 """, q, tx, cancellationToken: ct));
             var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
-            var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
+            var bins = (await BinsPorAnioAsync(cn, tx, empresaId, ej.FechaInicio, ct)).Sum(b => b.Importe);
             CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", tipo, ej.FechaInicio.Year, 0, baseAcum, bins, datos.Bonificaciones,
                 ret, anteriores, incn), d);
         }
