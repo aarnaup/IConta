@@ -221,6 +221,46 @@ public class FicheroAeatTests
         Assert.Equal("08", n.Substring(320, 2));
     }
 
+    // ------------------------------------------------------------------------------------------------ 131 y 309
+    [Fact]
+    public void El_131_lleva_las_actividades_con_su_epigrafe_y_la_liquidacion()
+    {
+        var c = new DeclaracionCalculada { Modelo = "131" };
+        CalculadorModulos.Calcular131([new ModulosActividad(null, "Bar", 20_000m, 2, false, 0, 0, 0, 0)], 0, 100m, c);
+        var d = new DeclaracionParaFichero(3, "131", 2026, "1T", "ORDINARIA", "12345678Z", "García López, Ana", c.Casillas, c.Resultado, 0, null,
+            new Dictionary<string, IReadOnlyList<RegistroAeat>>(), Extra: new Dictionary<string, object?> { ["D:epigrafe1"] = "6731" });
+        var (b, nombre) = FicheroModelo.Generar(d, new FicheroAeatCmd { Domiciliar = true, Iban = "ES9121000418450200051332" });
+        var t = Texto(b);
+        Assert.Equal("12345678Z_131_2026_1T.txt", nombre);
+        Assert.Equal(346 + 831 + 257, t.Length);
+        Assert.StartsWith("<T131020261T0000><AUX>", t);
+        Assert.EndsWith("</T131020261T0000>", t);
+        var p = t.IndexOf("<T13101000>", StringComparison.Ordinal);
+        Assert.Equal("U12345678Z", t.Substring(p + 12, 10));
+        Assert.Equal("20261T 6731" + "00000000002000000" + "00400" + "00000000000080000", t.Substring(p + 102, 50));
+        Assert.Equal("00000000000070000", t.Substring(p + 674, 17));   // [15] 800 − 100
+        Assert.Contains("<T131DID00>ES9121000418450200051332", t);
+    }
+
+    [Fact]
+    public void El_309_lleva_situacion_hecho_imponible_y_cuotas()
+    {
+        var c = new DeclaracionCalculada { Modelo = "309" };
+        Calculador309.Calcular([new Linea309("ADQUISICION", 21, 5.2m, 1000)], true, c);
+        var d = new DeclaracionParaFichero(4, "309", 2026, "2T", "ORDINARIA", "12345678Z", "García López, Ana", c.Casillas, c.Resultado, 0, null,
+            new Dictionary<string, IReadOnlyList<RegistroAeat>>(), Extra: new Dictionary<string, object?> { ["D:situacion309"] = 2 });
+        var t = Texto(FicheroModelo.Generar(d, new FicheroAeatCmd()).Contenido);
+        Assert.Equal(346 + 1500, t.Length);
+        Assert.StartsWith("<T309020262T0000>", t);
+        Assert.EndsWith("</T309020262T0000>", t);
+        var p = t.IndexOf("<T30901000>", StringComparison.Ordinal);
+        Assert.Equal("I", t.Substring(p + 12, 1));
+        Assert.Equal("21", t.Substring(p + 199, 2));                     // situación 2 (recargo) y hecho imponible 1
+        Assert.Equal("00000000000100000" + "02100" + "00000000000021000", t.Substring(p + 652, 39));
+        Assert.Equal("00000000000100000" + "00520" + "00000000000005200", t.Substring(p + 808, 39));
+        Assert.Equal("00000000000026200", t.Substring(p + 998, 17));    // [24]
+    }
+
     // ------------------------------------------------------------------------------------------------ 202
     [Fact]
     public void El_202_de_la_modalidad_del_articulo_40_3_rellena_sus_dos_paginas()

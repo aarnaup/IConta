@@ -7,7 +7,8 @@ namespace Contabilidad.Domain.Fiscal;
 /// </summary>
 public sealed record ModulosActividad(
     long? ActividadId, string Actividad, decimal RendimientoNetoIrpf, decimal PersonasAsalariadas, bool Agricola,
-    decimal CuotaIvaDevengadaAnual, decimal CuotaIvaSoportadaAnual, decimal PorcentajeIngresoIva, decimal PorcentajeCuotaMinima);
+    decimal CuotaIvaDevengadaAnual, decimal CuotaIvaSoportadaAnual, decimal PorcentajeIngresoIva, decimal PorcentajeCuotaMinima,
+    string? Epigrafe = null);
 
 /// <summary>Cálculos del régimen simplificado del IVA (303) y de la estimación objetiva del IRPF (131).</summary>
 public static class CalculadorModulos
@@ -51,44 +52,58 @@ public static class CalculadorModulos
     public static decimal Porcentaje131(decimal asalariados) => asalariados > 1 ? 4m : asalariados > 0 ? 3m : 2m;
 
     /// <summary>
-    /// Modelo 131: cada trimestre, el % del rendimiento neto anual de módulos de las actividades no agrícolas y el 2 % del volumen
-    /// de ingresos del trimestre de las agrícolas, menos las retenciones soportadas en el trimestre.
+    /// Modelo 131 con las casillas del diseño de registro: cada trimestre, el % del rendimiento neto anual de módulos de cada actividad no
+    /// agrícola (hasta cinco: «A1R» rendimiento, «A1P» %, «A1C» resultado) [01]/[02], el 2 % del volumen de ingresos del trimestre de las
+    /// agrícolas [05]/[06], menos las retenciones [08] y los resultados negativos de trimestres anteriores del año [11].
     /// </summary>
     public static void Calcular131(IReadOnlyList<ModulosActividad> actividades, decimal volumenAgricolaTrimestre, decimal retenciones,
-        DeclaracionCalculada d)
+        DeclaracionCalculada d, decimal negativosAnteriores = 0)
     {
+        void Add(string k, string desc, decimal v) => d.Casillas.Add(new Casilla(k, desc, R(v)));
         if (actividades.Count == 0)
             throw new ReglaContableException("La empresa no tiene los módulos del año.",
                 "Indícalos en Modelos fiscales → Módulos (rendimiento neto de cada actividad y personas asalariadas).");
-        decimal pagosNoAgricolas = 0;
+        var noAgricolas = actividades.Where(x => !x.Agricola).ToList();
+        if (noAgricolas.Count > 5)
+            throw new ReglaContableException("El 131 admite cinco actividades no agrícolas.", "Agrupa las actividades del mismo epígrafe.");
+        decimal rendimientos = 0, pagosNoAgricolas = 0;
         var i = 0;
-        foreach (var a in actividades.Where(x => !x.Agricola))
+        foreach (var a in noAgricolas)
         {
             i++;
             var pct = Porcentaje131(a.PersonasAsalariadas);
             var cuota = R(a.RendimientoNetoIrpf * pct / 100m);
-            d.Casillas.Add(new Casilla($"A{i}R", $"{a.Actividad}: rendimiento neto de módulos", R(a.RendimientoNetoIrpf)));
-            d.Casillas.Add(new Casilla($"A{i}P", $"{a.Actividad}: % del pago fraccionado", pct));
-            d.Casillas.Add(new Casilla($"A{i}C", $"{a.Actividad}: pago fraccionado", cuota));
+            Add($"A{i}R", $"{a.Actividad}: rendimiento neto de módulos", a.RendimientoNetoIrpf);
+            Add($"A{i}P", $"{a.Actividad}: % del pago fraccionado", pct);
+            Add($"A{i}C", $"{a.Actividad}: pago fraccionado", cuota);
+            rendimientos += a.RendimientoNetoIrpf;
             pagosNoAgricolas += cuota;
+        }
+        if (noAgricolas.Count > 0)
+        {
+            Add("01", "Suma de rendimientos netos", rendimientos);
+            Add("02", "Pago fraccionado previo: suma de resultados", pagosNoAgricolas);
         }
         var agricolas = actividades.Any(x => x.Agricola);
         var pagoAgricola = agricolas ? R(volumenAgricolaTrimestre * 0.02m) : 0m;
-        d.Casillas.Add(new Casilla("NA", "Actividades no agrícolas: suma de pagos fraccionados", pagosNoAgricolas));
         if (agricolas)
         {
-            d.Casillas.Add(new Casilla("AGV", "Actividades agrícolas, ganaderas y forestales: volumen de ingresos del trimestre", R(volumenAgricolaTrimestre)));
-            d.Casillas.Add(new Casilla("AG", "Actividades agrícolas, ganaderas y forestales: 2 % del volumen", pagoAgricola));
+            Add("05", "Actividades agrícolas, ganaderas y forestales: volumen de ingresos del trimestre", volumenAgricolaTrimestre);
+            Add("06", "Actividades agrícolas, ganaderas y forestales: pago fraccionado previo (2 %)", pagoAgricola);
         }
         var suma = pagosNoAgricolas + pagoAgricola;
-        var resultado = R(suma - retenciones);
-        d.Casillas.Add(new Casilla("SUMA", "Suma de pagos fraccionados", suma));
-        d.Casillas.Add(new Casilla("RET", "A deducir: retenciones e ingresos a cuenta soportados en el trimestre", R(retenciones)));
-        d.Casillas.Add(new Casilla("DED", "A deducir: resultado a ingresar de la autoliquidación anterior (solo complementarias)", 0m));
-        d.Casillas.Add(new Casilla("RES", "Resultado de la autoliquidación", resultado));
+        Add("07", "Suma de los pagos fraccionados previos del trimestre", suma);
+        Add("08", "A deducir: retenciones e ingresos a cuenta", retenciones);
+        var diferencia = R(suma - retenciones);
+        Add("10", "Diferencia", diferencia);
+        var negativos = diferencia > 0 ? Math.Min(diferencia, Math.Max(0, negativosAnteriores)) : 0;
+        if (negativos != 0) Add("11", "A deducir: resultados negativos de trimestres anteriores", negativos);
+        var resultado = R(diferencia - negativos);
+        Add("13", "Total", resultado);
+        Add("14", "A deducir: resultado a ingresar de las anteriores declaraciones (solo complementarias)", 0m);
+        Add("15", "Resultado de la declaración", resultado);
         d.Resultado = resultado;
         d.AIngresar = Math.Max(resultado, 0m);
-        if (resultado < 0) d.Avisos.Add("El resultado es negativo: no hay nada que ingresar este trimestre.");
-        d.Avisos.Add("Claves descriptivas: VERIFICA la numeración de casillas con el formulario del 131 del año antes de presentar.");
+        if (resultado < 0) d.Avisos.Add("El resultado es negativo: se podrá deducir en los trimestres siguientes del año.");
     }
 }

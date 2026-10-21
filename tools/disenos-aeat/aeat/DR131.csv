@@ -1,0 +1,94 @@
+pagina,n,pos,lon,tipo,descripcion,contenido
+Pág. 0,1,1,2,An,Inicio del identificador de modelo y página.,"Constante ""<T"""
+Pág. 0,2,3,3,An,Modelo.,"Constante ""131"""
+Pág. 0,3,6,1,An,Discriminante,"Constante ""0"""
+Pág. 0,4,7,4,An,Ejercicio de devengo (EEEE),Nota 2
+Pág. 0,5,11,2,An,Periodo (PP),"""1T"", ""2T"", ""3T"",""4T"""
+Pág. 0,6,13,5,An,Tipo y cierre,"""0000>"""
+Pág. 0,7,18,5,An,Constante,"""<AUX>"""
+Pág. 0,8,23,70,An,Reservado para la Administración. Rellenar con blancos,BLANCOS
+Pág. 0,9,93,4,An,Versión del Programa,Nota 1
+Pág. 0,10,97,4,An,Reservado para la Administración. Rellenar con blancos,BLANCOS
+Pág. 0,11,101,9,An,NIF Empresa Desarrollo,Nota 1
+Pág. 0,12,110,213,An,Reservado para la Administración. Rellenar con blancos,BLANCOS
+Pág. 0,13,323,6,An,Constante,"""</AUX>"""
+Pág. 0,14,329,V,An,Contenido del fichero. Aquí se debe incluir el contenido de las páginas correspondientes a la declaración según el formato descrito para cada página en este mismo documento,
+Pág. 0,15,***,18,An,Constante. </T+ modelo+discriminante+Ejercicio+periodo+Tipo+>,"""</T1310EEEEPP0000>"""
+Pág. 1,1,1,2,An,Inicio del identificador de modelo y página.,"Constante ""<T"""
+Pág. 1,2,3,3,An,Modelo.,"Constante ""131"""
+Pág. 1,3,6,5,An,Página.,"Constante ""01000"""
+Pág. 1,4,11,1,An,Fin de identificador de modelo.,"Constante "">"""
+Pág. 1,5,12,1,A,Indicador de página complementaria.,En blanco
+Pág. 1,6,13,1,A,Tipo de autoliquidación,Ver Nota1
+Pág. 1,7,14,9,An,Declarante (1) - Nif,
+Pág. 1,8,23,60,An,Declarante (1) - Apellidos,
+Pág. 1,9,83,20,An,Declarante (1) - Nombre (solo personas físicas),
+Pág. 1,10,103,4,Num,Devengo (2) - Ejercicio,Constante
+Pág. 1,11,107,2,An,Devengo (2) - Período,"""1T""..""4T"""
+Pág. 1,12,109,1,An,Declarante (1) - Contribuyente tiene un grado de discapacidad igual o superior al 33 por 100,"blanco o ""X"""
+Pág. 1,13,110,4,An,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 1 - Epígrafe IAE,
+Pág. 1,14,114,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 1 - Rdto. neto actividad,15 enteros y 2 decimales
+Pág. 1,15,131,5,Num,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 1 - Porcentaje aplicable,3 enteros y 2 decimales
+Pág. 1,16,136,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 1 - Resultado aplicación porcentaje a cada actividad,15 enteros y 2 decimales
+Pág. 1,17,153,4,An,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 2 - Epígrafe IAE,
+Pág. 1,18,157,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 2 - Rdto. neto actividad,15 enteros y 2 decimales
+Pág. 1,19,174,5,Num,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 2 - Porcentaje aplicable,3 enteros y 2 decimales
+Pág. 1,20,179,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 2 - Resultado aplicación porcentaje a cada actividad,15 enteros y 2 decimales
+Pág. 1,21,196,4,An,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 3 - Epígrafe IAE,
+Pág. 1,22,200,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 3 - Rdto. neto actividad,15 enteros y 2 decimales
+Pág. 1,23,217,5,Num,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 3 - Porcentaje aplicable,3 enteros y 2 decimales
+Pág. 1,24,222,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 3 - Resultado aplicación porcentaje a cada actividad,15 enteros y 2 decimales
+Pág. 1,25,239,4,An,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 4 - Epígrafe IAE,
+Pág. 1,26,243,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 4 - Rdto. neto actividad,15 enteros y 2 decimales
+Pág. 1,27,260,5,Num,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 4 - Porcentaje aplicable,3 enteros y 2 decimales
+Pág. 1,28,265,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 4 - Resultado aplicación porcentaje a cada actividad,15 enteros y 2 decimales
+Pág. 1,29,282,4,An,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 5 - Epígrafe IAE,
+Pág. 1,30,286,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 5 - Rdto. neto actividad,15 enteros y 2 decimales
+Pág. 1,31,303,5,Num,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 5 - Porcentaje aplicable,3 enteros y 2 decimales
+Pág. 1,32,308,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Actividad 5 - Resultado aplicación porcentaje a cada actividad,15 enteros y 2 decimales
+Pág. 1,33,325,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Suma de rendimientos netos [01],15 enteros y 2 decimales
+Pág. 1,34,342,17,N,Liquidación (3) - I. Activ. económicas estimac. objetiva - Pago fraccionado previo: suma de resultados [02],15 enteros y 2 decimales
+Pág. 1,35,359,1,Num,Actividades sin posibilidad de determinar datos base - Deducción por rentas obtenidas en Ceuta y Melilla (e isla de La Palma a partir del tercer trimestre),"""0"" BLANCO, ""1"" SI, ""2"" NO."
+Pág. 1,36,360,10,Num,Actividades sin posibilidad de determinar datos base - Volumen de ventas o ingresos del trimestre,8 enteros y 2 decimales
+Pág. 1,37,370,4,Num,"Actividades sin posibilidad de determinar datos base - Si para el cálculo del pago fraccionado desea aplicar un porcentaje superior al que establece la normativa, indique el porcentaje que desea aplicar",2 enteros y 2 decimales
+Pág. 1,38,374,10,Num,"Actividades sin posibilidad de determinar datos base - Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Volumen de ingresos del primer trimestre o, si la actividad se ha iniciado en el ejercicio de devengo, del trimestre en el que se haya comenzado su ejercicio",8 enteros y 2 decimales
+Pág. 1,39,384,3,Num,"Actividades sin posibilidad de determinar datos base - Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Número de días en los que ha ejercido la actividad en el primer trimestre /no, si la actividad se ha iniciado en el ejercicio de devengo, del trimestre en el que se haya comenzado su ejercicio",3 enteros
+Pág. 1,40,387,3,Num,Actividades sin posibilidad de determinar datos base - Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Número de días en los que previsiblemente ejercerá la actividad durante el año,3 enteros
+Pág. 1,41,390,17,N,Liquidación (3) - II. Activ. económicas estimac. objetiva distintas - Volumen de ventas o ingresos [03],15 enteros y 2 decimales
+Pág. 1,42,407,17,N,Liquidación (3) - II. Activ. económicas estimac. objetiva distintas - Pago fraccionado previo [04],15 enteros y 2 decimales
+Pág. 1,43,424,10,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras - A) VOLUMEN DE INGRESOS DEL TRIMESTRE (excepto Ceuta, Melilla e isla de La Palma a partir del tercer trimestre) (incluye subvenciones corrientes y compensación IVA) - Ingresos de explotaciones ordinarias",8 enteros y 2 decimales
+Pág. 1,44,434,10,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras - A) VOLUMEN DE INGRESOS DEL TRIMESTRE (excepto Ceuta, Melilla e isla de La Palma a partir del tercer trimestre) (incluye subvenciones corrientes y compensación IVA) - Ingresos de explotaciones prioritarias (Reducción 25% agricultores jóvenes D.A. sexta Ley IRPF)",8 enteros y 2 decimales
+Pág. 1,45,444,4,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras - A) VOLUMEN DE INGRESOS DEL TRIMESTRE (excepto Ceuta, Melilla e isla de La Palma a partir del tercer trimestre) (incluye subvenciones corrientes y compensación IVA) - Si para el cálculo del pago fraccionado desea aplicar un porcentaje superior al que establece la normativa, indique el porcentaje que desea aplicar",2 enteros y 2 decimales
+Pág. 1,46,448,10,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras- B) RENTAS OBTENIDAS EN CEUTA, MELILLA E ISLA DE LA PALMA A PARTIR DEL TERCER TRIMESTRE (deducción art. 68.4 Ley IRPF) - Ingresos de explotaciones ordinarias",8 enteros y 2 decimales
+Pág. 1,47,458,10,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras - B) RENTAS OBTENIDAS EN CEUTA, MELILLA E ISLA DE LA PALMA A PARTIR DEL TERCER TRIMESTRE (deducción art. 68.4 Ley IRPF) - Ingresos de explotaciones prioritarias (Reducción 25% agricultores jóvenes D.A. sexta Ley IRPF)",8 enteros y 2 decimales
+Pág. 1,48,468,4,Num,"Actividades agrícolas, ganaderas, forestales y pesqueras - B) RENTAS OBTENIDAS EN CEUTA, MELILLA E ISLA DE LA PALMA A PARTIR DEL TERCER TRIMESTRE (deducción art. 68.4 Ley IRPF) - Si para el cálculo del pago fraccionado desea aplicar un porcentaje superior al que establece la normativa, indique el porcentaje que desea aplicar",2 enteros y 2 decimales
+Pág. 1,49,472,10,Num,"Actividades agrícolas, ganaderas y forestales - C) Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Volumen de ingresos del primer trimestre o, si la actividad se ha iniciado en el ejercicio de devengo, del trimestre en el que se haya comenzado su ejercicio",8 enteros y 2 decimales
+Pág. 1,50,482,3,Num,"Actividades agrícolas, ganaderas y forestales - C) Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Número de días en los que ha ejercido la actividad en el primer trimestre o, si la actividad se ha iniciado en el ejercicio de devengo, del trimestre en el que se haya comenzado su ejercicio",3 enteros
+Pág. 1,51,485,3,Num,"Actividades agrícolas, ganaderas y forestales - C) Deducción por destinar cantidades al pago de préstamos para la adquisición o rehabilitación de la vivienda habitual: Número de días en los que previsiblemente ejercerá la actividad durante el año",3 enteros
+Pág. 1,52,488,17,N,"Liquidación (3) - III. Activ. agrícolas, ganaderas estimac. objet. - Volumen ingresos trimestre [05]",15 enteros y 2 decimales
+Pág. 1,53,505,17,N,"Liquidación (3) - III. Activ. agrícolas, ganaderas estimac. objet. - Pago fraccionado previo del trimestre [06]",15 enteros y 2 decimales
+Pág. 1,54,522,17,N,Liquidación (3) - IV. Total liquidación - Suma de los pagos fraccionados previos del trimestre [07],15 enteros y 2 decimales
+Pág. 1,55,539,17,N,Liquidación (3) - IV. Total liquidación - A deducir: retenciones e ingresos a cuenta [08],15 enteros y 2 decimales
+Pág. 1,56,556,1,Num,"Liquidación (3) - IV. Total liquidación - Deducción del art. 110.3.c) del Reglamento del Impuesto - Cuantía de los rendimientos netos de actividades económicas del ejercicio anterior al de devengo, en el caso de que no excedieran de 12.000 euros",Nota 3
+Pág. 1,57,557,5,Num,"Liquidación (3) - IV. Total liquidación - Deducción del art. 110.3.c) del Reglamento del Impuesto - En el caso excepcional de que en el trimestre deba presentar tambien el modelo 130 de pago fraccionado, indique la cantidad reflejada en él por la presente deducción",3 enteros y 2 decimales
+Pág. 1,58,562,17,N,Liquidación (3) - IV. Total liquidación - Minoración por aplicación de la deducción. Artículo 110.3.c de la Ley [09],15 enteros y 2 decimales
+Pág. 1,59,579,17,N,Liquidación (3) - IV. Total liquidación - Diferencia [10],15 enteros y 2 decimales
+Pág. 1,60,596,17,N,Liquidación (3) - IV. Total liquidación - A deducir: Resultados negativos de trimestres anteriores [11],15 enteros y 2 decimales
+Pág. 1,61,613,1,An,"Liquidación (3) - IV. Total liquidación - Deducción por vivienda - Marque X si tiene derecho a aplicar la deducción por destinar cantidades a la adquisición o rehabilitación de su vivienda habitual utilizando financiación ajena, por las que vaya a tener derecho a deducción por inversión en vivienda habitual (no existe derecho a la deducción si la adquisición o rehabilitación se ha efectuado a partir de 1 de enero de 2013 y no se han efectuado pagos para la construcción o rehabilitación de la vivienda con anterioridad a esa fecha)","blanco o ""X"""
+Pág. 1,62,614,10,Num,Liquidación (3) - IV. Total liquidación - Deducción por vivienda - Suma de los importes de la deducción aplicada (casilla 12 del modelo 131) en los trimestres anteriores del ejercicio de devengo,8 enteros y 2 decimales
+Pág. 1,63,624,17,N,Liquidación (3) - IV. Total liquidación - Pago de préstamos para la adquisición de vivienda habitual [12],15 enteros y 2 decimales
+Pág. 1,64,641,17,N,Liquidación (3) - IV. Total liquidación - Total [13],15 enteros y 2 decimales
+Pág. 1,65,658,17,N,Liquidación (3) - IV. Total liquidación - A deducir - Resultado a ingresar de las anteriores declaraciones [14],15 enteros y 2 decimales
+Pág. 1,66,675,17,N,Liquidación (3) - IV. Total liquidación - Resultado de la declaración [15],15 enteros y 2 decimales
+Pág. 1,67,692,1,An,Complementaria (7) - Declaración complementaria,"blanco o ""X"""
+Pág. 1,68,693,13,An,Complementaria (7) - Número justificante declaración anterior,
+Pág. 1,69,706,101,An,RESERVADO PARA LA A.E.A.T. (Dejar en blanco),
+Pág. 1,70,807,13,An,SELLO ELECTRONICO RESERVADO PARA LA A.E.A.T. (Dejar en blanco),
+Pág. 1,71,820,12,An,Indicador de fin de registro,"Constante ""</T13101000>"""
+DID,1,1,2,An,Inicio del identificador de modelo y página.,"Constante ""<T"""
+DID,2,3,3,An,Modelo.,"Constante ""131"""
+DID,3,6,5,An,Página.,"Constante ""DID00"""
+DID,4,11,1,An,Fin de identificador de modelo.,"Constante "">"""
+DID,5,12,34,An,Domiciliación - IBAN,
+DID,6,46,200,An,RESERVADO PARA LA A.E.A.T. (Dejar en blanco),
+DID,7,246,12,An,Indicador de fin de registro,"Constante ""</T131DID00>"""

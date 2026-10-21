@@ -91,12 +91,34 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             if (string.IsNullOrWhiteSpace(cmd.ActividadNombre)) cmd.ActividadNombre = e.Actividad;
         }
 
-        var extra = v.Modelo is "200" or "202" ? await DatosSociedadesAsync(cn, empresaId, v, ct) : null;
+        var extra = v.Modelo switch
+        {
+            "200" or "202" => await DatosSociedadesAsync(cn, empresaId, v, ct),
+            "131" => await EpigrafesModulosAsync(cn, empresaId, v.Anio, ct),
+            // Situación tributaria del 309: 1 régimen especial de la agricultura, 2 recargo de equivalencia
+            "309" => new Dictionary<string, object?> { ["D:situacion309"] = e.RegimenIva == "AGRICULTURA_GYP" ? 1 : e.RegimenIva == "RECARGO_EQUIVALENCIA" ? 2 : 6 },
+            _ => null,
+        };
         var d = new DeclaracionParaFichero(v.Id ?? 0, v.Modelo, v.Anio, v.Periodo, v.TipoDeclaracion, NifEspanol(e.Nif), e.Nombre,
             v.Casillas, v.Resultado, v.ADevolver, anterior?.Trim(), registros,
             CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347,
             Inicio: v.FechaInicio, Fin: v.FechaFin, Extra: extra);
         return FicheroModelo.Generar(d, cmd, nifDesarrollador);
+    }
+
+    /// <summary>Epígrafe IAE (4 caracteres, sin puntos) de cada actividad no agrícola del 131, en el orden de sus casillas.</summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> EpigrafesModulosAsync(Npgsql.NpgsqlConnection cn, long empresaId, int anio,
+        CancellationToken ct)
+    {
+        var modulos = await ModulosRepositorio.DelAnioAsync(cn, null, empresaId, anio, ct);
+        var x = new Dictionary<string, object?>(StringComparer.Ordinal);
+        var i = 0;
+        foreach (var m in modulos.Where(m => !m.Agricola))
+        {
+            var ep = new string((m.Epigrafe ?? "").Where(char.IsLetterOrDigit).ToArray());
+            x[$"D:epigrafe{++i}"] = ep.Length > 4 ? ep[..4] : ep;
+        }
+        return x;
     }
 
     private sealed class SociedadesFila

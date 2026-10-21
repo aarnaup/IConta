@@ -637,7 +637,18 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             SELECT COALESCE(SUM(retencion_total), 0) FROM fiscal.factura
             WHERE empresa_id = @empresaId AND libro = 'EMITIDAS' AND estado = 'CONTABILIZADA' AND fecha_contable BETWEEN @inicio AND @fin
             """, new { empresaId, inicio = p.Inicio, fin = p.Fin }, tx, cancellationToken: ct));
-        CalculadorModulos.Calcular131(modulos, volumen, retenciones, d);
+        // Resultados negativos de los trimestres anteriores del año pendientes de deducir: los negativos de la última presentación de cada
+        // trimestre menos lo ya deducido en los siguientes (también con las claves descriptivas de antes)
+        var negativos = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(GREATEST(-COALESCE(r.importe, 0), 0) - COALESCE(n.importe, 0)), 0)
+            FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '131'
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('15', 'RES')) r ON true
+            LEFT JOIN LATERAL (SELECT SUM(importe) AS importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = '11') n ON true
+            WHERE d.empresa_id = @empresaId AND d.anio = @anio AND d.periodo < @periodo AND d.estado = 'PRESENTADA'
+              AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x WHERE x.empresa_id = d.empresa_id
+                   AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo AND x.estado = 'PRESENTADA')
+            """, new { empresaId, anio = (short)p.Anio, periodo = p.Codigo }, tx, cancellationToken: ct));
+        CalculadorModulos.Calcular131(modulos, volumen, retenciones, d, negativos);
         if (agricolas.Count > 0 && !todasAgricolas && ids.Length == 0)
             d.Avisos.Add("Las actividades agrícolas no están enlazadas a una actividad de la empresa: su volumen de ingresos va a cero.");
     }

@@ -1,19 +1,25 @@
-"""Diseños de registro de los modelos 200 y 202 a partir de los ficheros oficiales de la AEAT (DR200e25.xls, DR202e25.xlsx).
+"""Diseños de registro de los modelos 131, 200, 202 y 309 a partir de los ficheros oficiales de la AEAT.
 
-    python3 sociedades.py extraer <DR200eAA.xls> <DR202eAA.xlsx>   # deja aeat/DR200.csv y aeat/DR202.csv con las páginas que se usan
-    python3 sociedades.py generar <DisenosAeatSociedades.cs>        # genera el C# desde los CSV
+    python3 oficiales.py extraer 200 DR200e25.xls     # deja aeat/DR200.csv con las páginas que se usan (también 202, 131 y 309)
+    python3 oficiales.py generar <DisenosAeatOficiales.cs>   # genera el C# desde los CSV
 
-Los diseños se descargan de la Sede (Ayuda → Diseños de registro → Modelos 200-299). Solo se extraen las páginas que rellena la
-aplicación: identificación, balance, cuenta de pérdidas y ganancias, liquidación e ingreso/devolución (200) y las dos páginas del 202.
+Los diseños se descargan de la Sede (Ayuda → Diseños de registro). Solo se extraen las páginas que rellena la aplicación:
+identificación, balance, cuenta de pérdidas y ganancias, liquidación, bases negativas e ingreso/devolución (200); las dos páginas del
+202; la liquidación y la domiciliación del 131 (sin el detalle de módulos por actividad); la página única del 309.
 """
 import csv, os, re, sys
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 DIR = os.path.join(AQUI, "aeat")
 
-PAGINAS_200 = ["DP200000", "DP200001", "DP200003", "DP200004", "DP200005", "DP200006", "DP200007", "DP200008",
-               "DP200012", "DP200013", "DP200014", "DP200014B", "DP200015", "DP200DID"]
-PAGINAS_202 = ["dr M202 (0)", "dr M202 (1)", "dr M202 (2)"]
+# Modelo -> (hojas, columna del contenido en cada hoja, desde)
+HOJAS = {
+    "200": (["DP200000", "DP200001", "DP200003", "DP200004", "DP200005", "DP200006", "DP200007", "DP200008",
+             "DP200012", "DP200013", "DP200014", "DP200014B", "DP200015", "DP200DID"], {}),
+    "202": (["dr M202 (0)", "dr M202 (1)", "dr M202 (2)"], {"*": 5}),
+    "131": (["Pág. 0", "Pág. 1", "DID"], {}),
+    "309": (["M30900", "M30901"], {"M30901": 5}),
+}
 CAMPOS = ["pagina", "n", "pos", "lon", "tipo", "descripcion", "contenido"]
 
 
@@ -32,27 +38,28 @@ def _fila(pagina, v):
     return {"pagina": pagina.strip(), "n": n, "pos": pos, "lon": lon, "tipo": str(v[3] or "").strip(), "descripcion": desc, "contenido": cont}
 
 
-def extraer(xls200, xlsx202):
-    import xlrd, openpyxl
-    os.makedirs(DIR, exist_ok=True)
+def extraer(modelo, ruta):
+    hojas, columnas = HOJAS[modelo]
     filas = []
-    b = xlrd.open_workbook(xls200)
-    for nombre in PAGINAS_200:
-        s = next(x for x in b.sheets() if x.name.strip() == nombre)
-        for r in range(s.nrows):
-            f = _fila(nombre, s.row_values(r))
-            if f: filas.append(f)
-    _escribir(os.path.join(DIR, "DR200.csv"), filas)
-    filas = []
-    w = openpyxl.load_workbook(xlsx202, data_only=True)
-    for nombre in PAGINAS_202:
-        for row in w[nombre].iter_rows(values_only=True):
+    if ruta.endswith(".xlsx"):
+        import openpyxl
+        w = openpyxl.load_workbook(ruta, data_only=True)
+        leer = lambda nombre: [list(r) for r in next(x for x in w.worksheets if x.title.strip() == nombre).iter_rows(values_only=True)]
+    else:
+        import xlrd
+        b = xlrd.open_workbook(ruta)
+        leer = lambda nombre: [next(x for x in b.sheets() if x.name.strip() == nombre).row_values(r)
+                               for r in range(next(x for x in b.sheets() if x.name.strip() == nombre).nrows)]
+    for nombre in hojas:
+        col = columnas.get(nombre, columnas.get("*", 6))
+        for row in leer(nombre):
             v = list(row) + [None] * 8
-            # En el 202 la columna «Validación» no existe: el contenido está en la sexta columna
-            f = _fila(nombre, [v[0], v[1], v[2], v[3], v[4], None, v[5]])
+            # Algunas hojas no tienen la columna «Validación»: el contenido está en la sexta
+            f = _fila(nombre, [v[0], v[1], v[2], v[3], v[4], None, v[col]])
             if f: filas.append(f)
-    _escribir(os.path.join(DIR, "DR202.csv"), filas)
-    print("ok")
+    os.makedirs(DIR, exist_ok=True)
+    _escribir(os.path.join(DIR, f"DR{modelo}.csv"), filas)
+    print("ok", len(filas))
 
 
 def _escribir(ruta, filas):
@@ -96,11 +103,24 @@ D202 = {
     ("dr M202 (1)", 25): "D:tipoGravamen202", ("dr M202 (1)", 26): "D:tramoIncn", ("dr M202 (1)", 27): "D:modalidad202",
     ("dr M202 (2)", 52): "D:complementaria202", ("dr M202 (2)", 53): "D:justificanteAnterior", ("dr M202 (2)", 54): "D:iban",
 }
+D131 = {("Pág. 0", 4): "D:ejercicio", ("Pág. 0", 5): "D:periodo", ("Pág. 0", 9): "D:versionPrograma", ("Pág. 0", 11): "D:nifDesarrollador",
+        ("Pág. 1", 6): "D:tipo", ("Pág. 1", 7): "D:nif", ("Pág. 1", 8): "D:nombre", ("Pág. 1", 9): "D:nombrePila",
+        ("Pág. 1", 10): "D:ejercicio", ("Pág. 1", 11): "D:periodo", ("Pág. 1", 43): "C:05",
+        ("Pág. 1", 67): "D:complementaria202", ("Pág. 1", 68): "D:justificanteAnterior", ("DID", 5): "D:iban"}
+for _k in range(5):   # cinco actividades en módulos: epígrafe, rendimiento neto, % y pago fraccionado
+    D131.update({("Pág. 1", 13 + 4 * _k): f"D:epigrafe{_k + 1}", ("Pág. 1", 14 + 4 * _k): f"C:A{_k + 1}R",
+                 ("Pág. 1", 15 + 4 * _k): f"C:A{_k + 1}P", ("Pág. 1", 16 + 4 * _k): f"C:A{_k + 1}C"})
+D309 = {("M30900", 4): "D:ejercicio", ("M30900", 5): "D:periodo", ("M30900", 9): "D:versionPrograma", ("M30900", 11): "D:nifDesarrollador",
+        ("M30901", 6): "D:tipo", ("M30901", 7): "D:nif", ("M30901", 8): "D:nombre", ("M30901", 9): "D:nombrePila",
+        ("M30901", 10): "D:ejercicio", ("M30901", 11): "D:periodo", ("M30901", 16): "D:situacion309", ("M30901", 17): "C:HI",
+        ("M30901", 59): "D:complementaria202", ("M30901", 60): "D:justificanteAnterior", ("M30901", 61): "D:iban"}
 # Prefijo de las casillas de cada página: F marcas de caracteres de la declaración, B balance y pérdidas y ganancias, C liquidación
 PREFIJO = {"DP200001": "F:", "DP200003": "B:", "DP200004": "B:", "DP200005": "B:", "DP200006": "B:", "DP200007": "B:", "DP200008": "B:"}
 # Sobres: la primera y la última fila (apertura y cierre) llevan ejercicio y periodo
 SOBRE = {"DP200000": ("<T2000{D:ejercicio}0A0000>", "</T2000{D:ejercicio}0A0000>"),
-         "dr M202 (0)": (None, "</T2020{D:ejercicio}{D:periodo}0000>")}
+         "dr M202 (0)": (None, "</T2020{D:ejercicio}{D:periodo}0000>"),
+         "Pág. 0": (None, "</T1310{D:ejercicio}{D:periodo}0000>"),
+         "M30900": (None, "</T3090{D:ejercicio}{D:periodo}0000>")}
 
 
 def tipo_cs(t):
@@ -125,12 +145,13 @@ def campo(f, mapa):
     if lon == "V": return None                                    # contenido de las páginas
     lon = int(lon)
     desc = f["descripcion"]
-    nombre = cs(f"{pagina.replace('dr M202 ', 'P').strip()} {n}. {desc}"[:120])
+    nombre = cs(f"{pagina.replace('dr M202 ', 'P').replace('Pág. ', 'P').strip()} {n}. {desc}"[:120])
     tipo = tipo_cs(t)
     extra = []
     if tipo == "Numerico":
-        porcentaje = "Porcentaje" in desc or "(%)" in desc
-        if lon == 17 or (porcentaje and lon == 5): extra.append("Decimales: 2")
+        porcentaje = "Porcentaje" in desc or "%" in desc
+        dos = re.search(r"(y|\+)\s*(2|dos) decimales", f["contenido"])
+        if lon == 17 or (porcentaje and lon == 5) or dos: extra.append("Decimales: 2")
         if t == "N": extra.append("Signo: true")
     clave = mapa.get((pagina, n))
     fijo = None
@@ -176,18 +197,21 @@ def bloque(pagina, filas, mapa, ind):
 
 def generar(salida):
     partes = ['''// <auto-generated>
-// Diseños de registro de los modelos 200 (ejercicio 2025, versión 1.02) y 202 (2025, versión 1.3) de la Agencia Tributaria, generados
-// por tools/disenos-aeat/sociedades.py a partir de los ficheros oficiales (DR200e25.xls, DR202e25.xlsx). Claves: «C:nnnnn» casilla de
-// la liquidación, «B:nnnnn» casilla del balance o de la cuenta de pérdidas y ganancias, «F:nnnnn» carácter de la declaración,
-// «D:x» dato de la declaración. No editar a mano: regenerar.
+// Diseños de registro de los modelos 200 (ejercicio 2025, versión 1.02), 202 (2025, versión 1.3), 131 (2026) y 309 (versión 1.4) de la
+// Agencia Tributaria, generados por tools/disenos-aeat/oficiales.py a partir de los ficheros oficiales (DR200e25.xls, DR202e25.xlsx,
+// DR131_2026.xlsx, dr309e23.xls). Claves: «C:nnnnn» casilla de la liquidación, «B:nnnnn» casilla del balance o de la cuenta de pérdidas
+// y ganancias, «F:nnnnn» carácter de la declaración, «D:x» dato de la declaración. No editar a mano: regenerar.
 // </auto-generated>
 namespace Contabilidad.Domain.Fiscal.Presentacion;
 
-public static class DisenosAeatSociedades
+public static class DisenosAeatOficiales
 {
 ''']
+    # El 131 de 2026 no cambia respecto del de 2025: se usa también para ese año
     for modelo, archivo, mapa, desde, nombre in [("200", "DR200.csv", D200, "2025, 1, 1", "M200_2025"),
-                                                  ("202", "DR202.csv", D202, "2025, 1, 1", "M202_2025")]:
+                                                  ("202", "DR202.csv", D202, "2025, 1, 1", "M202_2025"),
+                                                  ("131", "DR131.csv", D131, "2025, 1, 1", "M131"),
+                                                  ("309", "DR309.csv", D309, "2023, 1, 1", "M309")]:
         filas = _leer(os.path.join(DIR, archivo))
         paginas = []
         for f in filas:
@@ -201,11 +225,11 @@ public static class DisenosAeatSociedades
         partes.append(f'    public static readonly DisenoAeat {nombre} = new("{modelo}", new DateOnly({desde}), null, [\n')
         partes.extend(f"        {c},\n" for c in apertura)
         for pagina, fs in resto:
-            titulo = pagina.replace("dr M202 ", "Página ").replace("DP200", "Página ")
+            titulo = pagina.replace("dr M202 ", "Página ").replace("DP200", "Página ").replace("Pág. ", "Página ").replace("M309", "Página ")
             partes.append(f"        new BloqueAeat({cs(titulo)}, [\n{bloque(pagina, fs, mapa, '            ')}\n        ]),\n")
         partes.extend(f"        {c},\n" for c in cierre)
         partes.append("    ]);\n\n")
-    partes.append("    public static readonly IReadOnlyList<DisenoAeat> Todos = [M200_2025, M202_2025];\n}\n")
+    partes.append("    public static readonly IReadOnlyList<DisenoAeat> Todos = [M200_2025, M202_2025, M131, M309];\n}\n")
     with open(salida, "w", encoding="utf-8") as f:
         f.write("".join(partes))
     print("ok")

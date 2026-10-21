@@ -11,10 +11,12 @@ public class Modelo309Tests
         Calculador309.Calcular([new Linea309("ADQUISICION", 21, 5.2m, 1000), new Linea309("ADQUISICION", 10, 1.4m, 500),
                                 new Linea309("ISP", 21, 5.2m, 200)], recargoEquivalencia: true, d);
         var c = d.Casillas.ToDictionary(x => x.Clave, x => x.Importe);
-        Assert.Equal((1000m, 210m, 500m, 50m), (c["AIB21B"], c["AIB21C"], c["AIB10B"], c["AIB10C"]));
-        Assert.Equal((200m, 42m), (c["ISP21B"], c["ISP21C"]));
-        Assert.Equal((52m, 7m), (c["RE5.2C"], c["RE1.4C"]));                   // el recargo solo en las adquisiciones de bienes
-        Assert.Equal(361m, c["RES"]);
+        Assert.Equal((1200m, 21m, 252m), (c["01"], c["02"], c["03"]));           // régimen general por tipo (adquisiciones e ISP)
+        Assert.Equal((500m, 10m, 50m), (c["25"], c["26"], c["27"]));
+        Assert.Equal((1000m, 5.2m, 52m), (c["10"], c["11"], c["12"]));          // el recargo solo en las adquisiciones de bienes
+        Assert.Equal((500m, 1.4m, 7m), (c["13"], c["14"], c["15"]));
+        Assert.Equal((361m, 361m, 1m), (c["22"], c["24"], c["HI"]));
+        Assert.Contains(d.Avisos, a => a.Contains("cada hecho imponible"));
         Assert.Equal(361m, d.AIngresar);
     }
 
@@ -24,7 +26,7 @@ public class Modelo309Tests
         var d = new DeclaracionCalculada { Modelo = "309" };
         Calculador309.Calcular([new Linea309("ADQUISICION", 10, 1.4m, 1000)], recargoEquivalencia: false, d);
         Assert.Equal(100m, d.AIngresar);
-        Assert.DoesNotContain(d.Casillas, x => x.Clave.StartsWith("RE", StringComparison.Ordinal) && x.Clave != "RES");
+        Assert.DoesNotContain(d.Casillas, x => x.Clave == "10");
         var v = new DeclaracionCalculada { Modelo = "309" };
         Calculador309.Calcular([], false, v);
         Assert.Contains(v.Avisos, a => a.Contains("no hay que presentar"));

@@ -15,21 +15,21 @@ Para añadir un año, añade su configuración principal a `MODELOS` en `generar
 expresión nueva, el script se detiene y hay que traducirla en `MAPA` a una clave de la aplicación (`C:nn` casilla, `D:x` dato de la
 declaración, `I:x` dato de cada registro repetido) y, si hace falta, darle valor en `FicheroModelo.cs`.
 
-## Modelos 200 y 202
+## Modelos 131, 200, 202 y 309
 
-`DisenosAeatSociedades.cs` se genera con `sociedades.py` desde los diseños de registro oficiales de la AEAT (Sede → Ayuda → Diseños
-de registro → Modelos 200-299: `DR200eAA.xls` y `DR202eAA.xlsx`). Solo se extraen a `aeat/DR200.csv` y `aeat/DR202.csv` las páginas que
-rellena la aplicación, para no guardar los Excel (el del 200 ocupa 11 MB):
+`DisenosAeatOficiales.cs` se genera con `oficiales.py` desde los diseños de registro oficiales de la AEAT (Sede → Ayuda → Diseños
+de registro: `DR200eAA.xls`, `DR202eAA.xlsx`, `DR131_AAAA.xlsx`, `dr309eAA.xls`). Solo se extraen a `aeat/DR<modelo>.csv` las páginas
+que rellena la aplicación, para no guardar los Excel (el del 200 ocupa 11 MB):
 
 ```bash
 python3 -m pip install xlrd openpyxl
-python3 tools/disenos-aeat/sociedades.py extraer DR200e25.xls DR202e25.xlsx
-python3 tools/disenos-aeat/sociedades.py generar src/Contabilidad.Domain/Fiscal/Presentacion/DisenosAeatSociedades.cs
+python3 tools/disenos-aeat/oficiales.py extraer 200 DR200e25.xls     # y 202, 131, 309 con su fichero
+python3 tools/disenos-aeat/oficiales.py generar src/Contabilidad.Domain/Fiscal/Presentacion/DisenosAeatOficiales.cs
 ```
 
 Las casillas `[nnnnn]` se traducen solas (`C:` liquidación, `B:` balance y pérdidas y ganancias, `F:` caracteres de la declaración);
-los demás datos se asignan por página y número de campo en `D200` y `D202`. Con un diseño nuevo, revisa que esos números de campo
-siguen siendo los mismos y añade el año con su fecha de inicio.
+los demás datos se asignan por página y número de campo en `D200`, `D202`, `D131` y `D309`. Con un diseño nuevo, revisa que esos
+números de campo siguen siendo los mismos y añade el año con su fecha de inicio.
 
 ## Modelo 180
 

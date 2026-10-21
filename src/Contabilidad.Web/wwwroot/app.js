@@ -1414,11 +1414,11 @@ function muestraDeclaracion(v) {
   // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
   // 420/425: XML para el programa de ayuda de la Agencia Tributaria Canaria
   const atc = ['420', '425'].includes(v.modelo);
-  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '347', '349', '190', '180', '200', '202'].includes(v.modelo));
+  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '131', '309', '347', '349', '190', '180', '200', '202'].includes(v.modelo));
   $('#mfFichero').hidden = !conFichero;
   $('#mfFichero').querySelector('summary').textContent = atc ? 'Fichero XML para la Agencia Tributaria Canaria' : 'Fichero para la Agencia Tributaria';
   if (conFichero) {
-    const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
+    const autoliq = ['303', '111', '115', '130', '131', '309'].includes(v.modelo);
     const is = ['200', '202'].includes(v.modelo);
     $('#mfFDomL').hidden = !(autoliq || is) || v.resultado <= 0;
     $('#mfFIbanL').hidden = !autoliq && !is && v.modelo !== '420';

@@ -55,9 +55,9 @@ public static class FicheroModelo
 {
     public const string VersionPrograma = "1.00";
 
-    public static readonly string[] Modelos = ["303", "390", "111", "115", "130", "347", "349", "190", "180", "200", "202"];
+    public static readonly string[] Modelos = ["303", "390", "111", "115", "130", "131", "309", "347", "349", "190", "180", "200", "202"];
 
-    private static IEnumerable<DisenoAeat> Disenos => DisenosAeat.Todos.Concat(DisenosAeatSociedades.Todos).Append(Diseno180.M180);
+    private static IEnumerable<DisenoAeat> Disenos => DisenosAeat.Todos.Concat(DisenosAeatOficiales.Todos).Append(Diseno180.M180);
 
     public static DisenoAeat Diseno(string modelo, int anio)
     {
@@ -87,15 +87,16 @@ public static class FicheroModelo
             "111" => Importe(d.Casillas, "30") ?? d.Resultado,
             "115" => Importe(d.Casillas, "05") ?? d.Resultado,
             "130" => Importe(d.Casillas, "19") ?? d.Resultado,
+            "131" => Importe(d.Casillas, "15") ?? d.Resultado,
             "200" => Importe(d.Casillas, "00621") ?? d.Resultado,
             _ => d.Resultado,
         };
-        if (r == 0) return "N";
+        if (r == 0) return d.Modelo == "309" ? "I" : "N";
         if (r > 0) return cmd.Domiciliar ? "U" : "I";
         return d.Modelo switch
         {
             "303" => d.ADevolver > 0 ? "D" : "C",
-            "130" => d.Periodo == "4T" ? "N" : "B",
+            "130" or "131" => d.Periodo == "4T" ? "N" : "B",
             "200" => "D",
             _ => "N",
         };

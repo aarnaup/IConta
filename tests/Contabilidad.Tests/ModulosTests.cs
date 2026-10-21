@@ -29,9 +29,17 @@ public class ModulosTests
         var d = new DeclaracionCalculada();
         CalculadorModulos.Calcular131([Bar(), new ModulosActividad(null, "Huerta", 0, 0, true, 0, 0, 0, 0)], 5000m, 50m, d);
         Assert.Equal(800m, d["A1C"]);
-        Assert.Equal(100m, d["AG"]);
-        Assert.Equal(850m, d["RES"]);
+        Assert.Equal((20_000m, 800m), (d["01"], d["02"]));
+        Assert.Equal((5_000m, 100m), (d["05"], d["06"]));
+        Assert.Equal((900m, 50m, 850m), (d["07"], d["08"], d["10"]));
+        Assert.Equal(850m, d["15"]);
         Assert.Equal(850m, d.AIngresar);
+        // Negativos de trimestres anteriores: se deducen hasta dejar la diferencia a cero
+        var n = new DeclaracionCalculada();
+        CalculadorModulos.Calcular131([Bar()], 0, 0, n, negativosAnteriores: 1_000m);
+        Assert.Equal((800m, 0m), (n["11"], n["15"]));
+        Assert.Throws<ReglaContableException>(() => CalculadorModulos.Calcular131(Enumerable.Range(1, 6).Select(i => Bar() with { Actividad = $"A{i}" }).ToList(),
+            0, 0, new DeclaracionCalculada()));
     }
 
     [Fact]

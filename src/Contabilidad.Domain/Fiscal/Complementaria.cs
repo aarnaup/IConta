@@ -16,7 +16,7 @@ public static class Complementaria
     // Casilla de «a deducir (resultado de la anterior)» y de «resultado» en cada autoliquidación
     private static readonly Dictionary<string, (string Deducir, string Resultado)> Casillas = new()
     {
-        ["303"] = ("70", "71"), ["111"] = ("29", "30"), ["115"] = ("04", "05"), ["130"] = ("18", "19"), ["131"] = ("DED", "RES"), ["200"] = ("ANT", "00621"), ["202"] = ("31", "34"), ["420"] = ("DED", "LIQ"), ["309"] = ("DED", "RES"),
+        ["303"] = ("70", "71"), ["111"] = ("29", "30"), ["115"] = ("04", "05"), ["130"] = ("18", "19"), ["131"] = ("14", "15"), ["200"] = ("ANT", "00621"), ["202"] = ("31", "34"), ["420"] = ("DED", "LIQ"), ["309"] = ("23", "24"),
     };
 
     public static bool EsAutoliquidacion(string modelo) => Casillas.ContainsKey(modelo);
