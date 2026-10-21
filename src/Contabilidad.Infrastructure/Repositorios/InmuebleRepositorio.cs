@@ -35,7 +35,8 @@ public sealed partial class InmuebleRepositorio(IConexionFactory conexiones) : I
     {
         if (i.Situacion is < 1 or > 4) throw new ReglaContableException("La situación del inmueble es 1, 2, 3 o 4.");
         var rc = string.IsNullOrWhiteSpace(i.ReferenciaCatastral) ? null : i.ReferenciaCatastral.Trim().ToUpperInvariant().Replace(" ", "");
-        if (i.Situacion is 1 or 2 && rc is null) throw new ReglaContableException("Con la situación 1 o 2 indica la referencia catastral.");
+        if (i.Situacion != 4 && rc is null) throw new ReglaContableException("Indica la referencia catastral o elige la situación 4 (sin referencia catastral).");
+        if (i.Situacion == 4) rc = null;
         if (rc is not null && !RefCatastral().IsMatch(rc)) throw new ReglaContableException("La referencia catastral tiene 20 caracteres (letras y números).");
         var via = (i.NombreVia ?? "").Trim();
         if (via.Length is 0 or > 100) throw new ReglaContableException("Indica la dirección del inmueble (nombre de la vía, máximo 100 caracteres).");
@@ -48,7 +49,7 @@ public sealed partial class InmuebleRepositorio(IConexionFactory conexiones) : I
         var muni = T(i.CodigoMunicipio, 5, "El código de municipio");
         if (muni is not null && !Regex.IsMatch(muni, "^[0-9]{5}$")) throw new ReglaContableException("El código INE del municipio son 5 dígitos.");
         var cp = T(i.CodigoPostal, 5, "El código postal");
-        if (cp is not null && i.Situacion != 4 && !Regex.IsMatch(cp, "^[0-9]{5}$")) throw new ReglaContableException("El código postal son 5 dígitos.");
+        if (cp is not null && !Regex.IsMatch(cp, "^[0-9]{5}$")) throw new ReglaContableException("El código postal son 5 dígitos.");
         await using var cn = await conexiones.AbrirAsync(ct);
         var existe = await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
             "SELECT EXISTS (SELECT 1 FROM conta.tercero WHERE id = @t AND empresa_id = @empresaId)", new { t = i.TerceroId, empresaId }, cancellationToken: ct));

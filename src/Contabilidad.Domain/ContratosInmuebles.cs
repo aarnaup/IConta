@@ -7,8 +7,8 @@ public sealed class InmuebleDto
     /// <summary>Arrendador (tercero).</summary>
     public long TerceroId { get; set; }
     public string? Arrendador { get; set; }
-    /// <summary>1 con referencia catastral en España salvo País Vasco y Navarra, 2 en País Vasco o Navarra, 3 sin referencia catastral,
-    /// 4 en el extranjero.</summary>
+    /// <summary>Situación (claves del modelo 180): 1 con referencia catastral en España salvo País Vasco y Navarra, 2 en el País Vasco,
+    /// 3 en Navarra, 4 sin referencia catastral.</summary>
     public short Situacion { get; set; } = 1;
     public string? ReferenciaCatastral { get; set; }
     /// <summary>Tipo de vía (CL, AV, PZ…).</summary>

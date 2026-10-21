@@ -488,8 +488,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                              WHERE i.empresa_id = @empresaId AND e.fecha_inicio <= @inicio), 0)
                  + COALESCE((SELECT SUM(GREATEST(-COALESCE(bi.importe, 0), 0) - COALESCE(cp.importe, 0))
                              FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
-                             LEFT JOIN fiscal.declaracion_casilla bi ON bi.declaracion_id = d.id AND bi.casilla = 'BI'
-                             LEFT JOIN fiscal.declaracion_casilla cp ON cp.declaracion_id = d.id AND cp.casilla = 'COMP'
+                             LEFT JOIN fiscal.declaracion_casilla bi ON bi.declaracion_id = d.id AND bi.casilla IN ('BI', '00552')
+                             LEFT JOIN fiscal.declaracion_casilla cp ON cp.declaracion_id = d.id AND cp.casilla IN ('COMP', '00547')
                              WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND d.fecha_fin < @inicio
                                AND d.numero_presentacion = (SELECT MAX(x.numero_presentacion) FROM fiscal.declaracion x
                                     WHERE x.empresa_id = d.empresa_id AND x.modelo_id = d.modelo_id AND x.anio = d.anio AND x.periodo = d.periodo
@@ -511,14 +511,24 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var q = new { empresaId, ejercicioId = ej.Id, desde = ej.FechaInicio, hasta = ej.FechaFin };
         var resultado = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlResultadoIs, q, tx, cancellationToken: ct));
         var retenciones = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition(SqlRetencionesIs, q, tx, cancellationToken: ct));
-        var pagos = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
-            SELECT COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
+        var pagos = (await cn.QueryAsync<(string Periodo, decimal Importe)>(new CommandDefinition("""
+            SELECT d.periodo, COALESCE(SUM(d.a_ingresar), 0) FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '202'
             WHERE d.empresa_id = @empresaId AND d.ejercicio_id = @ejercicioId AND d.estado = 'PRESENTADA'
+            GROUP BY d.periodo
+            """, q, tx, cancellationToken: ct))).ToDictionary(x => x.Periodo, x => x.Importe);
+        // Gasto por impuesto ya contabilizado (si se registró antes de calcular el 200)
+        var impuesto = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
+            SELECT COALESCE(SUM(a.debe - a.haber), 0)
+            FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id JOIN conta.cuenta c ON c.id = a.cuenta_id
+            WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
+              AND s.origen NOT IN ('APERTURA', 'REGULARIZACION', 'CIERRE') AND s.fecha BETWEEN @desde AND @hasta
+              AND (c.codigo LIKE '630%' OR c.codigo LIKE '633%' OR c.codigo LIKE '638%')
             """, q, tx, cancellationToken: ct));
         var datos = await SociedadesRepositorio.LeerAsync(cn, tx, empresaId, ej.Id, ct);
         var bins = await BinsDisponiblesAsync(cn, tx, empresaId, ej.FechaInicio, ct);
         CalculadorSociedades.Calcular200(new Entrada200(resultado, datos.Lista, datos.ReservaCapitalizacion, bins, datos.Incn, datos.Bonificaciones,
-            datos.Deducciones, retenciones, pagos, new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin), d);
+            datos.Deducciones, retenciones, (pagos.GetValueOrDefault("1P"), pagos.GetValueOrDefault("2P"), pagos.GetValueOrDefault("3P")),
+            new TipoGravamenIs(empresa.IsTipo, empresa.IsPorcentaje), ej.FechaInicio, ej.FechaFin, impuesto), d);
         if (ej.FechaFin.DayNumber - ej.FechaInicio.DayNumber < 364)
             d.Avisos.Add("Periodo impositivo inferior al año: revisa los límites proporcionales (reserva de capitalización, compensación de bases negativas).");
     }
@@ -557,8 +567,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         {
             // Último periodo impositivo cuyo plazo de declaración haya vencido el primer día del plazo del pago fraccionado
             var ultimo = await cn.QueryFirstOrDefaultAsync<decimal?>(new CommandDefinition("""
-                SELECT COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'CL'), 0)
-                     - COALESCE((SELECT importe FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla = 'RET'), 0)
+                SELECT COALESCE((SELECT SUM(importe) FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('CL', '00592')), 0)
+                     - COALESCE((SELECT SUM(importe) FROM fiscal.declaracion_casilla WHERE declaracion_id = d.id AND casilla IN ('RET', '01766')), 0)
                 FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id AND m.codigo = '200'
                 WHERE d.empresa_id = @empresaId AND d.estado = 'PRESENTADA' AND (d.fecha_fin + interval '6 months 25 days')::date < @plazo
                 ORDER BY d.fecha_fin DESC, d.numero_presentacion DESC LIMIT 1

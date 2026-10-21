@@ -1049,10 +1049,13 @@ async function verSociedades() {
   pintaAjustesIs();
 }
 function pintaAjustesIs() {
+  const clases = IS.clases || [];
+  const opcClase = c => clases.map(x => `<option value="${x.codigo}" ${x.codigo === (c || 'OTRAS') ? 'selected' : ''}>${esc(x.texto)}</option>`).join('');
   $('#isAjustes').innerHTML = IS.ajustes.map((a, i) => `<tr><td><input data-i="${i}" data-k="concepto" value="${esc(a.concepto)}" aria-label="Concepto"></td>
+    <td><select data-i="${i}" data-k="clase" aria-label="Casilla del modelo 200">${opcClase(a.clase)}</select></td>
     <td><input class="num" data-i="${i}" data-k="importe" inputmode="decimal" value="${String(a.importe).replace('.', ',')}" aria-label="Importe"></td>
     <td><button class="x" type="button" data-del="${i}" aria-label="Quitar">×</button></td></tr>`).join('')
-    || '<tr><td colspan="3" class="vacio">Sin ajustes extracontables.</td></tr>';
+    || '<tr><td colspan="4" class="vacio">Sin ajustes extracontables.</td></tr>';
   $('#isSugerencias').innerHTML = IS.sugerencias.map((a, i) => `<li>${esc(a.concepto)}: ${fmt(a.importe)}
     <button class="btn" type="button" data-sug="${i}">Añadir</button></li>`).join('');
 }
@@ -1065,7 +1068,7 @@ $('#isSugerencias').addEventListener('click', e => {
   const i = e.target.dataset.sug; if (i === undefined) return;
   IS.ajustes.push({ ...IS.sugerencias[+i] }); pintaAjustesIs();
 });
-$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0 }); pintaAjustesIs(); };
+$('#isAnadir').onclick = () => { IS.ajustes.push({ concepto: '', importe: 0, clase: 'OTRAS' }); pintaAjustesIs(); };
 $('#isGuardar').onclick = async () => {
   try {
     const cuerpo = { ...IS };
@@ -1260,7 +1263,7 @@ $('#prGuardar').onclick = async () => {
 
 // ------------------------------------------------------------ inmuebles arrendados (180)
 const IM = { lista: [], sel: null };
-const sitTxt = { 1: 'con referencia catastral', 2: 'País Vasco o Navarra', 3: 'sin referencia catastral', 4: 'extranjero' };
+const sitTxt = { 1: 'España salvo País Vasco y Navarra', 2: 'País Vasco', 3: 'Navarra', 4: 'sin referencia catastral' };
 async function cargaInmuebles() {
   const [lista, terceros] = await Promise.all([api(urlE('/inmuebles')), api(urlE('/terceros'))]);
   IM.lista = lista;
@@ -1395,14 +1398,16 @@ function muestraDeclaracion(v) {
   // Fichero AEAT: solo de declaraciones guardadas de los modelos con diseño de registro
   // 420/425: XML para el programa de ayuda de la Agencia Tributaria Canaria
   const atc = ['420', '425'].includes(v.modelo);
-  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '347', '349', '190'].includes(v.modelo));
+  const conFichero = !!v.id && (atc || ['303', '390', '111', '115', '130', '347', '349', '190', '180', '200', '202'].includes(v.modelo));
   $('#mfFichero').hidden = !conFichero;
   $('#mfFichero').querySelector('summary').textContent = atc ? 'Fichero XML para la Agencia Tributaria Canaria' : 'Fichero para la Agencia Tributaria';
   if (conFichero) {
     const autoliq = ['303', '111', '115', '130'].includes(v.modelo);
-    $('#mfFDomL').hidden = !autoliq || v.resultado <= 0;
-    $('#mfFIbanL').hidden = !autoliq && v.modelo !== '420';
-    $('#mfFTelL').hidden = autoliq; $('#mfFConL').hidden = autoliq || atc;
+    const is = ['200', '202'].includes(v.modelo);
+    $('#mfFDomL').hidden = !(autoliq || is) || v.resultado <= 0;
+    $('#mfFIbanL').hidden = !autoliq && !is && v.modelo !== '420';
+    $('#mfFTelL').hidden = autoliq || v.modelo === '202'; $('#mfFConL').hidden = autoliq || atc || is;
+    $('#mfFCnaeL').hidden = !is;
     $('#mfFSvpL').hidden = $('#mfFMunL').hidden = !atc;
     $('#mfFPagoL').hidden = v.modelo !== '420' || v.resultado <= 0;
     $('#mfFExoL').hidden = !(v.modelo === '303' && ['4T', '12'].includes(v.periodo));
@@ -1433,7 +1438,8 @@ $('#mfFDescargar').onclick = async () => {
       domiciliar: $('#mfFDom').value === 'true' && !$('#mfFDomL').hidden, iban: $('#mfFIban').value || null,
       telefono: $('#mfFTel').value || null, contacto: $('#mfFCon').value || null,
       exonerado390: $('#mfFExo').value === 'true' && !$('#mfFExoL').hidden,
-      siglasVia: $('#mfFSvp').value || null, codigoMunicipio: $('#mfFMun').value || null, formaPagoAtc: $('#mfFPago').value }, 'modelo.txt');
+      siglasVia: $('#mfFSvp').value || null, codigoMunicipio: $('#mfFMun').value || null, formaPagoAtc: $('#mfFPago').value,
+      cnae: $('#mfFCnaeL').hidden ? null : $('#mfFCnae').value || null }, 'modelo.txt');
     msg($('#mfFMsg'), `Descargado ${nombre}.`, 'ayuda ok-texto');
   } catch (e) { msg($('#mfFMsg'), e.message, 'ayuda err-texto'); }
 };

@@ -19,6 +19,8 @@ public sealed class DatosSociedadesDto
     public decimal BinsAnteriores { get; set; }
     /// <summary>Ajustes que se proponen desde la contabilidad (diferencias de amortización contable y fiscal…).</summary>
     public List<AjusteIs> Sugerencias { get; set; } = [];
+    /// <summary>Clases de ajuste (casilla del modelo 200 en la que va cada uno).</summary>
+    public IReadOnlyList<ClasesAjusteIs.Clase> Clases => ClasesAjusteIs.Todas;
 }
 
 public interface ISociedadesRepositorio
@@ -57,14 +59,14 @@ public sealed class SociedadesRepositorio(IConexionFactory conexiones, IInmovili
         var sugerencias = new List<AjusteIs>();
         var dif = await inmovilizado.DiferenciasFiscalesAsync(empresaId, ejercicioId, 25m, ct);
         foreach (var x in dif.Elementos.Where(x => x.Ajuste != 0))
-            sugerencias.Add(new AjusteIs($"Amortización contable/fiscal {x.Codigo} {x.Descripcion}", x.Ajuste));
+            sugerencias.Add(new AjusteIs($"Amortización contable/fiscal {x.Codigo} {x.Descripcion}", x.Ajuste, "AMORTIZACION"));
         var multas = await cn.ExecuteScalarAsync<decimal>(new CommandDefinition("""
             SELECT COALESCE(SUM(a.debe - a.haber), 0) FROM conta.apunte a JOIN conta.asiento s ON s.id = a.asiento_id
             JOIN conta.cuenta c ON c.id = a.cuenta_id
             WHERE a.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado = 'CONTABILIZADO'
               AND s.origen NOT IN ('REGULARIZACION', 'CIERRE') AND c.codigo LIKE '678%'
             """, new { empresaId, ejercicioId }, cancellationToken: ct));
-        if (multas != 0) sugerencias.Add(new AjusteIs("Gastos excepcionales (678): revisa si son multas, sanciones u otros no deducibles", multas));
+        if (multas != 0) sugerencias.Add(new AjusteIs("Gastos excepcionales (678): revisa si son multas, sanciones u otros no deducibles", multas, "MULTAS"));
         return new DatosSociedadesDto
         {
             EjercicioId = ejercicioId, Ajustes = f.Lista, ReservaCapitalizacion = f.ReservaCapitalizacion, Bonificaciones = f.Bonificaciones,
@@ -84,7 +86,8 @@ public sealed class SociedadesRepositorio(IConexionFactory conexiones, IInmovili
     {
         if (datos.ReservaCapitalizacion < 0 || datos.Bonificaciones < 0 || datos.Deducciones < 0 || datos.Incn < 0 || datos.BinsAnteriores < 0)
             throw new ReglaContableException("Los importes no pueden ser negativos (los ajustes sí: negativo es una disminución).");
-        var ajustes = (datos.Ajustes ?? []).Where(a => a.Importe != 0).Select(a => a with { Concepto = (a.Concepto ?? "").Trim() }).ToList();
+        var ajustes = (datos.Ajustes ?? []).Where(a => a.Importe != 0).Select(a => a with { Concepto = (a.Concepto ?? "").Trim(), Clase = string.IsNullOrWhiteSpace(a.Clase) ? null : a.Clase.Trim() }).ToList();
+        foreach (var a in ajustes) ClasesAjusteIs.De(a.Clase);
         if (ajustes.Any(a => a.Concepto.Length is 0 or > 200)) throw new ReglaContableException("Cada ajuste necesita un concepto (hasta 200 caracteres).");
         await using var cn = await conexiones.AbrirAsync(ct);
         await EjercicioAsync(cn, empresaId, ejercicioId, ct);

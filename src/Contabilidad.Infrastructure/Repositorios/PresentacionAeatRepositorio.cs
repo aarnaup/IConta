@@ -91,10 +91,79 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
             if (string.IsNullOrWhiteSpace(cmd.ActividadNombre)) cmd.ActividadNombre = e.Actividad;
         }
 
+        var extra = v.Modelo is "200" or "202" ? await DatosSociedadesAsync(cn, empresaId, v, ct) : null;
         var d = new DeclaracionParaFichero(v.Id ?? 0, v.Modelo, v.Anio, v.Periodo, v.TipoDeclaracion, NifEspanol(e.Nif), e.Nombre,
             v.Casillas, v.Resultado, v.ADevolver, anterior?.Trim(), registros,
-            CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347);
+            CriterioCaja: e.RegimenIva == "CRITERIO_CAJA", RegimenSimplificado: e.RegimenIva == "SIMPLIFICADO", PresentaModelo347: hay347,
+            Inicio: v.FechaInicio, Fin: v.FechaFin, Extra: extra);
         return FicheroModelo.Generar(d, cmd, nifDesarrollador);
+    }
+
+    private sealed class SociedadesFila
+    {
+        public long EjercicioId { get; set; }
+        public string IsTipo { get; set; } = "GENERAL";
+        public decimal? IsPorcentaje { get; set; }
+        public decimal Incn { get; set; }
+    }
+
+    /// <summary>
+    /// Datos del 200 y del 202 que no están en las casillas guardadas: caracteres de la declaración, cifra de negocios y, en el 200,
+    /// el balance y la cuenta de pérdidas y ganancias al cierre del periodo impositivo.
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<string, object?>> DatosSociedadesAsync(Npgsql.NpgsqlConnection cn, long empresaId, DeclaracionVista v,
+        CancellationToken ct)
+    {
+        var f = await cn.QuerySingleOrDefaultAsync<SociedadesFila>(new CommandDefinition("""
+            SELECT e.id AS ejercicio_id, em.is_tipo, em.is_porcentaje, COALESCE(i.incn, 0) AS incn
+            FROM core.ejercicio e JOIN core.empresa em ON em.id = e.empresa_id
+            LEFT JOIN fiscal.impuesto_sociedades i ON i.empresa_id = e.empresa_id AND i.ejercicio_id = e.id
+            WHERE e.empresa_id = @empresaId AND e.fecha_inicio = @inicio
+            """, new { empresaId, inicio = v.FechaInicio }, cancellationToken: ct))
+            ?? throw new ReglaContableException("No se encuentra el ejercicio del periodo impositivo de la declaración.");
+        var x = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["D:incn"] = f.Incn,
+            // Reducida dimensión (art. 101 LIS) con el tipo específico de estas entidades y microempresas (INCN inferior a 1 M€)
+            ["D:reducidaDimension202"] = f.IsTipo is "REDUCIDA_DIMENSION" or "MICRO" ? "X" : "",
+            ["D:incnMenor1M202"] = f.IsTipo == "MICRO" ? "X" : "",
+            ["D:tipoGravamen202"] = TipoGravamen202(new TipoGravamenIs(f.IsTipo, f.IsPorcentaje), v.FechaInicio.Year),
+        };
+        if (v.Modelo != "200") return x;
+
+        decimal C(string k) => FicheroModelo.Importe(v.Casillas, k) ?? 0;
+        x["F:00006"] = f.IsTipo is "REDUCIDA_DIMENSION" or "MICRO" ? 1 : 0;   // incentivos de reducida dimensión
+        x["F:00071"] = f.IsTipo == "NUEVA_CREACION" ? 1 : 0;                 // tipo reducido de nueva creación (art. 29.1)
+        x["F:00088"] = f.IsTipo == "MICRO" ? 1 : 0;                           // tipo reducido con INCN inferior a 1 M€
+        x["F:00027"] = C("00552") <= 0 ? 1 : 0;                               // base imponible negativa o cero
+        x["D:tipoEjercicio"] = 1;
+
+        var saldos = (await ConsultasContables.SaldosAsync(cn, null, empresaId, f.EjercicioId, v.FechaFin, null, null, ct, sinAsientosDeCierre: true))
+            .GroupBy(s => s.Codigo).Select(g => new Domain.Balances.SaldoBalance(g.Key, g.Key, g.Sum(s => s.Saldo))).ToList();
+        var estados = Estados200.Casillas(saldos, out var sinClasificar);
+        foreach (var (k, valor) in estados) x[k] = valor;
+        if (sinClasificar.Count > 0)
+            throw new ReglaContableException("Hay cuentas con saldo que no van a ninguna casilla del balance del 200: " +
+                string.Join(", ", sinClasificar.Select(s => s.Codigo)) + ".");
+        // El resultado antes de impuestos de la contabilidad tiene que ser el del 200 guardado
+        var antes = (decimal)x["B:00325"]!;
+        if (antes != C("00501"))
+            throw new ReglaContableException($"El resultado antes de impuestos de la contabilidad ({antes:N2}) no coincide con el del 200 ({C("00501"):N2}).",
+                "Ha cambiado la contabilidad desde que calculaste la declaración: vuelve a calcularla.");
+        // Corrección por el impuesto: el gasto contabilizado ahora (puede haberse registrado después de calcular)
+        var impuesto = -(decimal)x["B:00326"]!;
+        x["C:00500"] = (decimal)x["B:00500"]!;
+        x["C:00301"] = impuesto > 0 ? impuesto : 0m;
+        x["C:00302"] = impuesto < 0 ? -impuesto : 0m;
+        return x;
+    }
+
+    /// <summary>Tipo de gravamen del ejercicio en curso para el 202 (texto de 15 posiciones): «25» o, con dos tipos, «21/22».</summary>
+    private static string TipoGravamen202(TipoGravamenIs tipo, int anio)
+    {
+        var (t1, resto) = CalculadorSociedades.Tipos(tipo, anio);
+        var i = System.Globalization.CultureInfo.InvariantCulture;
+        return t1 == resto ? resto.ToString("0.##", i) : $"{t1.ToString("0.##", i)}/{resto.ToString("0.##", i)}";
     }
 
     private sealed class DomicilioFila
@@ -205,6 +274,16 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
                 if (d.Operaciones.Any(o => o.Base < 0))
                     throw new ReglaContableException("Hay operadores con base negativa: el 349 no los admite.",
                         "Indica la factura rectificada para declararla como rectificación.");
+                break;
+            }
+            case "180":
+            {
+                var lineas = det.Deserialize<List<PerceptorResumen>>(Json) ?? [];
+                var sinInmueble = lineas.Where(l => l.Inmueble is null).Select(l => l.Nombre).Distinct().ToList();
+                if (sinInmueble.Count > 0)
+                    throw new ReglaContableException("Faltan los datos del inmueble de: " + string.Join(", ", sinInmueble) + ".",
+                        "Dalo de alta en Modelos fiscales → Inmuebles arrendados, indícalo en sus facturas y vuelve a calcular el 180.");
+                r["registros"] = lineas.Select(l => Diseno180.Registro(l, l.Inmueble!)).ToList();
                 break;
             }
             case "190":

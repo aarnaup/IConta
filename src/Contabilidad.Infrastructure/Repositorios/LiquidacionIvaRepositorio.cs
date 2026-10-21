@@ -127,7 +127,9 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         var casillas = (await cn.QueryAsync<(string Casilla, decimal Importe)>(new CommandDefinition(
             "SELECT casilla, importe FROM fiscal.declaracion_casilla WHERE declaracion_id = @id", new { id = d.Id }, tx, cancellationToken: ct)))
             .ToDictionary(x => x.Casilla, x => x.Importe);
-        decimal C(string k) => casillas.GetValueOrDefault(k);
+        // Claves oficiales y, en las declaraciones guardadas antes de usarlas, las descriptivas
+        decimal C(string k, string? antigua = null) => casillas.TryGetValue(k, out var v) ? v : antigua is null ? 0 : casillas.GetValueOrDefault(antigua);
+        var resultado = d.Modelo == "202" ? C("34") + C("03") + casillas.GetValueOrDefault("RES") : C("00621", "RES");
 
         async Task<long> Cuenta(string codigo) => await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
             "SELECT inmov.asegurar_cuenta(@empresaId, @codigo)", new { empresaId, codigo }, tx, cancellationToken: ct))
@@ -143,19 +145,20 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
         if (d.Modelo == "202")
         {
             concepto = $"Pago fraccionado del Impuesto sobre Sociedades {d.Periodo} {d.Anio}";
-            apuntes = GeneradorAsientoSociedades.PagoFraccionado(C("RES"), cuentas, canal);
+            apuntes = GeneradorAsientoSociedades.PagoFraccionado(resultado, cuentas, canal);
             avisos.Add("El pago se contabiliza al pagar (4752 contra el banco), desde tesorería o con un asiento.");
         }
         else
         {
             concepto = $"Impuesto sobre Sociedades del ejercicio {ej.FechaInicio:yyyy}" + (ej.FechaInicio.Year != ej.FechaFin.Year ? $"/{ej.FechaFin:yy}" : "");
-            var tipo = C("TG");
+            var tipo = C("00558", "TG");
             var dif = await inmovilizado.DiferenciasFiscalesAsync(empresaId, ejercicioId, tipo, ct);
             var saldos = await ConsultasContables.SaldosAsync(cn, tx, empresaId, ejercicioId, fecha, [], [cuentas.ActivoDiferido, cuentas.PasivoDiferido], ct,
                 sinAsientosDeCierre: true);
             var saldoActivo = saldos.Where(s => s.CuentaId == cuentas.ActivoDiferido).Sum(s => s.Saldo);
             var saldoPasivo = -saldos.Where(s => s.CuentaId == cuentas.PasivoDiferido).Sum(s => s.Saldo);
-            apuntes = GeneradorAsientoSociedades.Liquidacion(C("CL"), C("RET"), C("PF"), dif.ActivoDiferido, saldoActivo, dif.PasivoDiferido,
+            apuntes = GeneradorAsientoSociedades.Liquidacion(C("00592", "CL"), C("01766", "RET"),
+                C("00601") + C("00603") + C("00605") + casillas.GetValueOrDefault("PF"), dif.ActivoDiferido, saldoActivo, dif.PasivoDiferido,
                 saldoPasivo, cuentas, canal);
             if (dif.ActivoDiferido != saldoActivo || dif.PasivoDiferido != saldoPasivo)
                 avisos.Add($"Impuesto diferido de las diferencias de amortización al {tipo:0.##} %: activo (4740) {dif.ActivoDiferido:N2}, pasivo (479) {dif.PasivoDiferido:N2}.");
@@ -168,7 +171,7 @@ public sealed class LiquidacionIvaRepositorio(IConexionFactory conexiones, IAsie
             "SELECT id, codigo, nombre FROM conta.cuenta WHERE id = ANY(@ids)", new { ids = apuntes.Select(x => x.CuentaId).Distinct().ToArray() }, tx,
             cancellationToken: ct))).ToDictionary(x => x.Id);
         var previo = apuntes.Select(x => new ApuntePrevioDto(x.CuentaId, codigos[x.CuentaId].Codigo, codigos[x.CuentaId].Nombre, x.CanalId, x.Debe, x.Haber, concepto)).ToList();
-        var vista = new LiquidacionIvaVista(d.Id, d.Modelo, d.Anio, d.Periodo, fecha, diarioId, concepto, C("RES"),
+        var vista = new LiquidacionIvaVista(d.Id, d.Modelo, d.Anio, d.Periodo, fecha, diarioId, concepto, resultado,
             [], previo, avisos, null, null);
         return new Calculo(d, cmdAsiento, vista);
     }

@@ -8,32 +8,59 @@ public class SociedadesTests
     private static readonly DateOnly Ini = new(2026, 1, 1), Fin = new(2026, 12, 31);
 
     private static DeclaracionCalculada Calc(decimal resultado, TipoGravamenIs tipo, decimal bins = 0, IReadOnlyList<AjusteIs>? ajustes = null,
-        decimal reserva = 0, decimal ret = 0, decimal pagos = 0, decimal deduc = 0, DateOnly? ini = null, DateOnly? fin = null)
+        decimal reserva = 0, decimal ret = 0, decimal pagos = 0, decimal deduc = 0, DateOnly? ini = null, DateOnly? fin = null, decimal impuesto = 0)
     {
         var d = new DeclaracionCalculada { Modelo = "200" };
-        CalculadorSociedades.Calcular200(new Entrada200(resultado, ajustes ?? [], reserva, bins, 0, 0, deduc, ret, pagos, tipo, ini ?? Ini, fin ?? Fin), d);
+        CalculadorSociedades.Calcular200(new Entrada200(resultado, ajustes ?? [], reserva, bins, 0, 0, deduc, ret, (pagos, 0, 0), tipo, ini ?? Ini,
+            fin ?? Fin, impuesto), d);
         return d;
     }
 
     [Fact]
     public void Tipo_general_con_ajustes_retenciones_y_pagos_fraccionados()
     {
-        var d = Calc(100_000m, new("GENERAL"), ajustes: [new("Multas", 2_000m), new("Amortización fiscal", -12_000m)], ret: 1_000m, pagos: 5_000m);
-        Assert.Equal(90_000m, d["BIP"]);
-        Assert.Equal(22_500m, d["CI"]);
-        Assert.Equal(16_500m, d["CD"]);
-        Assert.Equal(16_500m, d.AIngresar);
+        var d = Calc(100_000m, new("GENERAL"), ajustes: [new("Multas", 2_000m, "MULTAS"), new("Amortización fiscal", -12_000m, "AMORTIZACION"),
+            new("Otro", 500m), new("Otro más", 250m, "OTRAS")], ret: 1_000m, pagos: 5_000m);
+        Assert.Equal(100_000m, d["00500"]);
+        Assert.Equal(100_000m, d["00501"]);
+        Assert.Equal(2_000m, d["01815"]);
+        Assert.Equal(12_000m, d["00304"]);
+        Assert.Equal(750m, d["00413"]);
+        Assert.Equal(90_750m, d["00550"]);
+        Assert.Equal(25m, d["00558"]);
+        Assert.Equal(22_687.50m, d["00562"]);
+        Assert.Equal(22_687.50m, d["00592"]);
+        Assert.Equal(1_000m, d["01766"]);
+        Assert.Equal(21_687.50m, d["00599"]);
+        Assert.Equal(5_000m, d["00601"]);
+        Assert.Equal(16_687.50m, d["00611"]);
+        Assert.Equal(16_687.50m, d["00621"]);
+        Assert.Equal(16_687.50m, d.AIngresar);
+    }
+
+    [Fact]
+    public void El_gasto_por_impuesto_contabilizado_se_corrige_y_las_clases_validan_el_signo()
+    {
+        var d = Calc(100_000m, new("GENERAL"), impuesto: 25_000m);
+        Assert.Equal(75_000m, d["00500"]);
+        Assert.Equal(25_000m, d["00301"]);
+        Assert.Equal(100_000m, d["00550"]);
+        Assert.Throws<ReglaContableException>(() => Calc(1m, new("GENERAL"), ajustes: [new("Multa devuelta", -10m, "MULTAS")]));
+        Assert.Throws<ReglaContableException>(() => Calc(1m, new("GENERAL"), ajustes: [new("X", 10m, "INVENTADA")]));
+        var m = Calc(100_000m, new("MICRO"));
+        Assert.Equal(21m, m["00558"]);
+        Assert.Equal(19m, m["TG1"]);
     }
 
     [Fact]
     public void Compensa_bases_negativas_y_genera_las_nuevas()
     {
         var d = Calc(50_000m, new("GENERAL"), bins: 80_000m);
-        Assert.Equal(50_000m, d["COMP"]);   // hasta 1 M€ sin límite porcentual
-        Assert.Equal(0m, d["BI"]);
+        Assert.Equal(50_000m, d["00547"]);   // hasta 1 M€ sin límite porcentual
+        Assert.Equal(0m, d["00552"]);
         var n = Calc(-30_000m, new("GENERAL"));
-        Assert.Equal(-30_000m, n["BI"]);
-        Assert.Equal(0m, n["CI"]);
+        Assert.Equal(-30_000m, n["00552"]);
+        Assert.Equal(0m, n["00562"]);
         Assert.Equal(2_100_000m, CalculadorSociedades.LimiteBins(3_000_000m, 0));
         Assert.Equal(1_000_000m, CalculadorSociedades.LimiteBins(1_200_000m, 30_000_000m));
     }
@@ -56,12 +83,18 @@ public class SociedadesTests
     {
         var a = new DeclaracionCalculada();
         CalculadorSociedades.Calcular202(new Entrada202("ART_40_2", new("GENERAL"), 2026, 20_000m, 0, 0, 0, 0, 0), a);
-        Assert.Equal(3_600m, a["RES"]);
+        Assert.Equal(20_000m, a["01"]);
+        Assert.Equal(3_600m, a["03"]);
         Assert.Equal(17m, CalculadorSociedades.Porcentaje403(new("GENERAL"), 2026));
         var b = new DeclaracionCalculada();
         CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", new("GENERAL"), 2026, 0, 60_000m, 10_000m, 0, 500m, 2_000m), b);
-        Assert.Equal(50_000m, b["BI"]);
-        Assert.Equal(8_500m - 500m - 2_000m, b["RES"]);
+        Assert.Equal(60_000m, b["13"]);
+        Assert.Equal(10_000m, b["14"]);
+        Assert.Equal(50_000m, b["16"]);
+        Assert.Equal(17m, b["17"]);
+        Assert.Equal(8_500m, b["18"]);
+        Assert.Equal(8_500m - 500m - 2_000m, b["34"]);
+        Assert.Equal(b["32"], b["34"]);
     }
 
     [Fact]

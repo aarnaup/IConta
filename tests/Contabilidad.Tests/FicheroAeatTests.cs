@@ -170,6 +170,166 @@ public class FicheroAeatTests
     {
         Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("303", 2024));
         Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("390", 2024));
-        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("180", 2025));
+        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("200", 2024));
+        Assert.Throws<ReglaContableException>(() => FicheroModelo.Diseno("425", 2025));
+    }
+
+    // ------------------------------------------------------------------------------------------------ 180
+    [Fact]
+    public void El_180_lleva_declarante_y_un_registro_de_500_posiciones_por_arrendador_e_inmueble()
+    {
+        var inmueble = new InmuebleDto
+        {
+            Situacion = 1, ReferenciaCatastral = "9872023VH5797S0001WX", TipoVia = "CL", NombreVia = "Mayor", Numero = "12 bis",
+            Complemento = "3º B", Municipio = "Madrid", CodigoMunicipio = "28079", CodigoPostal = "28013",
+        };
+        var p = new PerceptorResumen("ES12345678Z", "García López, Ana", "28", "", null, 19m, 12_000m, 2_280m, Inmueble: inmueble);
+        var reg = Diseno180.Registro(p, inmueble);
+        var sinRef = Diseno180.Registro(p with { Nif = "11111111H", Base = -100m, Retencion = -19m },
+            new InmuebleDto { Situacion = 4, ReferenciaCatastral = "X", NombreVia = "Sin número", Numero = "S/N", CodigoPostal = "08001" });
+        var (b, nombre) = FicheroModelo.Generar(Decl("180", "0A", [], 0m, new() { ["registros"] = [reg, sinRef] }, anio: 2025),
+            new FicheroAeatCmd { Telefono = "910 000 000", Contacto = "Pérez Ruiz, Juan" });
+        var lineas = Texto(b).Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("B12345678_180_2025_0A.txt", nombre);
+        Assert.Equal(3, lineas.Length);
+        Assert.All(lineas, l => Assert.Equal(500, l.Length));
+        var d = lineas[0];
+        Assert.Equal("11802025B12345678", d[..17]);
+        Assert.Equal("T910000000PEREZ RUIZ, JUAN", d.Substring(57, 26));
+        Assert.Equal("180", d.Substring(107, 3));
+        Assert.Equal("000000002", d.Substring(135, 9));           // número de perceptores
+        Assert.Equal(" 000000001190000", d.Substring(144, 16));   // base total 11.900,00 (12.000 − 100)
+        Assert.Equal("000000000229900", d.Substring(160, 15));    // retenciones 2.280 + 19 (sin signo)
+        var r = lineas[1];
+        Assert.Equal("21802025B1234567812345678Z", r[..26]);
+        Assert.StartsWith("GARCIA LOPEZ, ANA", r.Substring(35, 40));
+        Assert.Equal("281", r.Substring(75, 3));                  // provincia y modalidad dineraria
+        Assert.Equal(" 0000001200000", r.Substring(78, 14));
+        Assert.Equal("1900", r.Substring(92, 4));
+        Assert.Equal("0000000228000", r.Substring(96, 13));
+        Assert.Equal("00001", r.Substring(109, 5));               // ejercicio de devengo a ceros y situación 1
+        Assert.Equal("9872023VH5797S0001WX", r.Substring(114, 20));
+        Assert.Equal("CL   MAYOR", r.Substring(134, 10));
+        Assert.Equal("NUM12   ", r.Substring(189, 8));
+        Assert.StartsWith("BIS 3O B", r.Substring(215, 40));
+        Assert.StartsWith("MADRID", r.Substring(285, 30));
+        Assert.Equal("280792828013", r.Substring(315, 12));
+        var n = lineas[2];
+        Assert.Equal("N0000000010000", n.Substring(78, 14));     // reintegro: base negativa con N
+        Assert.Equal("4" + new string(' ', 20), n.Substring(113, 21)); // sin referencia catastral
+        Assert.Equal("S/N     ", n.Substring(189, 8));
+        Assert.Equal("08", n.Substring(320, 2));
+    }
+
+    // ------------------------------------------------------------------------------------------------ 202
+    [Fact]
+    public void El_202_de_la_modalidad_del_articulo_40_3_rellena_sus_dos_paginas()
+    {
+        var c = new DeclaracionCalculada { Modelo = "202" };
+        CalculadorSociedades.Calcular202(new Entrada202("ART_40_3", new("GENERAL"), 2025, 0, 60_000m, 10_000m, 0, 500m, 2_000m), c);
+        var d = new DeclaracionParaFichero(7, "202", 2025, "2P", "ORDINARIA", "B12345678", "Ñandú Café, S.L.", c.Casillas, c.Resultado, 0, null, new Dictionary<string, IReadOnlyList<RegistroAeat>>(),
+            Inicio: new DateOnly(2025, 1, 1), Fin: new DateOnly(2025, 9, 30),
+            Extra: new Dictionary<string, object?> { ["D:incn"] = 7_000_000m, ["D:tipoGravamen202"] = "25", ["D:reducidaDimension202"] = "" });
+        var (b, nombre) = FicheroModelo.Generar(d, new FicheroAeatCmd { Domiciliar = true, Iban = "ES91 2100 0418 4502 0005 1332", Cnae = "6201" });
+        var t = Texto(b);
+        Assert.Equal("B12345678_202_2025_2P.txt", nombre);
+        Assert.Equal(346 + 700 + 900, t.Length);
+        Assert.StartsWith("<T202020252P0000><AUX>", t);
+        Assert.EndsWith("</T202020252P0000>", t);
+        var p1 = t.IndexOf("<T20201000>", StringComparison.Ordinal);
+        Assert.Equal("U", t.Substring(p1 + 12, 1));
+        Assert.Equal("B12345678", t.Substring(p1 + 13, 9));
+        Assert.Equal("20252P01012025" + "6201", t.Substring(p1 + 103, 18));
+        Assert.Equal("X", t.Substring(p1 + 126, 1));              // cifra de negocios de más de 6 M€
+        Assert.StartsWith("25 ", t.Substring(p1 + 131, 15));
+        Assert.Equal("0B", t.Substring(p1 + 146, 2));             // tramo de cifra de negocios y modalidad 40.3
+        Assert.Equal("00000000006000000", t.Substring(p1 + 199, 17));   // [04] resultado contable
+        Assert.Equal("00000000006000000", t.Substring(p1 + 352, 17));   // [13] base imponible previa
+        Assert.Equal("00000000001000000", t.Substring(p1 + 386, 17));   // [14] compensación
+        var p2 = t.IndexOf("<T20202000>", StringComparison.Ordinal);
+        Assert.Equal("00000000005000000" + "01700", t.Substring(p2 + 12, 22));   // [16] base y [17] 17 %
+        Assert.Equal("00000000000850000", t.Substring(p2 + 102, 17));  // [18] resultado previo
+        Assert.Equal("00000000000050000", t.Substring(p2 + 394, 17));  // [28] retenciones
+        Assert.Equal("10000", t.Substring(p2 + 411, 5));               // [29] 100 % en territorio común
+        Assert.Equal("00000000000600000", t.Substring(p2 + 484, 17));  // [34] a ingresar
+        Assert.StartsWith("ES9121000418450200051332", t.Substring(p2 + 725, 34));
+    }
+
+    // ------------------------------------------------------------------------------------------------ 200
+    [Fact]
+    public void El_balance_del_200_reparte_las_cuentas_por_casilla_con_gastos_en_negativo()
+    {
+        var saldos = new List<Contabilidad.Domain.Balances.SaldoBalance>
+        {
+            new("2170000", "Equipos", 10_000m), new("2817000", "Amort.", -2_000m), new("4300001", "Cliente", 5_000m), new("5720001", "Banco", 9_000m),
+            new("1000000", "Capital", -8_000m), new("1130000", "Reservas", -1_000m), new("4000001", "Proveedor", -2_500m),
+            new("4750000", "HP IVA", -500m), new("7000000", "Ventas", -40_000m), new("7050000", "Servicios", -10_000m),
+            new("6000000", "Compras", 20_000m), new("6400000", "Sueldos", 12_000m), new("6420000", "SS", 4_000m), new("6230000", "Asesoría", 1_000m),
+            new("6290000", "Otros", 500m), new("6810000", "Amortización", 2_000m), new("6620000", "Intereses", 500m),
+        };
+        var c = Estados200.Casillas(saldos, out var sinClasificar);
+        Assert.Empty(sinClasificar);
+        Assert.Equal(8_000m, c["B:00113"]);
+        Assert.Equal(8_000m, c["B:00101"]);
+        Assert.Equal(5_000m, c["B:00152"]);
+        Assert.Equal(9_000m, c["B:00178"]);
+        Assert.Equal(22_000m, c["B:00180"]);
+        Assert.Equal(10_000m, c["B:00199"]);                     // resultado del ejercicio antes de regularizar
+        Assert.Equal(c["B:00180"], c["B:00252"]);                // el balance cuadra
+        Assert.Equal(50_000m, c["B:00255"]);
+        Assert.Equal(-20_000m, c["B:00260"]);
+        Assert.Equal(-16_000m, c["B:00270"]);
+        Assert.Equal(-1_000m, c["B:00253"]);
+        Assert.Equal(-1_500m, c["B:00279"]);
+        Assert.Equal(10_500m, c["B:00296"]);
+        Assert.Equal(-500m, c["B:00307"]);
+        Assert.Equal(10_000m, c["B:00325"]);
+        Assert.Equal(10_000m, c["B:00500"]);
+    }
+
+    [Fact]
+    public void El_200_lleva_identificacion_balance_liquidacion_e_ingreso()
+    {
+        var c = new DeclaracionCalculada { Modelo = "200" };
+        CalculadorSociedades.Calcular200(new Entrada200(100_000m, [new("Multas", 2_000m, "MULTAS")], 0, 0, 0, 0, 0, 1_000m, (5_000m, 0, 0),
+            new("MICRO"), new DateOnly(2025, 1, 1), new DateOnly(2025, 12, 31)), c);
+        var extra = new Dictionary<string, object?> { ["D:incn"] = 800_000m, ["F:00006"] = 1, ["F:00088"] = 1, ["D:tipoEjercicio"] = 1,
+            ["B:00180"] = 22_000m, ["B:00500"] = 100_000m, ["B:00270"] = -16_000m };
+        var d = new DeclaracionParaFichero(9, "200", 2025, "0A", "ORDINARIA", "B12345678", "Ñandú Café, S.L.", c.Casillas, c.Resultado, c.ADevolver,
+            null, new Dictionary<string, IReadOnlyList<RegistroAeat>>(), Inicio: new DateOnly(2025, 1, 1), Fin: new DateOnly(2025, 12, 31), Extra: extra);
+        var (b, nombre) = FicheroModelo.Generar(d, new FicheroAeatCmd { Telefono = "910000000", Cnae = "6201" }, "B00000000");
+        var t = Texto(b);
+        Assert.Equal("B12345678_200_2025_0A.txt", nombre);
+        Assert.Equal(FicheroModelo.Diseno("200", 2025).Longitud, t.Length);
+        Assert.StartsWith("<T200020250A0000><AUX>", t);
+        Assert.EndsWith("</T200020250A0000>", t);
+        int P(string pagina) => t.IndexOf($"<T200{pagina}>", StringComparison.Ordinal);
+        var p1 = P("01000");
+        Assert.Equal("IB12345678", t.Substring(p1 + 12, 10));
+        Assert.Equal("20250A" + "20250101" + "20251231" + "1" + "6201", t.Substring(p1 + 102, 27));
+        Assert.Equal("1", t.Substring(p1 + 192, 1));             // [00006] reducida dimensión
+        Assert.Equal("1", t.Substring(p1 + 226, 1));             // [00088] tipo reducido con INCN inferior a 1 M€
+        Assert.Equal("100", t.Substring(p1 + 240, 3));           // INCN inferior a 20 M€
+        Assert.Equal("00000000002200000", t.Substring(P("04000") + 12 + 31 * 17, 17));   // [00180] total activo
+        Assert.Equal("N0000000001600000", t.Substring(P("07000") + 471, 17));             // [00270] gastos de personal, en negativo
+        var p12 = P("12000");
+        Assert.Equal("00000000010000000", t.Substring(p12 + 12, 17));                     // [00500]
+        Assert.Equal("00000000010000000", t.Substring(p12 + 80, 17));                     // [00501]
+        Assert.Equal("00000000000200000", t.Substring(p12 + 1083, 17));                   // [01815] multas
+        var p14 = P("14000");
+        Assert.Equal("00000000010200000", t.Substring(p14 + 12, 17));                     // [00550]
+        Assert.Equal("00000000010200000", t.Substring(p14 + 165, 17));                    // [00552]
+        Assert.Equal("2122", t.Substring(p14 + 437, 4));                                  // [00558] 21 % y 22 % (2025)
+        Assert.Equal("00000000002194000", t.Substring(p14 + 645, 17));                    // [00562] 50.000 × 21 % + 52.000 × 22 %
+        var p14b = P("14B00");
+        Assert.Equal("00000000002194000", t.Substring(p14b + 250, 17));                   // [00592] cuota líquida
+        Assert.Equal("00000000000100000", t.Substring(p14b + 540, 17));                   // [01766] retenciones
+        Assert.Equal("00000000000500000", t.Substring(p14b + 608, 17));                   // [00601] primer pago
+        Assert.Equal("00000000001594000", t.Substring(p14b + 710, 17));                   // [00611] cuota diferencial
+        Assert.Equal("00000000001594000", t.Substring(p14b + 1050, 17));                  // [01586]
+        var did = P("DID00");
+        Assert.Equal("0" + "2025" + "1" + "0A" + "010125" + "311225" + "B12345678", t.Substring(did + 12, 29));
+        Assert.Equal("I" + "00000000001594000", t.Substring(did + 424, 18));
+        Assert.Equal("0", t.Substring(did + 561, 1));
     }
 }

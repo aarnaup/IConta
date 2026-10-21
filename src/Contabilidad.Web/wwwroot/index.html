@@ -592,6 +592,7 @@
             <label id="mfFIbanL">IBAN (domiciliación o devolución) <input id="mfFIban" maxlength="34" placeholder="ES00 0000 0000 0000 0000 0000"></label>
             <label id="mfFTelL">Teléfono de contacto <input id="mfFTel" maxlength="15"></label>
             <label id="mfFConL">Persona de contacto <input id="mfFCon" maxlength="40"></label>
+            <label id="mfFCnaeL" hidden>CNAE de la actividad principal <input id="mfFCnae" maxlength="4" inputmode="numeric" style="width:6em"></label>
             <label id="mfFSvpL" hidden>Siglas de la vía (CL, AV…) <input id="mfFSvp" maxlength="2" value="CL" style="width:4em"></label>
             <label id="mfFMunL" hidden>Código del municipio <input id="mfFMun" maxlength="5" style="width:6em"></label>
             <label id="mfFPagoL" hidden>Forma de pago (ATC) <select id="mfFPago"><option value="5">Pago telemático</option><option value="4">Domiciliación</option>
@@ -732,7 +733,7 @@
           <label>Bases negativas anteriores a la aplicación <input id="is_binsAnteriores" class="num" inputmode="decimal"></label>
         </div>
         <h3>Ajustes extracontables</h3>
-        <table><thead><tr><th>Concepto</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
+        <table><thead><tr><th>Concepto</th><th>Casilla del 200</th><th class="num" style="width:160px">Importe</th><th></th></tr></thead><tbody id="isAjustes"></tbody></table>
         <ul id="isSugerencias" class="avisos"></ul>
         <div class="fila-acciones">
           <button class="btn" id="isAnadir" type="button">Añadir ajuste</button>
@@ -766,8 +767,8 @@
         <tbody id="imLista"></tbody></table>
         <div class="cab2" data-req="FISCAL:ESCRITURA">
           <label>Arrendador <select id="imTercero"></select></label>
-          <label>Situación <select id="imSit"><option value="1">1 · Con ref. catastral (salvo País Vasco y Navarra)</option>
-            <option value="2">2 · País Vasco o Navarra</option><option value="3">3 · Sin referencia catastral</option><option value="4">4 · En el extranjero</option></select></label>
+          <label>Situación <select id="imSit"><option value="1">1 · España, salvo País Vasco y Navarra</option>
+            <option value="2">2 · País Vasco</option><option value="3">3 · Navarra</option><option value="4">4 · Sin referencia catastral</option></select></label>
           <label>Referencia catastral <input id="imRc" maxlength="20"></label>
           <label>Tipo de vía <input id="imTv" maxlength="5" placeholder="CL, AV…" style="width:6em"></label>
           <label>Nombre de la vía <input id="imVia" maxlength="100"></label>
