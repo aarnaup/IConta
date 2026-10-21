@@ -24,7 +24,7 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         public string RegimenIva { get; set; } = "";
         public string? Iae { get; set; }
         public string? Actividad { get; set; }
-        public short? Seccion { get; set; }
+        public string? ClaveActividad { get; set; }
     }
 
     private sealed class TerceroFila
@@ -54,8 +54,10 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
                     WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS iae,
                    (SELECT COALESCE(a.nombre, ep.descripcion) FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
                     WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS actividad,
-                   (SELECT ep.seccion FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
-                    WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS seccion
+                   -- Clave de actividad de la AEAT del epígrafe o, si no la tiene, la de su sección (1 empresarial, 2 profesional, 3 artística)
+                   (SELECT COALESCE(ep.clave_actividad, CASE ep.seccion WHEN 2 THEN 'A05' WHEN 3 THEN 'A04' ELSE 'A03' END)
+                    FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+                    WHERE a.empresa_id = e.id AND a.fecha_baja IS NULL ORDER BY a.es_principal DESC, a.id LIMIT 1) AS clave_actividad
             FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id WHERE e.id = @empresaId
             """, new { empresaId }, cancellationToken: ct));
 
@@ -86,8 +88,9 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         // Actividad principal: página 4 del 303 de exonerados y datos estadísticos del 390
         if (cmd.Exonerado390 || v.Modelo == "390")
         {
-            if (string.IsNullOrWhiteSpace(cmd.ActividadIae)) cmd.ActividadIae = e.Iae;
-            if (string.IsNullOrWhiteSpace(cmd.ActividadClave)) cmd.ActividadClave = e.Seccion switch { 2 => "A02", 3 => "A03", _ => "A01" };
+            // El epígrafe va sin punto (761.1 → 7611)
+            if (string.IsNullOrWhiteSpace(cmd.ActividadIae)) cmd.ActividadIae = e.Iae?.Replace(".", "");
+            if (string.IsNullOrWhiteSpace(cmd.ActividadClave)) cmd.ActividadClave = e.ClaveActividad ?? "A03";
             if (string.IsNullOrWhiteSpace(cmd.ActividadNombre)) cmd.ActividadNombre = e.Actividad;
         }
 

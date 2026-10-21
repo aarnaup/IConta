@@ -2498,9 +2498,10 @@ const CAT = {
   },
   iae: {
     url: '/api/admin/catalogos/epigrafes', ayuda: 'Sección 1 empresarial, 2 profesional, 3 artística. Se muestran como mucho 300: usa el buscador.', busca: true,
-    cols: ['Sección', 'Código', 'Descripción', 'Profesional'],
-    fila: e => [e.seccion, esc(e.codigo), esc(e.descripcion), siNo(e.esProfesional)],
-    campos: [['seccion', 'Sección', ['1', '2', '3'], 1], ['codigo', 'Código', 'text', 1], ['descripcion', 'Descripción', 'text'], ['esProfesional', 'Actividad profesional', 'check']],
+    cols: ['Sección', 'Código', 'Descripción', 'Profesional', 'Clave AEAT'],
+    fila: e => [e.seccion, esc(e.codigo), esc(e.descripcion), siNo(e.esProfesional), esc(e.claveActividad || '')],
+    campos: [['seccion', 'Sección', ['1', '2', '3'], 1], ['codigo', 'Código', 'text', 1], ['descripcion', 'Descripción', 'text'], ['esProfesional', 'Actividad profesional', 'check'],
+             ['claveActividad', 'Clave de actividad (303/390)', ['', 'A01', 'A02', 'A03', 'A04', 'A05']]],
     guarda: o => put('/api/admin/catalogos/epigrafes', { ...o, seccion: +o.seccion }),
   },
   fp: {
