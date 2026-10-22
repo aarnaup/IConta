@@ -10,6 +10,8 @@ public interface IEmpresaAdminRepositorio
     Task<IReadOnlyList<EmpresaAdminDto>> ListarAsync(CancellationToken ct);
     Task<ResultadoAltaEmpresa> CrearAsync(CrearEmpresaCmd cmd, CancellationToken ct);
     Task<long> CrearEjercicioAsync(long empresaId, CrearEjercicioCmd cmd, CancellationToken ct);
+    Task<EmpresaDatosDto> DatosAsync(long empresaId, CancellationToken ct);
+    Task<EmpresaDatosDto> GuardarDatosAsync(long empresaId, EmpresaDatosDto d, CancellationToken ct);
 }
 
 public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpresaAdminRepositorio
@@ -34,6 +36,126 @@ public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpr
             ORDER BY e.nombre
             """;
         return (await cn.QueryAsync<EmpresaAdminDto>(new CommandDefinition(sql, cancellationToken: ct))).AsList();
+    }
+
+    // ------------------------------------------------------------------ datos y actividades de una empresa
+    // Tablas con actividad_id: una actividad usada ahí no se borra (se da de baja)
+    private const string SqlEnUso = """
+        EXISTS (SELECT 1 FROM fiscal.factura x WHERE x.actividad_id = a.id)
+        OR EXISTS (SELECT 1 FROM fiscal.modulos x WHERE x.actividad_id = a.id)
+        OR EXISTS (SELECT 1 FROM conta.apunte x WHERE x.actividad_id = a.id)
+        OR EXISTS (SELECT 1 FROM inmov.inmovilizado x WHERE x.actividad_id = a.id)
+        OR EXISTS (SELECT 1 FROM gest.presupuesto_linea x WHERE x.actividad_id = a.id)
+        """;
+
+    public async Task<EmpresaDatosDto> DatosAsync(long empresaId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        return await DatosAsync(cn, null, empresaId, ct);
+    }
+
+    private static async Task<EmpresaDatosDto> DatosAsync(NpgsqlConnection cn, NpgsqlTransaction? tx, long empresaId, CancellationToken ct)
+    {
+        var d = await cn.QuerySingleOrDefaultAsync<EmpresaDatosDto>(new CommandDefinition("""
+            SELECT e.id, e.codigo, n.numero AS nif, e.nombre, n.nombre_comercial, e.forma_juridica, n.direccion, n.codigo_postal, n.poblacion,
+                   pr.nombre AS provincia, n.telefono, n.email, e.sepa_sufijo, e.activa, p.nombre AS plan, e.impuesto_indirecto, e.digitos_cuenta
+            FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id JOIN cat.plan_modelo p ON p.id = e.plan_modelo_id
+            LEFT JOIN cat.provincia pr ON pr.id = n.provincia_id
+            WHERE e.id = @empresaId
+            """, new { empresaId }, tx, cancellationToken: ct)) ?? throw new ReglaContableException("La empresa no existe.");
+        d.Actividades = (await cn.QueryAsync<ActividadEmpresaDto>(new CommandDefinition($"""
+            SELECT a.id, a.epigrafe_id, ep.seccion, ep.codigo AS epigrafe_codigo, ep.descripcion AS epigrafe_descripcion, ep.clave_actividad,
+                   a.nombre, a.es_principal, a.sector_diferenciado, a.fecha_alta, a.fecha_baja, ({SqlEnUso}) AS en_uso
+            FROM core.empresa_actividad a JOIN cat.epigrafe_iae ep ON ep.id = a.epigrafe_id
+            WHERE a.empresa_id = @empresaId ORDER BY a.fecha_baja NULLS FIRST, a.es_principal DESC, a.id
+            """, new { empresaId }, tx, cancellationToken: ct))).AsList();
+        return d;
+    }
+
+    public async Task<EmpresaDatosDto> GuardarDatosAsync(long empresaId, EmpresaDatosDto d, CancellationToken ct)
+    {
+        static string? T(string? s, int max, string campo)
+        {
+            var v = string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+            if (v is { Length: var n } && n > max) throw new ReglaContableException($"{campo} admite como mucho {max} caracteres.");
+            return v;
+        }
+        var nombre = T(d.Nombre, 200, "El nombre") ?? throw new ReglaContableException("El nombre es obligatorio.");
+        if (!Formas.Contains(d.FormaJuridica)) throw new ReglaContableException("Forma jurídica no válida.");
+        var cp = T(d.CodigoPostal, 10, "El código postal");
+        if (cp is not null && !System.Text.RegularExpressions.Regex.IsMatch(cp, "^[0-9]{5}$"))
+            throw new ReglaContableException("El código postal son 5 dígitos.");
+        var email = T(d.Email, 200, "El email");
+        if (email is not null && !email.Contains('@')) throw new ReglaContableException("El email no es válido.");
+        var sufijo = (d.SepaSufijo ?? "").Trim().ToUpperInvariant();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(sufijo, "^[0-9A-Z]{3}$"))
+            throw new ReglaContableException("El sufijo SEPA son 3 caracteres (letras o números).");
+
+        var actividades = d.Actividades ?? [];
+        foreach (var a in actividades)
+        {
+            a.Nombre = T(a.Nombre, 200, "El nombre de la actividad");
+            if (a.FechaBaja is { } b && b < a.FechaAlta) throw new ReglaContableException("La fecha de baja de una actividad es anterior a la de alta.");
+            if (a.SectorDiferenciado is < 1 or > 99) throw new ReglaContableException("El sector diferenciado es un número del 1 al 99.");
+        }
+        if (actividades.Count(a => a.EsPrincipal && a.FechaBaja is null) > 1)
+            throw new ReglaContableException("Solo puede haber una actividad principal en alta.");
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var nifId = await cn.ExecuteScalarAsync<long?>(new CommandDefinition(
+            "SELECT nif_id FROM core.empresa WHERE id = @empresaId FOR UPDATE", new { empresaId }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException("La empresa no existe.");
+        await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE core.empresa SET nombre = @nombre, forma_juridica = @forma, sepa_sufijo = @sufijo, activa = @activa WHERE id = @empresaId;
+            UPDATE core.nif SET razon_social = @nombre, nombre_comercial = @comercial, direccion = @direccion, codigo_postal = @cp,
+                   poblacion = @poblacion, telefono = @telefono, email = @email, es_persona_fisica = (@forma = 'AUTONOMO'),
+                   -- la provincia, por el código postal (solo NIF españoles)
+                   provincia_id = CASE WHEN @cp IS NULL THEN provincia_id
+                                       ELSE (SELECT pr.id FROM cat.provincia pr WHERE pr.pais_id = core.nif.pais_id AND pr.codigo = left(@cp, 2)) END
+            WHERE id = @nifId
+            """, new
+        {
+            empresaId, nifId, nombre, forma = d.FormaJuridica, sufijo, activa = d.Activa, comercial = T(d.NombreComercial, 200, "El nombre comercial"),
+            direccion = T(d.Direccion, 250, "La dirección"), cp, poblacion = T(d.Poblacion, 100, "La población"),
+            telefono = T(d.Telefono, 30, "El teléfono"), email
+        }, tx, cancellationToken: ct));
+
+        // Actividades: las que faltan se borran (si no están en uso), las demás se actualizan o se dan de alta
+        var actuales = (await cn.QueryAsync<(long Id, bool EnUso)>(new CommandDefinition($"""
+            SELECT a.id, ({SqlEnUso}) FROM core.empresa_actividad a WHERE a.empresa_id = @empresaId
+            """, new { empresaId }, tx, cancellationToken: ct))).ToDictionary(x => x.Id, x => x.EnUso);
+        foreach (var (id, enUso) in actuales.Where(x => !actividades.Any(a => a.Id == x.Key)))
+        {
+            if (enUso) throw new ReglaContableException("Una actividad con facturas, módulos o inmovilizado no se puede borrar.", "Indica su fecha de baja.");
+            await cn.ExecuteAsync(new CommandDefinition("DELETE FROM core.empresa_actividad WHERE id = @id", new { id }, tx, cancellationToken: ct));
+        }
+        // Primero se quita la marca de principal para que el índice único no salte al cambiarla de una actividad a otra
+        await cn.ExecuteAsync(new CommandDefinition("UPDATE core.empresa_actividad SET es_principal = false WHERE empresa_id = @empresaId",
+            new { empresaId }, tx, cancellationToken: ct));
+        foreach (var a in actividades)
+        {
+            if (!await cn.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT EXISTS (SELECT 1 FROM cat.epigrafe_iae WHERE id = @id)",
+                    new { id = a.EpigrafeId }, tx, cancellationToken: ct)))
+                throw new ReglaContableException("Elige el epígrafe del IAE de cada actividad.");
+            var p = new { empresaId, a.Id, ep = a.EpigrafeId, a.Nombre, a.EsPrincipal, sector = a.SectorDiferenciado, alta = a.FechaAlta, baja = a.FechaBaja };
+            if (a.Id is { } id)
+            {
+                if (!actuales.ContainsKey(id)) throw new ReglaContableException("La actividad no es de esta empresa.");
+                await cn.ExecuteAsync(new CommandDefinition("""
+                    UPDATE core.empresa_actividad SET epigrafe_id = @ep, nombre = @Nombre, es_principal = @EsPrincipal, sector_diferenciado = @sector,
+                           fecha_alta = @alta, fecha_baja = @baja WHERE id = @Id
+                    """, p, tx, cancellationToken: ct));
+            }
+            else
+                await cn.ExecuteAsync(new CommandDefinition("""
+                    INSERT INTO core.empresa_actividad (empresa_id, epigrafe_id, nombre, es_principal, sector_diferenciado, fecha_alta, fecha_baja)
+                    VALUES (@empresaId, @ep, @Nombre, @EsPrincipal, @sector, @alta, @baja)
+                    """, p, tx, cancellationToken: ct));
+        }
+        var r = await DatosAsync(cn, tx, empresaId, ct);
+        await tx.CommitAsync(ct);
+        return r;
     }
 
     // ------------------------------------------------------------------ alta de empresa

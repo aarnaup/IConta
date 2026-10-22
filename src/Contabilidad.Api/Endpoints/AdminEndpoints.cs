@@ -27,6 +27,18 @@ public static class AdminEndpoints
             return Results.Created($"/api/admin/empresas/{r.EmpresaId}", r);
         }).SoloSuperadmin();
 
+        admin.MapGet("/empresas/{empresaId:long}", (long empresaId, IEmpresaAdminRepositorio e, CancellationToken ct) => e.DatosAsync(empresaId, ct))
+            .SoloSuperadmin();
+
+        admin.MapPut("/empresas/{empresaId:long}", async (long empresaId, EmpresaDatosDto d, HttpContext http, IEmpresaAdminRepositorio e,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var r = await e.GuardarDatosAsync(empresaId, d, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "EMPRESA_MODIFICADA", "empresa", empresaId,
+                new { d.Nombre, d.FormaJuridica, d.Activa, Actividades = d.Actividades.Count }, ct);
+            return Results.Ok(r);
+        }).SoloSuperadmin();
+
         admin.MapPost("/empresas/{empresaId:long}/ejercicios", async (long empresaId, CrearEjercicioCmd cmd, HttpContext http,
             IEmpresaAdminRepositorio e, IAuditoriaRepositorio aud, CancellationToken ct) =>
         {

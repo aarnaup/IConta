@@ -92,6 +92,53 @@ public sealed class EmpresaAdminDto
     public bool Activa { get; set; }
 }
 
+/// <summary>
+/// Datos editables de una empresa. NIF, plan contable, dígitos de cuenta e impuesto indirecto se muestran pero no se cambian (con
+/// contabilidad hecha la descuadrarían). La provincia sale de los dos primeros dígitos del código postal.
+/// </summary>
+public sealed class EmpresaDatosDto
+{
+    public long Id { get; set; }
+    public string Codigo { get; set; } = "";
+    public string Nif { get; set; } = "";
+    public string Nombre { get; set; } = "";
+    public string? NombreComercial { get; set; }
+    public string FormaJuridica { get; set; } = "";
+    public string? Direccion { get; set; }
+    public string? CodigoPostal { get; set; }
+    public string? Poblacion { get; set; }
+    public string? Provincia { get; set; }
+    public string? Telefono { get; set; }
+    public string? Email { get; set; }
+    /// <summary>Sufijo del identificador de acreedor SEPA (3 caracteres).</summary>
+    public string SepaSufijo { get; set; } = "000";
+    public bool Activa { get; set; } = true;
+    public string Plan { get; set; } = "";
+    public string ImpuestoIndirecto { get; set; } = "";
+    public int DigitosCuenta { get; set; }
+    public List<ActividadEmpresaDto> Actividades { get; set; } = [];
+}
+
+/// <summary>Actividad de la empresa (epígrafe del IAE): base de la retención, la prorrata por sectores y los datos de los modelos.</summary>
+public sealed class ActividadEmpresaDto
+{
+    public long? Id { get; set; }
+    public int EpigrafeId { get; set; }
+    public short Seccion { get; set; }
+    public string EpigrafeCodigo { get; set; } = "";
+    public string EpigrafeDescripcion { get; set; } = "";
+    public string? ClaveActividad { get; set; }
+    /// <summary>Nombre propio de la actividad (si no, la descripción del epígrafe).</summary>
+    public string? Nombre { get; set; }
+    public bool EsPrincipal { get; set; }
+    /// <summary>Sector diferenciado a efectos de la prorrata (vacío = ninguno).</summary>
+    public short? SectorDiferenciado { get; set; }
+    public DateOnly FechaAlta { get; set; }
+    public DateOnly? FechaBaja { get; set; }
+    /// <summary>Tiene facturas, módulos o inmovilizado: no se puede borrar, solo dar de baja.</summary>
+    public bool EnUso { get; set; }
+}
+
 public sealed class CrearEjercicioCmd
 {
     public string Codigo { get; set; } = "";
