@@ -2694,11 +2694,81 @@ $('#asGuardar').onclick = async () => {
 async function cargaEmpresasAdmin() {
   const [emps, planes] = await Promise.all([api('/api/admin/empresas'), api('/api/admin/planes-modelo')]);
   $('#admEmpresasBody').innerHTML = emps.map(e => `<tr><td>${esc(e.codigo)}</td><td>${esc(e.nombre)}</td><td>${esc(e.nif)}</td>
-    <td>${esc(e.formaJuridica)}</td><td>${esc(e.plan)}</td><td>${esc(e.impuestoIndirecto)}</td></tr>`).join('')
-    || '<tr><td colspan="6" class="vacio">Todavía no hay empresas.</td></tr>';
+    <td>${esc(e.formaJuridica)}</td><td>${esc(e.plan)}</td><td>${esc(e.impuestoIndirecto)}</td>
+    <td><button class="btn" type="button" data-editar="${e.id}">Editar</button></td></tr>`).join('')
+    || '<tr><td colspan="7" class="vacio">Todavía no hay empresas.</td></tr>';
   $('#nePlan').innerHTML = planes.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
   $('#ejEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
 }
+
+// ---- edición de los datos y las actividades de una empresa
+let ED = null, EPS = [];
+$('#admEmpresasBody').addEventListener('click', async e => {
+  const id = e.target.dataset.editar; if (!id) return;
+  try { ED = await api(`/api/admin/empresas/${id}`); pintaEdicion(); $('#edPanel').hidden = false; $('#edPanel').scrollIntoView({ behavior: 'smooth' }); }
+  catch (err) { alert(err.message); }
+});
+function pintaEdicion() {
+  $('#edTitulo').textContent = `Editar empresa · ${ED.codigo}`;
+  $('#edFijos').textContent = `NIF ${ED.nif} · plan ${ED.plan} · ${ED.digitosCuenta} dígitos de cuenta · ${ED.impuestoIndirecto}` +
+    `${ED.provincia ? ' · provincia ' + ED.provincia : ''}. Estos datos no se cambian: con contabilidad hecha la descuadrarían.`;
+  const v = { edNombre: ED.nombre, edComercial: ED.nombreComercial, edForma: ED.formaJuridica, edDireccion: ED.direccion, edCp: ED.codigoPostal,
+              edPoblacion: ED.poblacion, edTelefono: ED.telefono, edEmail: ED.email, edSepa: ED.sepaSufijo };
+  for (const [k, x] of Object.entries(v)) $('#' + k).value = x || '';
+  $('#edActiva').checked = ED.activa;
+  pintaActividadesEd();
+  msg($('#edMsg'), '', '');
+}
+function pintaActividadesEd() {
+  $('#edActividades').innerHTML = ED.actividades.map((a, i) => `<tr>
+    <td>${esc(a.epigrafeCodigo)} <small>${esc(a.epigrafeDescripcion)} (sección ${a.seccion})</small></td><td>${esc(a.claveActividad || '')}</td>
+    <td><input data-a="${i}" data-k="nombre" value="${esc(a.nombre || '')}" maxlength="200" aria-label="Nombre"></td>
+    <td><input type="radio" name="edPrincipal" data-a="${i}" data-k="esPrincipal" ${a.esPrincipal ? 'checked' : ''} aria-label="Principal"></td>
+    <td><input data-a="${i}" data-k="sectorDiferenciado" value="${a.sectorDiferenciado ?? ''}" inputmode="numeric" style="width:4em" aria-label="Sector"></td>
+    <td><input type="date" data-a="${i}" data-k="fechaAlta" value="${a.fechaAlta}" aria-label="Alta"></td>
+    <td><input type="date" data-a="${i}" data-k="fechaBaja" value="${a.fechaBaja || ''}" aria-label="Baja"></td>
+    <td><button class="x" type="button" data-quitar="${i}" ${a.enUso ? 'disabled title="En uso: indica la fecha de baja"' : ''} aria-label="Quitar">×</button></td></tr>`).join('')
+    || '<tr><td colspan="8" class="vacio">Sin actividades.</td></tr>';
+}
+$('#edActividades').addEventListener('change', e => {
+  const t = e.target, a = ED.actividades[+t.dataset.a]; if (!a) return;
+  if (t.dataset.k === 'esPrincipal') ED.actividades.forEach(x => x.esPrincipal = x === a);
+  else if (t.dataset.k === 'sectorDiferenciado') a.sectorDiferenciado = t.value ? +t.value : null;
+  else if (t.dataset.k === 'fechaBaja') a.fechaBaja = t.value || null;
+  else a[t.dataset.k] = t.value;
+});
+$('#edActividades').addEventListener('click', e => {
+  const i = e.target.dataset.quitar; if (i === undefined) return;
+  ED.actividades.splice(+i, 1); pintaActividadesEd();
+});
+let buscaEp = null;
+$('#edBuscaEp').addEventListener('input', () => {
+  clearTimeout(buscaEp);
+  buscaEp = setTimeout(async () => {
+    const q = $('#edBuscaEp').value.trim(); if (q.length < 2) return;
+    EPS = await api('/api/admin/catalogos/epigrafes?q=' + encodeURIComponent(q));
+    $('#edEpigrafes').innerHTML = EPS.map((x, i) => `<option value="${i}">${esc(x.codigo)} · ${esc(x.descripcion.slice(0, 90))} (sección ${x.seccion})</option>`).join('')
+      || '<option value="">Ningún epígrafe</option>';
+  }, 300);
+});
+$('#edAnadirAct').onclick = () => {
+  const x = EPS[+$('#edEpigrafes').value]; if (!x) return;
+  ED.actividades.push({ id: null, epigrafeId: x.id, seccion: x.seccion, epigrafeCodigo: x.codigo, epigrafeDescripcion: x.descripcion,
+    claveActividad: x.claveActividad, nombre: null, esPrincipal: !ED.actividades.some(a => a.esPrincipal && !a.fechaBaja),
+    sectorDiferenciado: null, fechaAlta: hoy(), fechaBaja: null, enUso: false });
+  pintaActividadesEd();
+};
+$('#edCerrar').onclick = () => { $('#edPanel').hidden = true; ED = null; };
+$('#edGuardar').onclick = async () => {
+  const cuerpo = { ...ED, nombre: $('#edNombre').value, nombreComercial: $('#edComercial').value || null, formaJuridica: $('#edForma').value,
+    direccion: $('#edDireccion').value || null, codigoPostal: $('#edCp').value || null, poblacion: $('#edPoblacion').value || null,
+    telefono: $('#edTelefono').value || null, email: $('#edEmail').value || null, sepaSufijo: $('#edSepa').value, activa: $('#edActiva').checked };
+  try {
+    ED = await put(`/api/admin/empresas/${ED.id}`, cuerpo); pintaEdicion();
+    msg($('#edMsg'), 'Datos de la empresa guardados.', 'ok-texto');
+    await cargaEmpresasAdmin();
+  } catch (e) { msg($('#edMsg'), e.message, 'err-texto'); }
+};
 
 $('#neCrear').onclick = async () => {
   const cmd = { nif: $('#neNif').value, nombre: $('#neNombre').value, codigo: $('#neCodigo').value, formaJuridica: $('#neForma').value,

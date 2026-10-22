@@ -110,8 +110,39 @@
   <div id="adm-empresas" class="stack" hidden>
     <div class="panel">
       <h2>Empresas</h2>
-      <table><thead><tr><th>Código</th><th>Nombre</th><th>NIF</th><th>Forma</th><th>Plan</th><th>Impuesto</th></tr></thead>
+      <table><thead><tr><th>Código</th><th>Nombre</th><th>NIF</th><th>Forma</th><th>Plan</th><th>Impuesto</th><th></th></tr></thead>
       <tbody id="admEmpresasBody"></tbody></table>
+    </div>
+    <div class="panel" id="edPanel" hidden>
+      <h2 id="edTitulo">Editar empresa</h2>
+      <p class="ayuda" id="edFijos"></p>
+      <div class="cab2">
+        <label>Nombre o razón social <input id="edNombre" maxlength="200"></label>
+        <label>Nombre comercial <input id="edComercial" maxlength="200"></label>
+        <label>Forma jurídica <select id="edForma">
+          <option value="SL">S.L.</option><option value="SA">S.A.</option><option value="SLU">S.L.U.</option><option value="AUTONOMO">Autónomo</option>
+          <option value="COMUNIDAD_BIENES">Comunidad de bienes</option><option value="SOCIEDAD_CIVIL">Sociedad civil</option>
+          <option value="COOPERATIVA">Cooperativa</option><option value="ASOCIACION">Asociación</option><option value="OTRA">Otra</option></select></label>
+        <label>Dirección <input id="edDireccion" maxlength="250"></label>
+        <label>Código postal <input id="edCp" maxlength="5" inputmode="numeric"></label>
+        <label>Población <input id="edPoblacion" maxlength="100"></label>
+        <label>Teléfono <input id="edTelefono" maxlength="30"></label>
+        <label>Email <input id="edEmail" type="email" maxlength="200"></label>
+        <label>Sufijo SEPA <input id="edSepa" maxlength="3" style="width:6em"></label>
+        <label class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0"><input type="checkbox" id="edActiva"> Activa</label>
+      </div>
+      <p class="ayuda">La provincia sale del código postal.</p>
+      <h3>Actividades (epígrafes del IAE)</h3>
+      <table><thead><tr><th>Epígrafe</th><th>Clave</th><th>Nombre propio</th><th>Principal</th><th>Sector</th><th>Alta</th><th>Baja</th><th></th></tr></thead>
+      <tbody id="edActividades"></tbody></table>
+      <div class="cab2">
+        <label>Buscar epígrafe (código o texto) <input id="edBuscaEp" placeholder="761.1, abogados, bar…"></label>
+        <label>Epígrafe <select id="edEpigrafes"></select></label>
+        <label>&nbsp;<button class="btn" id="edAnadirAct" type="button">Añadir actividad</button></label>
+      </div>
+      <p class="ayuda">Una actividad con facturas, módulos, inmovilizado o asientos no se puede quitar: indica su fecha de baja. La actividad principal es la que va en los datos estadísticos del 303 y el 390.</p>
+      <div class="acciones"><button class="btn primario" id="edGuardar" type="button">Guardar</button>
+        <button class="btn" id="edCerrar" type="button">Cerrar</button><span id="edMsg" role="status"></span></div>
     </div>
     <div class="panel">
       <h2>Nueva empresa</h2>
