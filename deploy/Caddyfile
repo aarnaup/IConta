@@ -1,0 +1,24 @@
+# Proxy con HTTPS automático (certificado gratuito de Let's Encrypt, se renueva solo).
+# Atiende un único dominio: /api, /swagger y /openapi van a la API y el resto a la web, así que
+# el navegador solo ve un origen (la web se arranca con Api:Url vacía y no hace falta CORS).
+#   DOMINIO      p. ej. conta.midominio.es (debe apuntar a tu IP pública)
+#   EMAIL        aviso de Let's Encrypt si un certificado no se puede renovar
+#   API_DESTINO  dónde escucha la API (por defecto el contenedor api:8080)
+#   WEB_DESTINO  dónde escucha la web (por defecto el contenedor web:8080)
+{
+	email {$EMAIL}
+}
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	@api path /api/* /swagger /swagger/* /openapi/*
+	handle @api {
+		reverse_proxy {$API_DESTINO:api:8080}
+	}
+	handle {
+		reverse_proxy {$WEB_DESTINO:web:8080}
+	}
+
+	log
+}

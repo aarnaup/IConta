@@ -1,0 +1,39 @@
+# Publica la aplicación en internet con HTTPS, delante de docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.publicar.yml up -d --build
+# Necesita en .env DOMINIO y EMAIL, y en el router los puertos 443 y 80 redirigidos a esta máquina.
+# Solo Caddy queda expuesto: la API y la web dejan de publicar sus puertos.
+
+services:
+  caddy:
+    image: caddy:2
+    depends_on:
+      - api
+      - web
+    environment:
+      DOMINIO: ${DOMINIO:?Falta DOMINIO en .env (p. ej. conta.midominio.es)}
+      EMAIL: ${EMAIL:?Falta EMAIL en .env (aviso de Let's Encrypt)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-datos:/data            # certificados: no se pierden al recrear el contenedor
+      - caddy-config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    restart: unless-stopped
+
+  api:
+    environment:
+      # La IP del usuario llega en X-Forwarded-For (límite de intentos de login y auditoría)
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    ports: !reset []
+
+  web:
+    environment:
+      # Vacía: la web llama a la API en su mismo origen (Caddy envía /api a la API)
+      Api__Url: ""
+    ports: !reset []
+
+volumes:
+  caddy-datos:
+  caddy-config:

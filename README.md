@@ -75,6 +75,33 @@ docker run -d -p 6581:8080 -e Api__Url=http://localhost:6579 iconta-web
 ```
 `Api__Url` es la dirección de la API **tal como la ve el navegador** (no el nombre del contenedor), y `Cors__Origenes__0` la de la web. Los registros de la API quedan en el volumen `/app/logs`.
 
+## Publicar en internet (HTTPS)
+`docker-compose.publicar.yml` añade delante un [Caddy](https://caddyserver.com) que obtiene y renueva solo un certificado de Let's Encrypt. Sirve todo en un único origen (`https://tu-dominio`): `/api`, `/swagger` y `/openapi` van a la API y el resto a la web. Así no hace falta CORS ni un segundo puerto. Configuración del proxy en `deploy/Caddyfile`.
+1. **Dominio**: crea un registro A que apunte a tu IP pública (p. ej. `conta.midominio.es`). Si no tienes dominio, sirve uno gratuito como `tunombre.duckdns.org`.
+2. **Router**: redirige los puertos **443** (TCP y UDP) y **80** a la IP local de la máquina. El 443 es imprescindible para obtener el certificado y el 80 redirige `http` a `https`. Las reglas a los puertos de la API o de la web ya no hacen falta: quítalas.
+3. **`.env`**: `POSTGRES_PASSWORD`, `JWT_KEY` propia, `DOMINIO` y `EMAIL` (Let's Encrypt avisa ahí si un certificado no se puede renovar). Clave aleatoria en PowerShell: `$b = New-Object byte[] 48; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b); [Convert]::ToBase64String($b)`.
+4. Arranca y crea el superadmin:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.publicar.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.publicar.yml run --rm api crear-superadmin tu@correo.es "Tu nombre"
+```
+- **Comprobar el certificado**: `docker compose -f docker-compose.yml -f docker-compose.publicar.yml logs -f caddy` debe mostrar `certificate obtained successfully` en menos de un minuto. Abre `https://tu-dominio` desde fuera de tu red (por ejemplo, el móvil con datos) y debe salir el candado. El certificado queda en el volumen `caddy-datos` y Caddy lo renueva solo.
+- **Si falla**:
+  - *timeout* o *connection refused*: el 443 no llega a la máquina. Revisa la regla del router y el cortafuegos.
+  - *port is already allocated*: otro programa (IIS, Skype…) ocupa el 80 o el 443.
+  - Error de DNS: el dominio aún no apunta a tu IP; compruébalo con `nslookup tu-dominio`.
+  - Si tu operador bloquea el 80 y el 443, hace falta validar por DNS (con DuckDNS, una versión de Caddy con su módulo).
+  - Let's Encrypt bloquea durante una hora tras 5 fallos seguidos: para Caddy mientras lo arreglas.
+- **DuckDNS**: entra en duckdns.org, crea el subdominio (`tunombre.duckdns.org`) y pon tu IP pública (la ves en ifconfig.me) en «current ip».
+- Solo Caddy queda expuesto: la API y la web no publican sus puertos. PostgreSQL sigue en el `5433` de la máquina, pero el router no lo redirige.
+- La API arranca en Production (Swagger apagado salvo con `SWAGGER=true`) y lee la IP real del usuario de `X-Forwarded-For` (`ASPNETCORE_FORWARDEDHEADERS_ENABLED`) para el límite de intentos de login y los registros. Caddy sustituye esa cabecera, así que el cliente no puede falsearla.
+- Es una base nueva (volumen `db-datos`). Para usar una base que ya tengas, cambia `ConnectionStrings__Contabilidad` del servicio `api`; desde un contenedor, tu máquina es `host.docker.internal`.
+- Desde tu propia red, si el router no admite NAT loopback, el dominio no abre. Usa el mismo dominio apuntando a la IP local en el fichero `hosts` del equipo.
+- **Sin Docker** (p. ej. en Windows): descarga `caddy.exe` y arranca los tres procesos. Las variables de entorno se fijan con `$env:NOMBRE="valor"` en PowerShell:
+  - API: `dotnet run --no-launch-profile --project src/Contabilidad.Api --urls http://localhost:6579`, con `ASPNETCORE_ENVIRONMENT=Production`, `Jwt__Key`, `ASPNETCORE_FORWARDEDHEADERS_ENABLED=true` y la cadena de conexión si no es la de `appsettings.json`.
+  - Web: `dotnet run --no-launch-profile --project src/Contabilidad.Web --urls http://localhost:6581`, con `ASPNETCORE_ENVIRONMENT=Production` y `Api__Url` vacía.
+  - Caddy: `caddy run --config deploy\Caddyfile`, con `DOMINIO`, `EMAIL`, `API_DESTINO=localhost:6579` y `WEB_DESTINO=localhost:6581`.
+
 ## Swagger y Postman
 En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
 - **Swagger UI**: `http://localhost:6579/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
