@@ -85,6 +85,14 @@ docker run -d -p 6581:8080 -e Api__Url=http://localhost:6579 iconta-web
 docker compose -f docker-compose.yml -f docker-compose.publicar.yml up -d --build
 docker compose -f docker-compose.yml -f docker-compose.publicar.yml run --rm api crear-superadmin tu@correo.es "Tu nombre"
 ```
+- **Comprobar el certificado**: `docker compose -f docker-compose.yml -f docker-compose.publicar.yml logs -f caddy` debe mostrar `certificate obtained successfully` en menos de un minuto. Abre `https://tu-dominio` desde fuera de tu red (por ejemplo, el móvil con datos) y debe salir el candado. El certificado queda en el volumen `caddy-datos` y Caddy lo renueva solo.
+- **Si falla**:
+  - *timeout* o *connection refused*: el 443 no llega a la máquina. Revisa la regla del router y el cortafuegos.
+  - *port is already allocated*: otro programa (IIS, Skype…) ocupa el 80 o el 443.
+  - Error de DNS: el dominio aún no apunta a tu IP; compruébalo con `nslookup tu-dominio`.
+  - Si tu operador bloquea el 80 y el 443, hace falta validar por DNS (con DuckDNS, una versión de Caddy con su módulo).
+  - Let's Encrypt bloquea durante una hora tras 5 fallos seguidos: para Caddy mientras lo arreglas.
+- **DuckDNS**: entra en duckdns.org, crea el subdominio (`tunombre.duckdns.org`) y pon tu IP pública (la ves en ifconfig.me) en «current ip».
 - Solo Caddy queda expuesto: la API y la web no publican sus puertos. PostgreSQL sigue en el `5433` de la máquina, pero el router no lo redirige.
 - La API arranca en Production (Swagger apagado salvo con `SWAGGER=true`) y lee la IP real del usuario de `X-Forwarded-For` (`ASPNETCORE_FORWARDEDHEADERS_ENABLED`) para el límite de intentos de login y los registros. Caddy sustituye esa cabecera, así que el cliente no puede falsearla.
 - Es una base nueva (volumen `db-datos`). Para usar una base que ya tengas, cambia `ConnectionStrings__Contabilidad` del servicio `api`; desde un contenedor, tu máquina es `host.docker.internal`.
