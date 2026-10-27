@@ -45,7 +45,9 @@ try
     });
 
     app.UseDefaultFiles();
-    app.UseStaticFiles();
+    // El navegador comprueba siempre si hay versión nueva (con ETag: si no ha cambiado, responde 304 sin reenviar el fichero),
+    // para que tras actualizar la aplicación no se quede con el app.js o el index.html anteriores
+    app.UseStaticFiles(new StaticFileOptions { OnPrepareResponse = c => c.Context.Response.Headers.CacheControl = "no-cache" });
 
     Log.Information("API en {Api}", apiUrl.Length > 0 ? apiUrl : "el mismo origen");
     app.Run();
