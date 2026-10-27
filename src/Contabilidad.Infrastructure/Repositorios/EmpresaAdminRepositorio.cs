@@ -300,7 +300,7 @@ public sealed class EmpresaAdminRepositorio(IConexionFactory conexiones) : IEmpr
     }
 
     /// <summary>Un ejercicio va de un día 1 al último día de un mes y dura como máximo 12 meses (admite ejercicio partido).</summary>
-    private static async Task<long> CrearEjercicioEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId,
+    internal static async Task<long> CrearEjercicioEnTransaccionAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId,
         CrearEjercicioCmd cmd, CancellationToken ct)
     {
         var codigo = (cmd.Codigo ?? "").Trim();
