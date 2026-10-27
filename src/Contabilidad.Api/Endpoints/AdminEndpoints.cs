@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Seguridad;
@@ -9,6 +10,8 @@ namespace Contabilidad.Api.Endpoints;
 public static class AdminEndpoints
 {
     private static readonly string[] Tipos = ["GESTOR", "EMPRESA"];
+    // El zip de a3ECO va en base64 dentro del JSON (un tercio más que el fichero)
+    private const long TamanoImportacion = 300L * 1024 * 1024;
 
     public static void MapAdmin(this IEndpointRouteBuilder app)
     {
@@ -38,6 +41,20 @@ public static class AdminEndpoints
                 new { d.Nombre, d.FormaJuridica, d.Activa, Actividades = d.Actividades.Count }, ct);
             return Results.Ok(r);
         }).SoloSuperadmin();
+
+        // Importación desde a3ECO: primero el análisis (no cambia nada) y después la importación de los años elegidos
+        admin.MapPost("/empresas/{empresaId:long}/importar-a3/analisis", async (long empresaId, ImportarA3Cmd cmd,
+            IImportacionA3Repositorio r, CancellationToken ct) => Results.Ok(await r.AnalizarAsync(empresaId, cmd, ct)))
+            .SoloSuperadmin().WithMetadata(new RequestSizeLimitAttribute(TamanoImportacion));
+
+        admin.MapPost("/empresas/{empresaId:long}/importar-a3", async (long empresaId, ImportarA3Cmd cmd, HttpContext http,
+            IImportacionA3Repositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var res = await r.ImportarAsync(empresaId, http.User.UsuarioId(), cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "IMPORTACION_A3", "empresa", empresaId,
+                new { cmd.Carpeta, cmd.Anios, res.CuentasCreadas, res.TercerosCreados, Asientos = res.Anios.Sum(a => a.Asientos) }, ct);
+            return Results.Ok(res);
+        }).SoloSuperadmin().WithMetadata(new RequestSizeLimitAttribute(TamanoImportacion));
 
         admin.MapPost("/empresas/{empresaId:long}/ejercicios", async (long empresaId, CrearEjercicioCmd cmd, HttpContext http,
             IEmpresaAdminRepositorio e, IAuditoriaRepositorio aud, CancellationToken ct) =>

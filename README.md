@@ -102,6 +102,19 @@ docker compose -f docker-compose.yml -f docker-compose.publicar.yml run --rm api
   - Web: `dotnet run --no-launch-profile --project src/Contabilidad.Web --urls http://localhost:6581`, con `ASPNETCORE_ENVIRONMENT=Production` y `Api__Url` vacía.
   - Caddy: `caddy run --config deploy\Caddyfile`, con `DOMINIO`, `EMAIL`, `API_DESTINO=localhost:6579` y `WEB_DESTINO=localhost:6581`.
 
+## Importar de a3ECO
+En **Administración → Empresas → Importar a3ECO** se trae la contabilidad de una empresa de a3ECO (la versión con ficheros ISAM de Micro Focus) a una empresa de IConta ya creada (`POST /api/admin/empresas/{id}/importar-a3/analisis` y `…/importar-a3`, solo superadmin).
+- Se sube un **.zip** con la carpeta de datos de a3ECO: la que contiene `TCLIPRO.DAT`, `TECODIR.DAT` y las carpetas `E00001`, `E00002`… Si trae varias empresas, se elige cuál. Solo se leen los `.DAT`: los índices (`.idx`) y las carpetas de facturas escaneadas pueden ir o no.
+- **Análisis** (no cambia nada): por cada año, asientos, apuntes, subcuentas nuevas, saldos de apertura, asientos que en a3 no cuadran y una **comprobación**: las sumas del debe y del haber de cada subcuenta y mes, calculadas con los asientos leídos, se comparan con las que guarda a3 en el plan de cuentas.
+- **Importación** de los años marcados, en una sola transacción:
+  - Las subcuentas que no existan, con su nombre de a3 y colgadas de su cuenta de 3 dígitos. Si a3 usa otros dígitos, el subnúmero se ajusta (43000007 → 4300000007 con 10 dígitos); las que no caben se avisan y no se importan.
+  - Los clientes (43, 44), proveedores (40) y acreedores (41) con NIF, dirección, código postal y población de `TCLIPRO.DAT`. Si el NIF ya es un tercero de la empresa, se le enlazan las subcuentas que le falten. Los apuntes de esas subcuentas llevan el tercero.
+  - El **asiento de apertura** de cada año con los saldos iniciales que guarda a3, y todos los asientos (origen `IMPORTACION`), con su concepto y el número de documento de cada apunte. El documento del asiento es «a3 año/número».
+  - Cada año va a un ejercicio natural **vacío**: se crea si no existe. Un ejercicio con asientos, cerrado o con otras fechas no se toca.
+  - Lo que en a3 no cuadra (algún asiento o la apertura) se importa como **borrador** y queda en «Pendientes de revisión».
+- No se importan las facturas (libros de IVA) ni los vencimientos: los asientos de las facturas sí están, pero sin la ficha de factura de IConta.
+- Como la apertura de cada año viene de a3, no cierres en IConta un año importado si el siguiente también lo está: el cierre generaría otra apertura.
+
 ## Swagger y Postman
 En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
 - **Swagger UI**: `http://localhost:6579/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.

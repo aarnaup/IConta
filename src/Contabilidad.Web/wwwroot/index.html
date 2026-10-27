@@ -144,6 +144,19 @@
       <div class="acciones"><button class="btn primario" id="edGuardar" type="button">Guardar</button>
         <button class="btn" id="edCerrar" type="button">Cerrar</button><span id="edMsg" role="status"></span></div>
     </div>
+    <div class="panel" id="a3Panel" hidden>
+      <h2 id="a3Titulo">Importar de a3ECO</h2>
+      <p class="ayuda">Comprime en .zip la carpeta de datos de a3ECO (la que contiene TCLIPRO.DAT y las carpetas E00001, E00002…).
+        Se importan las subcuentas, los clientes y proveedores, la apertura y los asientos de cada año, en ejercicios naturales vacíos.</p>
+      <div class="cab2">
+        <label>Fichero .zip <input id="a3Fichero" type="file" accept=".zip"></label>
+        <label id="a3CarpetaCampo" hidden>Empresa de a3 <select id="a3Carpeta"></select></label>
+        <label>&nbsp;<button class="btn" id="a3Analizar" type="button">Analizar</button></label>
+      </div>
+      <div id="a3Resultado"></div>
+      <div class="acciones"><button class="btn primario" id="a3Importar" type="button" hidden>Importar los años marcados</button>
+        <button class="btn" id="a3Cerrar" type="button">Cerrar</button><span id="a3Msg" role="status"></span></div>
+    </div>
     <div class="panel">
       <h2>Nueva empresa</h2>
       <div class="cab2">
