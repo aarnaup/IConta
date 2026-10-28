@@ -195,7 +195,8 @@ async function entrarEmpresa(empresa, ejercicio, tab) {
   $('#diario').innerHTML = S.diarios.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
   $('#mayorCanal').innerHTML = '<option value="">Todos los canales</option>' + baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
   await cargaDimensiones().catch(() => { ANA.dims = []; });
-  S.lineas = [nuevaLinea(), nuevaLinea()];
+  S.lineas = [nuevaLinea(), nuevaLinea()]; S.editando = null;
+  $('#asEditando').hidden = true; $('#diario').disabled = false; $('#guardar').textContent = 'Contabilizar asiento';
   fst.lineas = [];
   PR.actual = null; $('#ppPanel').hidden = true; ANA.informe = null; $('#anBody').innerHTML = ''; $('#anDesde').value = ''; $('#anCanal').innerHTML = '';
   MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
@@ -232,43 +233,120 @@ $('#navApp').addEventListener('click', e => { const b = e.target.closest('button
 const nuevaLinea = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', canalId: null, debe: '', haber: '', analitica: '' });
 const canalOpts = sel => S.canales.map(c => `<option value="${c.id}" ${String(sel) === String(c.id) ? 'selected' : ''}>${esc(c.codigo)}</option>`).join('');
 
-function pintaLineas() {
+// Rejilla de apuntes como una hoja de cálculo: Enter pasa a la celda siguiente (y al final de la fila, a una fila nueva),
+// las flechas arriba y abajo cambian de fila, Ctrl+Supr quita la fila y el importe que falta para cuadrar se propone solo.
+function pintaLineas(foco) {
   const def = S.canales.find(c => c.codigo === 'A') || S.canales[0];
   S.lineas.forEach(l => { if (!l.canalId && def) l.canalId = def.id; });
+  const ana = !$('#thAnalitica').hidden;
   $('#lineas').innerHTML = S.lineas.map((l, i) => `
     <tr data-i="${i}">
-      <td><input data-f="cuenta" list="dl-cuentas" value="${esc(l.cuenta)}" aria-label="Cuenta apunte ${i + 1}"></td>
+      <td class="fila">${i + 1}</td>
+      <td><input data-f="cuenta" list="dl-cuentas" value="${esc(l.cuenta)}" autocomplete="off" class="${l.cuenta && !l.cuentaId ? 'mal' : ''}"
+        placeholder="430.5 o nombre" aria-label="Cuenta apunte ${i + 1}"></td>
       <td class="nombre">${esc(l.nombre) || '<span style="opacity:.6">—</span>'}</td>
+      <td><input data-f="concepto" value="${esc(l.concepto)}" placeholder="${esc($('#concepto').value || 'concepto del asiento')}" aria-label="Concepto apunte ${i + 1}"></td>
       <td><select data-f="canalId" aria-label="Canal apunte ${i + 1}">${canalOpts(l.canalId)}</select></td>
-      ${$('#thAnalitica').hidden ? '' : `<td><input data-f="analitica" value="${esc(l.analitica)}" placeholder="por defecto" aria-label="Analítica apunte ${i + 1}"></td>`}
+      ${ana ? `<td><input data-f="analitica" value="${esc(l.analitica)}" placeholder="por defecto" aria-label="Analítica apunte ${i + 1}"></td>` : ''}
       <td><input data-f="debe" class="num" inputmode="decimal" value="${esc(l.debe)}" aria-label="Debe apunte ${i + 1}"></td>
       <td><input data-f="haber" class="num" inputmode="decimal" value="${esc(l.haber)}" aria-label="Haber apunte ${i + 1}"></td>
-      <td><button class="x" type="button" data-del="${i}" aria-label="Quitar apunte ${i + 1}">×</button></td>
+      <td><button class="x" type="button" data-del="${i}" tabindex="-1" aria-label="Quitar apunte ${i + 1}">×</button></td>
     </tr>`).join('');
+  if (foco) celda(foco.i, foco.f)?.focus();
+}
+const celda = (i, f) => $(`#lineas tr[data-i="${i}"] [data-f="${f}"]`);
+
+// Dígitos de las subcuentas de la empresa (los del código más habitual)
+function digitosCuenta() {
+  const n = {}; S.cuentas.forEach(c => n[c.codigo.length] = (n[c.codigo.length] || 0) + 1);
+  return +Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0] || 8;
+}
+const sinTildes = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Cuenta a partir de lo tecleado: el código exacto, con punto (430.5 → 43000005), un principio de código o parte del nombre que
+// solo encaje con una cuenta
+function resuelveCuenta(texto) {
+  const t = texto.trim(); if (!t) return null;
+  const exacta = S.cuentas.find(c => c.codigo === t); if (exacta) return exacta;
+  const m = t.match(/^(\d+)\.(\d*)$/);
+  if (m) { const d = digitosCuenta(), relleno = d - m[1].length - m[2].length;
+           return relleno >= 0 ? S.cuentas.find(c => c.codigo === m[1] + '0'.repeat(relleno) + m[2]) || null : null; }
+  const cands = /^\d+$/.test(t) ? S.cuentas.filter(c => c.codigo.startsWith(t))
+    : S.cuentas.filter(c => sinTildes(c.nombre).includes(sinTildes(t)));
+  return cands.length === 1 ? cands[0] : null;
+}
+function fijaCuenta(tr, l, c) {
+  l.cuentaId = c ? c.id : null; l.nombre = c ? c.nombre : ''; if (c) l.cuenta = c.codigo;
+  const inp = tr.querySelector('[data-f=cuenta]');
+  if (c) inp.value = c.codigo;
+  inp.classList.toggle('mal', !!l.cuenta.trim() && !c);
+  tr.querySelector('.nombre').textContent = l.nombre || (l.cuenta.trim() ? 'No existe' : '—');
 }
 
 $('#lineas').addEventListener('input', e => {
   const tr = e.target.closest('tr'); if (!tr) return;
   const l = S.lineas[+tr.dataset.i], f = e.target.dataset.f;
   l[f] = e.target.value;
-  if (f === 'cuenta') {
-    const c = S.cuentas.find(x => x.codigo === l.cuenta.trim());
-    l.cuentaId = c ? c.id : null; l.nombre = c ? c.nombre : '';
-    tr.querySelector('.nombre').textContent = l.nombre || '—';
-  }
+  if (f === 'cuenta') { const c = S.cuentas.find(x => x.codigo === l.cuenta.trim()); fijaCuenta(tr, l, c); if (!c) e.target.classList.remove('mal'); }
   if (f === 'debe' && num(l.debe)) { l.haber = ''; tr.querySelector('[data-f=haber]').value = ''; }
   if (f === 'haber' && num(l.haber)) { l.debe = ''; tr.querySelector('[data-f=debe]').value = ''; }
   recalcula();
 });
 $('#lineas').addEventListener('change', e => {
-  if (e.target.dataset.f === 'canalId') { S.lineas[+e.target.closest('tr').dataset.i].canalId = +e.target.value; recalcula(); }
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const l = S.lineas[+tr.dataset.i];
+  if (e.target.dataset.f === 'canalId') { l.canalId = +e.target.value; recalcula(); }
+  if (e.target.dataset.f === 'cuenta') fijaCuenta(tr, l, resuelveCuenta(l.cuenta));
 });
 $('#lineas').addEventListener('click', e => {
   const d = e.target.dataset.del; if (d === undefined) return;
-  S.lineas.splice(+d, 1); if (!S.lineas.length) S.lineas.push(nuevaLinea());
-  pintaLineas(); recalcula();
+  quitaLinea(+d);
 });
-$('#addLinea').onclick = () => { S.lineas.push(nuevaLinea()); pintaLineas(); recalcula(); };
+function quitaLinea(i) {
+  S.lineas.splice(i, 1); if (!S.lineas.length) S.lineas.push(nuevaLinea());
+  pintaLineas({ i: Math.min(i, S.lineas.length - 1), f: 'cuenta' }); recalcula();
+}
+function anadeLinea(foco = true) {
+  S.lineas.push(nuevaLinea()); pintaLineas(foco ? { i: S.lineas.length - 1, f: 'cuenta' } : null); recalcula();
+}
+
+// Al entrar en el importe de una fila con cuenta y sin importe, se propone lo que falta para cuadrar
+$('#lineas').addEventListener('focusin', e => {
+  const f = e.target.dataset.f; if (f !== 'debe' && f !== 'haber') return;
+  const tr = e.target.closest('tr'), i = +tr.dataset.i, l = S.lineas[i];
+  if (!l.cuentaId || num(l.debe) || num(l.haber)) return;
+  const dif = Math.round(S.lineas.reduce((s, x, j) => j === i ? s : s + num(x.debe) - num(x.haber), 0) * 100) / 100;
+  if (!dif) return;
+  const lado = dif > 0 ? 'haber' : 'debe', valor = Math.abs(dif).toFixed(2).replace('.', ',');
+  l[lado] = valor; tr.querySelector(`[data-f=${lado}]`).value = valor; recalcula();
+  // Se mueve el foco después de que termine el de esta celda (si no, el navegador lo devuelve aquí)
+  setTimeout(() => { const c = celda(i, lado); if (lado !== f) c.focus(); c.select(); });
+});
+
+$('#lineas').addEventListener('keydown', e => {
+  const f = e.target.dataset.f; if (!f) return;
+  const tr = e.target.closest('tr'), i = +tr.dataset.i, l = S.lineas[i];
+  if (e.key === 'Delete' && e.ctrlKey) { e.preventDefault(); return quitaLinea(i); }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && f !== 'cuenta' && f !== 'canalId') {
+    const j = i + (e.key === 'ArrowDown' ? 1 : -1);
+    if (j >= 0 && j < S.lineas.length) { e.preventDefault(); celda(j, f).focus(); celda(j, f).select?.(); }
+    return;
+  }
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  if (f === 'cuenta') fijaCuenta(tr, l, resuelveCuenta(e.target.value));
+  // Desde el debe con importe se salta el haber; desde el final de la fila se pasa a la siguiente (o a una nueva)
+  const celdas = [...tr.querySelectorAll('[data-f]')];
+  let k = celdas.indexOf(e.target) + 1;
+  if (f === 'debe' && num(l.debe)) k = celdas.length;
+  if (k < celdas.length) { celdas[k].focus(); celdas[k].select?.(); return; }
+  if (i + 1 < S.lineas.length) return celda(i + 1, 'cuenta').focus();
+  const totD = S.lineas.reduce((s, x) => s + num(x.debe), 0), totH = S.lineas.reduce((s, x) => s + num(x.haber), 0);
+  if (l.cuentaId && (num(l.debe) || num(l.haber)) && Math.round((totD - totH) * 100) !== 0) return anadeLinea();
+  if (Math.round((totD - totH) * 100) === 0 && totD) return $('#guardar').focus();   // cuadrado: Enter en el botón contabiliza
+  anadeLinea();
+});
+$('#concepto').addEventListener('input', () => $$('#lineas [data-f=concepto]').forEach(x => x.placeholder = $('#concepto').value || 'concepto del asiento'));
+$('#addLinea').onclick = () => anadeLinea();
 $('#fecha').onchange = recalcula;
 
 let timer;
@@ -301,15 +379,22 @@ async function guardarAsiento(borrador) {
   let cmd;
   try {
     cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
-      apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto || null,
+      apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto.trim() || $('#concepto').value.trim() || null,
+                                  terceroId: l.terceroId ?? null, actividadId: l.actividadId ?? null, documento: l.documento || null,
                                   analitica: parseAnalitica(l.analitica) })) };
   } catch (e) { return msg($('#msg'), e.message, 'err'); }
   try {
+    if (S.editando) {
+      const r = await put(urlX('/asientos/' + S.editando.id), cmd);
+      cierraEdicion();
+      msg($('#msg'), `Asiento ${r.numero} modificado${r.estado === 'BORRADOR' ? ' (queda en borrador)' : ''}.`, 'ok');
+      return;
+    }
     const r = await post(urlX('/asientos'), cmd);
     msg($('#msg'), r.estado === 'CONTABILIZADO' ? `Asiento ${r.numero} contabilizado.`
       : `Asiento ${r.numero} guardado como borrador${r.forzadoBorrador ? ': queda pendiente de revisión' : ''}.`, 'ok');
     S.lineas = [nuevaLinea(), nuevaLinea()]; $('#concepto').value = '';
-    pintaLineas(); calcula();
+    pintaLineas(); calcula(); $('#concepto').focus();
   } catch (e) { msg($('#msg'), e.message, 'err'); }
 }
 $('#guardar').onclick = () => guardarAsiento(false);
@@ -323,12 +408,51 @@ async function cargaDiario() {
   for (const f of filas) {
     if (f.asientoId !== ult) {
       ult = f.asientoId;
-      h += `<tr class="asiento-cab"><td colspan="5">${esc(f.diario)} · Nº ${f.numero} · ${fechaES(f.fecha)} · ${esc(f.concepto)}${f.estado !== 'CONTABILIZADO' ? ' (' + esc(f.estado.toLowerCase()) + ')' : ''}</td></tr>`;
+      const acc = f.bloqueo || !permitido('CONTABILIDAD:ESCRITURA') || S.ejercicio.estado !== 'ABIERTO'
+        ? (f.bloqueo && f.estado !== 'ANULADO' ? `<span class="bloq" title="${esc(f.bloqueo)}">${esc(origenTexto(f.origen))}</span>` : '')
+        : `<span class="acc"><button class="btn" type="button" data-modificar="${f.asientoId}">Modificar</button>
+             <button class="btn" type="button" data-borrar-as="${f.asientoId}" data-num="${f.numero}">Borrar</button></span>`;
+      h += `<tr class="asiento-cab"><td colspan="5">${esc(f.diario)} · Nº ${f.numero} · ${fechaES(f.fecha)} · ${esc(f.concepto)}${f.estado !== 'CONTABILIZADO' ? ' (' + esc(f.estado.toLowerCase()) + ')' : ''}${acc}</td></tr>`;
     }
     h += `<tr><td>${esc(f.cuenta)}</td><td class="nombre">${esc(f.cuentaNombre)}</td><td>${esc(f.canal)}</td><td class="num">${f.debe ? fmt(f.debe) : ''}</td><td class="num">${f.haber ? fmt(f.haber) : ''}</td></tr>`;
   }
   $('#diarioBody').innerHTML = h;
 }
+
+const origenTexto = o => ({ FACTURA: 'De una factura', TESORERIA: 'De un cobro o pago', AMORTIZACION: 'De la amortización', IVA: 'De la liquidación del IVA',
+  APERTURA: 'Apertura', REGULARIZACION: 'Regularización', CIERRE: 'Cierre' }[o] || 'No modificable');
+
+$('#diarioBody').addEventListener('click', async e => {
+  const m = e.target.closest('button[data-modificar]'), b = e.target.closest('button[data-borrar-as]');
+  if (m) {
+    try { abreEdicion(await api(urlX('/asientos/' + m.dataset.modificar))); } catch (err) { msg($('#diarioMsg'), err.message, 'err-texto'); }
+  } else if (b) {
+    if (!confirm(`¿Borrar el asiento ${b.dataset.num}? No se puede deshacer.`)) return;
+    try { await api(urlX('/asientos/' + b.dataset.borrarAs), { method: 'DELETE' }); msg($('#diarioMsg'), `Asiento ${b.dataset.num} borrado.`, 'ayuda'); await cargaDiario(); }
+    catch (err) { msg($('#diarioMsg'), err.message, 'err-texto'); }
+  }
+});
+
+// Carga un asiento en la rejilla para modificarlo
+function abreEdicion(a) {
+  const importe = n => n ? Number(n).toFixed(2).replace('.', ',') : '';
+  const anaTexto = imp => imp.map(x => { const el = elemsAna().find(e => e.id === x.elementoId);
+                                         return el ? `${el.dim}/${el.codigo}:${Number(x.porcentaje)}` : ''; }).filter(Boolean).join(' ');
+  S.editando = { id: a.id, numero: a.numero };
+  S.lineas = a.apuntes.map(p => ({ cuenta: p.cuenta, cuentaId: p.cuentaId, nombre: p.cuentaNombre, concepto: p.concepto === a.concepto ? '' : (p.concepto || ''),
+    canalId: p.canalId, debe: importe(p.debe), haber: importe(p.haber), analitica: anaTexto(p.analitica),
+    terceroId: p.terceroId, actividadId: p.actividadId, documento: p.documento }));
+  $('#fecha').value = a.fecha; $('#diario').value = a.diarioId; $('#diario').disabled = true; $('#concepto').value = a.concepto;
+  $('#asEditandoTxt').textContent = `Modificando el asiento nº ${a.numero}${a.estado === 'BORRADOR' ? ' (borrador)' : ''}`;
+  $('#asEditando').hidden = false; $('#guardar').textContent = 'Guardar cambios';
+  abreTab('asiento'); pintaLineas({ i: 0, f: 'cuenta' }); recalcula();
+}
+function cierraEdicion() {
+  S.editando = null; $('#asEditando').hidden = true; $('#diario').disabled = false; $('#guardar').textContent = 'Contabilizar asiento';
+  S.lineas = [nuevaLinea(), nuevaLinea()]; $('#concepto').value = ''; $('#fecha').value = hoy() >= S.ejercicio.fechaInicio && hoy() <= S.ejercicio.fechaFin ? hoy() : S.ejercicio.fechaInicio;
+  pintaLineas(); recalcula();
+}
+$('#asCancelarEd').onclick = () => { cierraEdicion(); abreTab('diario'); };
 
 $('#mayorBtn').onclick = async () => {
   const cuenta = $('#mayorCuenta').value.trim(); if (!cuenta) return;
@@ -1952,7 +2076,7 @@ async function cargaDimensiones() {
   ANA.dims = permitido('ANALITICA') || permitido('PRESUPUESTOS') ? await api(urlE('/analitica/dimensiones')) : [];
   const hay = elemsAna().length > 0;
   $('#thAnalitica').hidden = !hay; $('#ayudaAnalitica').hidden = !hay;
-  $('#pieLineas').colSpan = hay ? 4 : 3;
+  $('#pieLineas').colSpan = hay ? 6 : 5;
 }
 
 // «T1», «T1:60 T2:40», «CC/T1:50»: sin porcentaje, lo que falte hasta 100 en su dimensión a partes iguales

@@ -110,6 +110,28 @@ public static class EmpresaEndpoints
                 new { creado.Id, creado.Numero, creado.Estado, forzadoBorrador = forzado });
         }).Requiere(Nivel.Escritura, Modulo.Contabilidad);
 
+        ej.MapGet("/asientos/{asientoId:long}", (long empresaId, long ejercicioId, long asientoId, IAsientoRepositorio a, CancellationToken ct)
+            => a.ObtenerAsync(empresaId, ejercicioId, asientoId, ct))
+            .Requiere(Nivel.Lectura, Modulo.Contabilidad);
+
+        // Modificar o borrar: quien no puede contabilizar sin revisión solo toca borradores (y lo modificado queda en borrador)
+        ej.MapPut("/asientos/{asientoId:long}", async (long empresaId, long ejercicioId, long asientoId, CrearAsientoCmd cmd, HttpContext http,
+            IAsientoRepositorio a, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var r = await a.ModificarAsync(empresaId, ejercicioId, asientoId, http.User.UsuarioId(), cmd, !http.Acceso().PuedeContabilizarDirecto, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "ASIENTO_MODIFICADO", "asiento", asientoId,
+                new { r.Numero, r.Estado, cmd.Fecha, Apuntes = cmd.Apuntes.Count }, ct);
+            return Results.Ok(r);
+        }).Requiere(Nivel.Escritura, Modulo.Contabilidad);
+
+        ej.MapDelete("/asientos/{asientoId:long}", async (long empresaId, long ejercicioId, long asientoId, HttpContext http,
+            IAsientoRepositorio a, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await a.BorrarAsync(empresaId, ejercicioId, asientoId, !http.Acceso().PuedeContabilizarDirecto, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "ASIENTO_BORRADO", "asiento", asientoId, null, ct);
+            return Results.NoContent();
+        }).Requiere(Nivel.Escritura, Modulo.Contabilidad);
+
         ej.MapGet("/asientos", (long empresaId, long ejercicioId, int? limite, IAsientoRepositorio a, CancellationToken ct)
             => a.ListarAsync(empresaId, ejercicioId, Math.Clamp(limite ?? 50, 1, 500), ct))
             .Requiere(Nivel.Lectura, Modulo.Contabilidad);

@@ -54,6 +54,8 @@ public sealed class ApunteCmd
     public decimal Debe { get; set; }
     public decimal Haber { get; set; }
     public string? Concepto { get; set; }
+    /// <summary>Número de factura, recibo… del apunte.</summary>
+    public string? Documento { get; set; }
     /// <summary>Reparto analítico del apunte; si no se indica, se aplica el reparto por defecto de la cuenta.</summary>
     public List<ImputacionCmd>? Analitica { get; set; }
 }
@@ -101,6 +103,9 @@ public sealed class FilaAsientoDto
     public string Concepto { get; set; } = "";
     public string Estado { get; set; } = "";
     public string Diario { get; set; } = "";
+    public string Origen { get; set; } = "";
+    /// <summary>Por qué no se puede modificar ni borrar (null: se puede).</summary>
+    public string? Bloqueo { get; set; }
     public short Linea { get; set; }
     public string Cuenta { get; set; } = "";
     public string CuentaNombre { get; set; } = "";
@@ -118,4 +123,35 @@ public sealed class FilaMayorDto
     public decimal Debe { get; set; }
     public decimal Haber { get; set; }
     public decimal Saldo { get; set; }
+}
+
+/// <summary>Asiento completo para editarlo.</summary>
+public sealed class AsientoDetalleDto
+{
+    public long Id { get; set; }
+    public int Numero { get; set; }
+    public DateOnly Fecha { get; set; }
+    public long DiarioId { get; set; }
+    public string Concepto { get; set; } = "";
+    public string Estado { get; set; } = "";
+    public string Origen { get; set; } = "";
+    public string? Bloqueo { get; set; }
+    public List<ApunteDetalleDto> Apuntes { get; set; } = [];
+}
+
+public sealed class ApunteDetalleDto
+{
+    public long Id { get; set; }
+    public short Linea { get; set; }
+    public long CuentaId { get; set; }
+    public string Cuenta { get; set; } = "";
+    public string CuentaNombre { get; set; } = "";
+    public long? TerceroId { get; set; }
+    public long? ActividadId { get; set; }
+    public long CanalId { get; set; }
+    public decimal Debe { get; set; }
+    public decimal Haber { get; set; }
+    public string? Concepto { get; set; }
+    public string? Documento { get; set; }
+    public List<ImputacionCmd> Analitica { get; set; } = [];
 }

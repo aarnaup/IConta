@@ -253,20 +253,22 @@
     <div class="grid">
       <div class="panel">
         <h2>Asiento</h2>
+        <div id="asEditando" class="aviso-edicion" hidden><span id="asEditandoTxt"></span>
+          <button class="btn" id="asCancelarEd" type="button">Cancelar la modificación</button></div>
         <div class="cab">
           <label>Fecha <input type="date" id="fecha"></label>
           <label>Diario <select id="diario"></select></label>
           <label>Concepto <input id="concepto" placeholder="Ej. Compra material de oficina"></label>
         </div>
-        <table>
+        <table class="rejilla">
           <thead><tr>
-            <th style="width:130px">Cuenta</th><th>Descripción</th><th style="width:90px">Canal</th>
-            <th id="thAnalitica" style="width:150px" hidden>Analítica</th>
+            <th style="width:28px">#</th><th style="width:130px">Cuenta</th><th style="width:22%">Descripción</th><th>Concepto</th><th style="width:70px">Canal</th>
+            <th id="thAnalitica" style="width:130px" hidden>Analítica</th>
             <th class="num" style="width:110px">Debe</th><th class="num" style="width:110px">Haber</th><th style="width:28px"></th>
           </tr></thead>
           <tbody id="lineas"></tbody>
           <tfoot><tr>
-            <td id="pieLineas" colspan="3" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
+            <td id="pieLineas" colspan="5" style="border:0"><button class="btn" id="addLinea" type="button">Añadir apunte</button></td>
             <td class="num" id="totDebe" style="border:0;font-weight:600">0,00</td>
             <td class="num" id="totHaber" style="border:0;font-weight:600">0,00</td><td style="border:0"></td>
           </tr></tfoot>
@@ -277,6 +279,10 @@
           <button class="btn" id="borrador" data-guarda type="button">Guardar borrador</button>
           <span id="msg" role="status" aria-live="polite"></span>
         </div>
+        <p class="ayuda"><strong>Teclado:</strong> Enter pasa a la celda siguiente y, al final de la fila, a una nueva; ↑ y ↓ cambian de fila;
+          Ctrl+Supr quita la fila. La cuenta se puede teclear con punto (430.5 = 43000005), por el principio del código o por parte del nombre.
+          Al llegar al importe de una fila nueva se propone lo que falta para cuadrar; con el asiento cuadrado, Enter va a «Contabilizar».
+          El concepto de cada apunte, si se deja vacío, es el del asiento.</p>
         <p class="ayuda">Importes con coma decimal (1234,56). <span id="ayudaAnalitica" hidden>Analítica: código del elemento (T1) o reparto
           (T1:60 T2:40; DIM/T1 si el código se repite en otra dimensión); en blanco se aplica el reparto por defecto de la cuenta.</span> Un canal derivado (A, B, E…) reparte el apunte en los canales base según su fórmula vigente en la fecha del asiento.</p>
       </div>
@@ -356,6 +362,9 @@
   <section id="tab-diario" hidden>
     <div class="panel">
       <h2>Últimos asientos del ejercicio</h2>
+      <p class="ayuda">«Modificar» abre el asiento en la rejilla de Nuevo asiento (conserva su diario y su número). Los asientos de facturas,
+        cobros, amortizaciones o el cierre se cambian desde su documento.</p>
+      <span id="diarioMsg" role="status"></span>
       <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
       <tbody id="diarioBody"></tbody></table>
     </div>
