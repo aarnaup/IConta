@@ -59,6 +59,11 @@
   .estado-ok{color:var(--good)} .estado-mal{color:var(--bad)}
   .ayuda{color:var(--muted); font-size:13px; margin:10px 0 0}
   .asiento-cab td{background:var(--bg); font-weight:600}
+  .asiento-cab .acc{float:right; display:flex; gap:6px}
+  .asiento-cab .acc button{padding:2px 10px; font-weight:400}
+  .asiento-cab .bloq{float:right; font-weight:400; font-size:12px; color:var(--muted)}
+  .aviso-edicion{display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap;
+    background:var(--bg); border-left:4px solid var(--accent); padding:8px 12px; margin-bottom:12px; font-weight:600}
   .vacio{color:var(--muted); padding:24px 0}
   .cab2{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:16px}
   @media (max-width:700px){ .cab2{grid-template-columns:1fr} }

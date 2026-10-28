@@ -195,7 +195,8 @@ async function entrarEmpresa(empresa, ejercicio, tab) {
   $('#diario').innerHTML = S.diarios.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
   $('#mayorCanal').innerHTML = '<option value="">Todos los canales</option>' + baseCanales().map(c => `<option value="${c.id}">Canal ${esc(c.codigo)}</option>`).join('');
   await cargaDimensiones().catch(() => { ANA.dims = []; });
-  S.lineas = [nuevaLinea(), nuevaLinea()];
+  S.lineas = [nuevaLinea(), nuevaLinea()]; S.editando = null;
+  $('#asEditando').hidden = true; $('#diario').disabled = false; $('#guardar').textContent = 'Contabilizar asiento';
   fst.lineas = [];
   PR.actual = null; $('#ppPanel').hidden = true; ANA.informe = null; $('#anBody').innerHTML = ''; $('#anDesde').value = ''; $('#anCanal').innerHTML = '';
   MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
@@ -379,9 +380,16 @@ async function guardarAsiento(borrador) {
   try {
     cmd = { fecha: $('#fecha').value, diarioId: +$('#diario').value, concepto: $('#concepto').value, borrador,
       apuntes: lineas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber), concepto: l.concepto.trim() || $('#concepto').value.trim() || null,
+                                  terceroId: l.terceroId ?? null, actividadId: l.actividadId ?? null, documento: l.documento || null,
                                   analitica: parseAnalitica(l.analitica) })) };
   } catch (e) { return msg($('#msg'), e.message, 'err'); }
   try {
+    if (S.editando) {
+      const r = await put(urlX('/asientos/' + S.editando.id), cmd);
+      cierraEdicion();
+      msg($('#msg'), `Asiento ${r.numero} modificado${r.estado === 'BORRADOR' ? ' (queda en borrador)' : ''}.`, 'ok');
+      return;
+    }
     const r = await post(urlX('/asientos'), cmd);
     msg($('#msg'), r.estado === 'CONTABILIZADO' ? `Asiento ${r.numero} contabilizado.`
       : `Asiento ${r.numero} guardado como borrador${r.forzadoBorrador ? ': queda pendiente de revisión' : ''}.`, 'ok');
@@ -400,12 +408,51 @@ async function cargaDiario() {
   for (const f of filas) {
     if (f.asientoId !== ult) {
       ult = f.asientoId;
-      h += `<tr class="asiento-cab"><td colspan="5">${esc(f.diario)} · Nº ${f.numero} · ${fechaES(f.fecha)} · ${esc(f.concepto)}${f.estado !== 'CONTABILIZADO' ? ' (' + esc(f.estado.toLowerCase()) + ')' : ''}</td></tr>`;
+      const acc = f.bloqueo || !permitido('CONTABILIDAD:ESCRITURA') || S.ejercicio.estado !== 'ABIERTO'
+        ? (f.bloqueo && f.estado !== 'ANULADO' ? `<span class="bloq" title="${esc(f.bloqueo)}">${esc(origenTexto(f.origen))}</span>` : '')
+        : `<span class="acc"><button class="btn" type="button" data-modificar="${f.asientoId}">Modificar</button>
+             <button class="btn" type="button" data-borrar-as="${f.asientoId}" data-num="${f.numero}">Borrar</button></span>`;
+      h += `<tr class="asiento-cab"><td colspan="5">${esc(f.diario)} · Nº ${f.numero} · ${fechaES(f.fecha)} · ${esc(f.concepto)}${f.estado !== 'CONTABILIZADO' ? ' (' + esc(f.estado.toLowerCase()) + ')' : ''}${acc}</td></tr>`;
     }
     h += `<tr><td>${esc(f.cuenta)}</td><td class="nombre">${esc(f.cuentaNombre)}</td><td>${esc(f.canal)}</td><td class="num">${f.debe ? fmt(f.debe) : ''}</td><td class="num">${f.haber ? fmt(f.haber) : ''}</td></tr>`;
   }
   $('#diarioBody').innerHTML = h;
 }
+
+const origenTexto = o => ({ FACTURA: 'De una factura', TESORERIA: 'De un cobro o pago', AMORTIZACION: 'De la amortización', IVA: 'De la liquidación del IVA',
+  APERTURA: 'Apertura', REGULARIZACION: 'Regularización', CIERRE: 'Cierre' }[o] || 'No modificable');
+
+$('#diarioBody').addEventListener('click', async e => {
+  const m = e.target.closest('button[data-modificar]'), b = e.target.closest('button[data-borrar-as]');
+  if (m) {
+    try { abreEdicion(await api(urlX('/asientos/' + m.dataset.modificar))); } catch (err) { msg($('#diarioMsg'), err.message, 'err-texto'); }
+  } else if (b) {
+    if (!confirm(`¿Borrar el asiento ${b.dataset.num}? No se puede deshacer.`)) return;
+    try { await api(urlX('/asientos/' + b.dataset.borrarAs), { method: 'DELETE' }); msg($('#diarioMsg'), `Asiento ${b.dataset.num} borrado.`, 'ayuda'); await cargaDiario(); }
+    catch (err) { msg($('#diarioMsg'), err.message, 'err-texto'); }
+  }
+});
+
+// Carga un asiento en la rejilla para modificarlo
+function abreEdicion(a) {
+  const importe = n => n ? Number(n).toFixed(2).replace('.', ',') : '';
+  const anaTexto = imp => imp.map(x => { const el = elemsAna().find(e => e.id === x.elementoId);
+                                         return el ? `${el.dim}/${el.codigo}:${Number(x.porcentaje)}` : ''; }).filter(Boolean).join(' ');
+  S.editando = { id: a.id, numero: a.numero };
+  S.lineas = a.apuntes.map(p => ({ cuenta: p.cuenta, cuentaId: p.cuentaId, nombre: p.cuentaNombre, concepto: p.concepto === a.concepto ? '' : (p.concepto || ''),
+    canalId: p.canalId, debe: importe(p.debe), haber: importe(p.haber), analitica: anaTexto(p.analitica),
+    terceroId: p.terceroId, actividadId: p.actividadId, documento: p.documento }));
+  $('#fecha').value = a.fecha; $('#diario').value = a.diarioId; $('#diario').disabled = true; $('#concepto').value = a.concepto;
+  $('#asEditandoTxt').textContent = `Modificando el asiento nº ${a.numero}${a.estado === 'BORRADOR' ? ' (borrador)' : ''}`;
+  $('#asEditando').hidden = false; $('#guardar').textContent = 'Guardar cambios';
+  abreTab('asiento'); pintaLineas({ i: 0, f: 'cuenta' }); recalcula();
+}
+function cierraEdicion() {
+  S.editando = null; $('#asEditando').hidden = true; $('#diario').disabled = false; $('#guardar').textContent = 'Contabilizar asiento';
+  S.lineas = [nuevaLinea(), nuevaLinea()]; $('#concepto').value = ''; $('#fecha').value = hoy() >= S.ejercicio.fechaInicio && hoy() <= S.ejercicio.fechaFin ? hoy() : S.ejercicio.fechaInicio;
+  pintaLineas(); recalcula();
+}
+$('#asCancelarEd').onclick = () => { cierraEdicion(); abreTab('diario'); };
 
 $('#mayorBtn').onclick = async () => {
   const cuenta = $('#mayorCuenta').value.trim(); if (!cuenta) return;

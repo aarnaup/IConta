@@ -20,6 +20,12 @@ public interface IAsientoRepositorio
     Task<IReadOnlyList<FilaAsientoDto>> ListarAsync(long empresaId, long ejercicioId, int limite, CancellationToken ct);
     Task<IReadOnlyList<FilaMayorDto>> MayorAsync(long empresaId, long ejercicioId, string cuenta, long? canalBaseId, CancellationToken ct);
 
+    Task<AsientoDetalleDto> ObtenerAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
+    /// <summary>Cambia fecha, concepto y apuntes de un asiento manual, importado o de apertura importada; conserva diario y número.</summary>
+    Task<AsientoCreado> ModificarAsync(long empresaId, long ejercicioId, long asientoId, long usuarioId, CrearAsientoCmd cmd,
+        bool soloBorradores, CancellationToken ct);
+    Task BorrarAsync(long empresaId, long ejercicioId, long asientoId, bool soloBorradores, CancellationToken ct);
+
     Task<IReadOnlyList<PendienteDto>> ListarPendientesAsync(long empresaId, long ejercicioId, CancellationToken ct);
     Task AprobarAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
     Task RechazarAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
@@ -54,6 +60,37 @@ public sealed class AsientoRepositorio(
         if (string.IsNullOrWhiteSpace(cmd.Concepto))
             throw new ReglaContableException("El concepto es obligatorio.");
 
+        var (ctx, repartos) = await PrepararAsync(cn, tx, empresaId, ejercicioId, cmd, tipoPeriodo, ct);
+
+        // 4) Número correlativo por empresa / ejercicio / diario
+        var numero = await cn.ExecuteScalarAsync<int>(new CommandDefinition("""
+            INSERT INTO conta.contador_asiento (empresa_id, ejercicio_id, diario_id, ultimo_numero)
+            VALUES (@empresaId, @ejercicioId, @diarioId, 1)
+            ON CONFLICT (empresa_id, ejercicio_id, diario_id)
+            DO UPDATE SET ultimo_numero = conta.contador_asiento.ultimo_numero + 1
+            RETURNING ultimo_numero
+            """, new { empresaId, ejercicioId = ctx.EjercicioId, diarioId = cmd.DiarioId }, tx, cancellationToken: ct));
+
+        var estado = cmd.Borrador ? "BORRADOR" : "CONTABILIZADO";
+        var asientoId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
+            INSERT INTO conta.asiento (empresa_id, ejercicio_id, periodo_id, diario_id, numero, fecha, concepto, estado, origen,
+                                       plantilla_id, documento, asiento_origen_id, creado_por)
+            VALUES (@empresaId, @ejercicioId, @periodoId, @diarioId, @numero, @fecha, @concepto, @estado, @origen,
+                    @plantillaId, @documento, @asientoOrigenId, @usuarioId)
+            RETURNING id
+            """, new
+        {
+            empresaId, ejercicioId = ctx.EjercicioId, periodoId = ctx.PeriodoId, diarioId = cmd.DiarioId,
+            numero, fecha = cmd.Fecha, concepto = cmd.Concepto.Trim(), estado, origen, plantillaId, documento, asientoOrigenId, usuarioId
+        }, tx, cancellationToken: ct));
+
+        await InsertarApuntesAsync(cn, tx, empresaId, asientoId, cmd, repartos, origen, tipoPeriodo, ct);
+        return new AsientoCreado(asientoId, numero, estado);
+    }
+
+    private async Task<(Contexto Ctx, List<IReadOnlyList<ImporteCanal>> Repartos)> PrepararAsync(NpgsqlConnection cn, NpgsqlTransaction tx,
+        long empresaId, long ejercicioId, CrearAsientoCmd cmd, string tipoPeriodo, CancellationToken ct)
+    {
         // 1) Reparto por canal (lectura con conexión propia: los canales ya están confirmados).
         //    ObtenerConfiguracionAsync comprueba que el canal es de la empresa.
         var configs = new Dictionary<long, ConfiguracionCanal>();
@@ -106,28 +143,12 @@ public sealed class AsientoRepositorio(
             if (okAct != actividadIds.Length) throw new ReglaContableException("Alguna actividad no pertenece a la empresa.");
         }
 
-        // 4) Número correlativo por empresa / ejercicio / diario
-        var numero = await cn.ExecuteScalarAsync<int>(new CommandDefinition("""
-            INSERT INTO conta.contador_asiento (empresa_id, ejercicio_id, diario_id, ultimo_numero)
-            VALUES (@empresaId, @ejercicioId, @diarioId, 1)
-            ON CONFLICT (empresa_id, ejercicio_id, diario_id)
-            DO UPDATE SET ultimo_numero = conta.contador_asiento.ultimo_numero + 1
-            RETURNING ultimo_numero
-            """, new { empresaId, ejercicioId = ctx.EjercicioId, diarioId = cmd.DiarioId }, tx, cancellationToken: ct));
+        return (ctx, repartos);
+    }
 
-        var estado = cmd.Borrador ? "BORRADOR" : "CONTABILIZADO";
-        var asientoId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
-            INSERT INTO conta.asiento (empresa_id, ejercicio_id, periodo_id, diario_id, numero, fecha, concepto, estado, origen,
-                                       plantilla_id, documento, asiento_origen_id, creado_por)
-            VALUES (@empresaId, @ejercicioId, @periodoId, @diarioId, @numero, @fecha, @concepto, @estado, @origen,
-                    @plantillaId, @documento, @asientoOrigenId, @usuarioId)
-            RETURNING id
-            """, new
-        {
-            empresaId, ejercicioId = ctx.EjercicioId, periodoId = ctx.PeriodoId, diarioId = cmd.DiarioId,
-            numero, fecha = cmd.Fecha, concepto = cmd.Concepto.Trim(), estado, origen, plantillaId, documento, asientoOrigenId, usuarioId
-        }, tx, cancellationToken: ct));
-
+    private static async Task InsertarApuntesAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long asientoId,
+        CrearAsientoCmd cmd, List<IReadOnlyList<ImporteCanal>> repartos, string origen, string tipoPeriodo, CancellationToken ct)
+    {
         // 5) Apuntes + reparto materializado por canal base
         short linea = 0;
         var apunteIds = new long[cmd.Apuntes.Count];
@@ -136,13 +157,14 @@ public sealed class AsientoRepositorio(
             var a = cmd.Apuntes[i];
             linea++;
             var apunteId = await cn.ExecuteScalarAsync<long>(new CommandDefinition("""
-                INSERT INTO conta.apunte (empresa_id, asiento_id, linea, cuenta_id, tercero_id, actividad_id, canal_id, debe, haber, concepto)
-                VALUES (@empresaId, @asientoId, @linea, @cuentaId, @terceroId, @actividadId, @canalId, @debe, @haber, @concepto)
+                INSERT INTO conta.apunte (empresa_id, asiento_id, linea, cuenta_id, tercero_id, actividad_id, canal_id, debe, haber, concepto, documento)
+                VALUES (@empresaId, @asientoId, @linea, @cuentaId, @terceroId, @actividadId, @canalId, @debe, @haber, @concepto, @documento)
                 RETURNING id
                 """, new
             {
                 empresaId, asientoId, linea, cuentaId = a.CuentaId, terceroId = a.TerceroId, actividadId = a.ActividadId,
-                canalId = a.CanalId, debe = a.Debe, haber = a.Haber, concepto = a.Concepto
+                canalId = a.CanalId, debe = a.Debe, haber = a.Haber, concepto = a.Concepto,
+                documento = string.IsNullOrWhiteSpace(a.Documento) ? null : a.Documento.Trim()[..Math.Min(40, a.Documento.Trim().Length)]
             }, tx, cancellationToken: ct));
             apunteIds[i] = apunteId;
 
@@ -164,7 +186,6 @@ public sealed class AsientoRepositorio(
         // 7) Un asiento contabilizado debe cuadrar en CADA canal base
         if (!cmd.Borrador) await ValidarCuadreAsync(cn, tx, asientoId, ct);
 
-        return new AsientoCreado(asientoId, numero, estado);
     }
 
     private static async Task ValidarCuadreAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long asientoId, CancellationToken ct)
@@ -175,6 +196,143 @@ public sealed class AsientoRepositorio(
         if (descuadres.Count > 0)
             throw new ReglaContableException("El asiento no cuadra en todos los canales.",
                 string.Join("; ", descuadres.Select(d => $"canal {d.CanalBaseId}: debe {d.Debe:N2} / haber {d.Haber:N2}")));
+    }
+
+    // ---------------------------------------------------------------- modificar y borrar
+
+    /// <summary>
+    /// Por qué un asiento (alias «s», con su ejercicio «e» y su periodo «pe») no se puede modificar ni borrar; NULL si se puede.
+    /// Solo se tocan aquí los asientos manuales, de plantilla, importados y la apertura importada: los demás se cambian desde
+    /// el documento que los generó (factura, cobro, amortización, cierre…).
+    /// </summary>
+    private const string SqlBloqueo = """
+        CASE
+          WHEN s.estado = 'ANULADO' THEN 'Está anulado.'
+          WHEN s.origen NOT IN ('MANUAL', 'PLANTILLA', 'IMPORTACION', 'APERTURA') OR (s.origen = 'APERTURA' AND s.asiento_origen_id IS NOT NULL)
+            THEN 'Lo generó ' || CASE s.origen WHEN 'FACTURA' THEN 'una factura' WHEN 'TESORERIA' THEN 'un cobro o pago'
+                                               WHEN 'AMORTIZACION' THEN 'la amortización' WHEN 'IVA' THEN 'la liquidación del IVA'
+                                               WHEN 'APERTURA' THEN 'el cierre del ejercicio anterior' ELSE 'el cierre del ejercicio' END
+                 || ': se cambia desde allí.'
+          WHEN EXISTS (SELECT 1 FROM fiscal.factura x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM fiscal.declaracion x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM tes.movimiento_bancario x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM tes.cobro_pago x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM tes.remesa x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM tes.remesa_vencimiento x WHERE x.asiento_devolucion_id = s.id)
+            OR EXISTS (SELECT 1 FROM inmov.inmovilizado x WHERE s.id IN (x.asiento_alta_id, x.asiento_baja_id))
+            OR EXISTS (SELECT 1 FROM inmov.amortizacion x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM inmov.bien_inversion_regularizacion x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM fiscal.devengo_caja x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM fiscal.regularizacion_prorrata x WHERE x.asiento_id = s.id)
+            OR EXISTS (SELECT 1 FROM conta.nomina x WHERE x.asiento_id = s.id)
+            THEN 'Está enlazado con un documento (factura, cobro, movimiento bancario, inmovilizado, nómina…): se cambia desde allí.'
+          WHEN EXISTS (SELECT 1 FROM conta.asiento x WHERE x.asiento_origen_id = s.id AND x.estado <> 'ANULADO')
+            THEN 'Otro asiento depende de él.'
+          WHEN EXISTS (SELECT 1 FROM tes.conciliacion_apunte x JOIN conta.apunte p ON p.id = x.apunte_id WHERE p.asiento_id = s.id)
+            THEN 'Tiene apuntes conciliados con el banco: deshaz antes la conciliación.'
+          WHEN e.estado <> 'ABIERTO' THEN 'El ejercicio está cerrado.'
+          WHEN pe.estado <> 'ABIERTO' THEN 'El periodo del asiento está cerrado.'
+        END
+        """;
+
+    private sealed class Editable
+    {
+        public long Id { get; set; }
+        public int Numero { get; set; }
+        public long DiarioId { get; set; }
+        public string Estado { get; set; } = "";
+        public string Origen { get; set; } = "";
+        public DateOnly Fecha { get; set; }
+        public string? Bloqueo { get; set; }
+    }
+
+    private static async Task<Editable> BloquearEditableAsync(NpgsqlConnection cn, NpgsqlTransaction tx, long empresaId, long ejercicioId,
+        long asientoId, bool soloBorradores, CancellationToken ct)
+    {
+        await cn.ExecuteAsync(new CommandDefinition(
+            "SELECT 1 FROM conta.asiento WHERE id = @asientoId AND empresa_id = @empresaId FOR UPDATE",
+            new { asientoId, empresaId }, tx, cancellationToken: ct));
+        var a = await cn.QuerySingleOrDefaultAsync<Editable>(new CommandDefinition($"""
+            SELECT s.id, s.numero, s.diario_id, s.estado, s.origen, s.fecha, {SqlBloqueo} AS bloqueo
+            FROM conta.asiento s
+            JOIN core.ejercicio e ON e.id = s.ejercicio_id
+            JOIN core.periodo pe ON pe.id = s.periodo_id
+            WHERE s.id = @asientoId AND s.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId
+            """, new { asientoId, empresaId, ejercicioId }, tx, cancellationToken: ct))
+            ?? throw new ReglaContableException("El asiento no existe en este ejercicio.");
+        if (a.Bloqueo is not null) throw new ReglaContableException($"El asiento {a.Numero} no se puede modificar ni borrar.", a.Bloqueo);
+        if (soloBorradores && a.Estado != "BORRADOR")
+            throw new ReglaContableException("Solo puedes modificar o borrar asientos en borrador.",
+                "Los asientos contabilizados los cambia quien puede contabilizar sin revisión.");
+        return a;
+    }
+
+    public async Task<AsientoDetalleDto> ObtenerAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var a = await cn.QuerySingleOrDefaultAsync<AsientoDetalleDto>(new CommandDefinition($"""
+            SELECT s.id, s.numero, s.fecha, s.diario_id, s.concepto, s.estado, s.origen, {SqlBloqueo} AS bloqueo
+            FROM conta.asiento s
+            JOIN core.ejercicio e ON e.id = s.ejercicio_id
+            JOIN core.periodo pe ON pe.id = s.periodo_id
+            WHERE s.id = @asientoId AND s.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId
+            """, new { asientoId, empresaId, ejercicioId }, cancellationToken: ct))
+            ?? throw new ReglaContableException("El asiento no existe en este ejercicio.");
+        a.Apuntes = (await cn.QueryAsync<ApunteDetalleDto>(new CommandDefinition("""
+            SELECT p.id, p.linea, p.cuenta_id, c.codigo AS cuenta, c.nombre AS cuenta_nombre, p.tercero_id, p.actividad_id, p.canal_id,
+                   p.debe, p.haber, p.concepto, p.documento
+            FROM conta.apunte p JOIN conta.cuenta c ON c.id = p.cuenta_id
+            WHERE p.asiento_id = @asientoId ORDER BY p.linea
+            """, new { asientoId }, cancellationToken: ct))).AsList();
+        var imputaciones = (await cn.QueryAsync<(long ApunteId, long ElementoId, decimal Porcentaje)>(new CommandDefinition("""
+            SELECT x.apunte_id, x.elemento_id, x.porcentaje FROM gest.apunte_analitica x
+            JOIN conta.apunte p ON p.id = x.apunte_id WHERE p.asiento_id = @asientoId ORDER BY x.id
+            """, new { asientoId }, cancellationToken: ct))).ToLookup(x => x.ApunteId);
+        foreach (var p in a.Apuntes)
+            p.Analitica = imputaciones[p.Id].Select(x => new ImputacionCmd { ElementoId = x.ElementoId, Porcentaje = x.Porcentaje }).ToList();
+        return a;
+    }
+
+    public async Task<AsientoCreado> ModificarAsync(long empresaId, long ejercicioId, long asientoId, long usuarioId, CrearAsientoCmd cmd,
+        bool soloBorradores, CancellationToken ct)
+    {
+        if (cmd.Apuntes.Count < 2 && !cmd.Borrador) throw new ReglaContableException("Un asiento necesita al menos dos apuntes.");
+        if (cmd.Apuntes.Count == 0) throw new ReglaContableException("El asiento no tiene apuntes.");
+        if (string.IsNullOrWhiteSpace(cmd.Concepto)) throw new ReglaContableException("El concepto es obligatorio.");
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var a = await BloquearEditableAsync(cn, tx, empresaId, ejercicioId, asientoId, soloBorradores, ct);
+        if (soloBorradores) cmd.Borrador = true;
+
+        // El diario y el número no cambian; la apertura sigue en su periodo de apertura
+        cmd.DiarioId = a.DiarioId;
+        var tipoPeriodo = a.Origen == "APERTURA" ? "APERTURA" : "NORMAL";
+        var (ctx, repartos) = await PrepararAsync(cn, tx, empresaId, ejercicioId, cmd, tipoPeriodo, ct);
+
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM conta.apunte WHERE asiento_id = @asientoId",
+            new { asientoId }, tx, cancellationToken: ct));
+        var estado = cmd.Borrador ? "BORRADOR" : "CONTABILIZADO";
+        await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE conta.asiento SET fecha = @fecha, periodo_id = @periodoId, concepto = @concepto, estado = @estado WHERE id = @asientoId
+            """, new { asientoId, fecha = cmd.Fecha, periodoId = ctx.PeriodoId, concepto = cmd.Concepto.Trim(), estado }, tx, cancellationToken: ct));
+        await InsertarApuntesAsync(cn, tx, empresaId, asientoId, cmd, repartos, a.Origen, tipoPeriodo, ct);
+        await tx.CommitAsync(ct);
+        return new AsientoCreado(asientoId, a.Numero, estado);
+    }
+
+    public async Task BorrarAsync(long empresaId, long ejercicioId, long asientoId, bool soloBorradores, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var a = await BloquearEditableAsync(cn, tx, empresaId, ejercicioId, asientoId, soloBorradores, ct);
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM conta.asiento WHERE id = @asientoId", new { asientoId }, tx, cancellationToken: ct));
+        // Si era el último número del diario, el siguiente asiento lo reutiliza y no queda hueco
+        await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE conta.contador_asiento SET ultimo_numero = ultimo_numero - 1
+            WHERE empresa_id = @empresaId AND ejercicio_id = @ejercicioId AND diario_id = @diarioId AND ultimo_numero = @numero
+            """, new { empresaId, ejercicioId, diarioId = a.DiarioId, numero = a.Numero }, tx, cancellationToken: ct));
+        await tx.CommitAsync(ct);
     }
 
     // ---------------------------------------------------------------- revisión de borradores
@@ -239,13 +397,15 @@ public sealed class AsientoRepositorio(
     public async Task<IReadOnlyList<FilaAsientoDto>> ListarAsync(long empresaId, long ejercicioId, int limite, CancellationToken ct)
     {
         await using var cn = await conexiones.AbrirAsync(ct);
-        const string sql = """
-            SELECT s.id AS asiento_id, s.numero, s.fecha, s.concepto, s.estado, d.codigo AS diario,
+        var sql = $"""
+            SELECT s.id AS asiento_id, s.numero, s.fecha, s.concepto, s.estado, d.codigo AS diario, s.origen, {SqlBloqueo} AS bloqueo,
                    a.linea, c.codigo AS cuenta, c.nombre AS cuenta_nombre, k.codigo AS canal, a.debe, a.haber
             FROM (SELECT * FROM conta.asiento
                   WHERE empresa_id = @empresaId AND ejercicio_id = @ejercicioId
                   ORDER BY fecha DESC, id DESC LIMIT @limite) s
             JOIN conta.diario d  ON d.id = s.diario_id
+            JOIN core.ejercicio e ON e.id = s.ejercicio_id
+            JOIN core.periodo pe ON pe.id = s.periodo_id
             JOIN conta.apunte a  ON a.asiento_id = s.id
             JOIN conta.cuenta c  ON c.id = a.cuenta_id
             JOIN canal.canal k   ON k.id = a.canal_id

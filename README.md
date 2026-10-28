@@ -159,6 +159,8 @@ Ver bloque anterior: A, B, C, D reparten el importe completo; E, F… por porcen
 - El token **no** lleva permisos: se consultan en BD en cada petición, así que quitar un acceso surte efecto al instante.
 - Un usuario puede estar en varias empresas con roles distintos (ADMIN, CONTABLE, LECTURA) y sobrescribir el nivel por módulo (NINGUNO/LECTURA/ESCRITURA).
 - **Borradores**: quien no sea gestor, superadmin o tenga `salta_revision` guarda siempre en borrador (lo fuerza el servidor); un revisor aprueba (la factura se recalcula y se comparan totales) o rechaza.
+- **Entrada de asientos en rejilla**: Enter avanza de celda y crea filas, ↑/↓ cambian de fila, Ctrl+Supr quita la fila; la cuenta se teclea con punto (430.5 = 43000005), por el principio del código o por parte del nombre; al llegar al importe de una fila nueva se propone lo que falta para cuadrar.
+- **Modificar y borrar asientos** (`GET`, `PUT` y `DELETE …/asientos/{id}`, botones en el Diario): los manuales, de plantilla, importados y la apertura importada, con el ejercicio y el periodo abiertos. Se conservan el diario y el número; al borrar el último número del diario, el siguiente asiento lo reutiliza. No se tocan los asientos generados por facturas, cobros, remesas, amortizaciones, nóminas, la liquidación del IVA o el cierre (se cambian desde su documento), los que tienen apuntes conciliados ni los anulados. Quien no puede contabilizar sin revisión solo modifica o borra borradores. Queda en la auditoría (`ASIENTO_MODIFICADO`, `ASIENTO_BORRADO`).
 - Usuarios con contraseña temporal solo pueden usar `/api/auth` hasta cambiarla. Acciones sensibles quedan en `core.auditoria`.
 
 ## Tesorería

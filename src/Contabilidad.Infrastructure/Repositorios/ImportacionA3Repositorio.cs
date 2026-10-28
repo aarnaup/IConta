@@ -164,20 +164,19 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
                 // El concepto del asiento: el de la línea del cliente o proveedor (la factura) o, si no hay, el primero
                 var concepto = x.Apuntes.Where(l => l.Concepto.Length > 0).OrderBy(l => l.Cuenta[..2] is "40" or "41" or "43" or "44" ? 0 : 1)
                     .Select(l => l.Concepto).FirstOrDefault() ?? $"Asiento {x.Numero} de a3ECO";
-                var creadoAs = await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId,
+                await asientos.CrearEnTransaccionAsync(cn, tx, empresaId, ejercicioId, usuarioId,
                     new CrearAsientoCmd
                     {
                         Fecha = x.Fecha, DiarioId = diarioId, Concepto = concepto, Borrador = borrador,
-                        Apuntes = x.Apuntes.Select(l => Apunte(l.Cuenta, l.Debe ? l.Importe : 0, l.Debe ? 0 : l.Importe, l.Concepto)).ToList()
+                        Apuntes = x.Apuntes.Select(l =>
+                        {
+                            var ap = Apunte(l.Cuenta, l.Debe ? l.Importe : 0, l.Debe ? 0 : l.Importe, l.Concepto);
+                            ap.Documento = l.Documento;                         // número de factura, recibo…
+                            return ap;
+                        }).ToList()
                     },
                     "IMPORTACION", null, $"a3 {a.A3.Anio}/{x.Numero}", ct);
 
-                // Número de documento de cada apunte (factura, recibo…)
-                var docs = x.Apuntes.Select((l, i) => (Linea: (short)(i + 1), l.Documento)).Where(d => d.Documento.Length > 0).ToList();
-                if (docs.Count > 0)
-                    await cn.ExecuteAsync(new CommandDefinition(
-                        "UPDATE conta.apunte SET documento = @documento WHERE asiento_id = @asientoId AND linea = @linea",
-                        docs.Select(d => new { documento = d.Documento, asientoId = creadoAs.Id, linea = d.Linea }), tx, cancellationToken: ct));
             }
             resultado.Add(new AnioImportadoA3Dto(a.A3.Anio, ejercicioId, creado, a.A3.Asientos.Count, borradores, a.Apertura.Count > 0));
         }

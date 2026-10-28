@@ -253,6 +253,8 @@
     <div class="grid">
       <div class="panel">
         <h2>Asiento</h2>
+        <div id="asEditando" class="aviso-edicion" hidden><span id="asEditandoTxt"></span>
+          <button class="btn" id="asCancelarEd" type="button">Cancelar la modificación</button></div>
         <div class="cab">
           <label>Fecha <input type="date" id="fecha"></label>
           <label>Diario <select id="diario"></select></label>
@@ -360,6 +362,9 @@
   <section id="tab-diario" hidden>
     <div class="panel">
       <h2>Últimos asientos del ejercicio</h2>
+      <p class="ayuda">«Modificar» abre el asiento en la rejilla de Nuevo asiento (conserva su diario y su número). Los asientos de facturas,
+        cobros, amortizaciones o el cierre se cambian desde su documento.</p>
+      <span id="diarioMsg" role="status"></span>
       <table><thead><tr><th>Cuenta</th><th>Descripción</th><th>Canal</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
       <tbody id="diarioBody"></tbody></table>
     </div>
