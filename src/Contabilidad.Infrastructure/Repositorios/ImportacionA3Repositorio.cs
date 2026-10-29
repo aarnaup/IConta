@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text.RegularExpressions;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Importacion.A3Eco;
+using Contabilidad.Infrastructure.Importacion;
 using Dapper;
 using Npgsql;
 
@@ -60,7 +61,7 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
 
     public async Task<AnalisisA3Dto> AnalizarAsync(long empresaId, ImportarA3Cmd cmd, CancellationToken ct)
     {
-        var ficheros = Descomprimir(cmd.Contenido);
+        var ficheros = Ficheros(cmd.Contenido, cmd.Ruta, Solo(cmd.Carpeta));
         await using var cn = await conexiones.AbrirAsync(ct);
         var p = await PlanificarAsync(cn, null, empresaId, ficheros, cmd.Carpeta, null, ct);
 
@@ -90,7 +91,7 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
     public Task<ImportacionA3Dto> ImportarAsync(long empresaId, long usuarioId, ImportarA3Cmd cmd, CancellationToken ct)
     {
         if (cmd.Anios is not { Count: > 0 }) throw new ReglaContableException("Elige al menos un año para importar.");
-        return ImportarFicherosAsync(empresaId, usuarioId, Descomprimir(cmd.Contenido), cmd.Carpeta, cmd.Anios, ct);
+        return ImportarFicherosAsync(empresaId, usuarioId, Ficheros(cmd.Contenido, cmd.Ruta, Solo(cmd.Carpeta)), cmd.Carpeta, cmd.Anios, ct);
     }
 
     private async Task<ImportacionA3Dto> ImportarFicherosAsync(long empresaId, long usuarioId, Dictionary<string, byte[]> ficheros,
@@ -201,7 +202,7 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
 
     public async Task<IReadOnlyList<EmpresaA3AnalisisDto>> AnalizarEmpresasAsync(ImportarA3Cmd cmd, CancellationToken ct)
     {
-        var ficheros = Descomprimir(cmd.Contenido);
+        var ficheros = Ficheros(cmd.Contenido, cmd.Ruta, null);
         var carpetas = LectorA3Eco.Carpetas(ficheros);
         if (carpetas.Count == 0)
             throw new ReglaContableException("No hay ninguna carpeta de empresa de a3ECO (E00001, E00002…).",
@@ -256,7 +257,7 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
     public async Task<IReadOnlyList<EmpresaImportadaA3Dto>> ImportarEmpresasAsync(long usuarioId, ImportarEmpresasA3Cmd cmd, CancellationToken ct)
     {
         if (cmd.Empresas.Count == 0) throw new ReglaContableException("Marca al menos una empresa.");
-        var ficheros = Descomprimir(cmd.Contenido);
+        var ficheros = Ficheros(cmd.Contenido, cmd.Ruta, cmd.Empresas.Select(e => (e.Carpeta ?? "").Trim().ToUpperInvariant()).ToList());
         var directorio = LectorA3Eco.Empresas(ficheros);
         var resultado = new List<EmpresaImportadaA3Dto>();
 
@@ -546,6 +547,13 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
     // ------------------------------------------------------------------------------------------------ utilidades
 
     private static string Nombre(string? nombre, string alternativo) => string.IsNullOrWhiteSpace(nombre) ? alternativo : nombre.Trim();
+
+    /// <summary>Ficheros de a3ECO: de la carpeta indicada (si la hay) o del zip; con la carpeta solo se leen las empresas pedidas.</summary>
+    private static Dictionary<string, byte[]> Ficheros(string? contenido, string? ruta, IReadOnlyCollection<string>? soloCarpetas)
+        => string.IsNullOrWhiteSpace(ruta) ? Descomprimir(contenido ?? "") : CarpetaA3Eco.Leer(ruta, soloCarpetas, MaxTotal);
+
+    private static IReadOnlyCollection<string>? Solo(string? carpeta)
+        => string.IsNullOrWhiteSpace(carpeta) ? null : [carpeta.Trim().ToUpperInvariant()];
 
     /// <summary>Ficheros .DAT del zip (los índices, PDF y demás no hacen falta), con límites para no agotar la memoria.</summary>
     private static Dictionary<string, byte[]> Descomprimir(string base64)

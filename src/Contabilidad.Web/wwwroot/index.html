@@ -146,11 +146,14 @@
     </div>
     <div class="panel" id="a3Panel">
       <h2>Importar empresas de a3ECO</h2>
-      <p class="ayuda">Comprime en .zip la carpeta de datos de a3ECO (la que contiene TCLIPRO.DAT y las carpetas E00001, E00002…) y analízala.
+      <p class="ayuda">Indica la carpeta de a3ECO del ordenador donde se ejecuta IConta (por ejemplo <code>C:\A3\A3ECO</code>): se lee la ruta de datos
+        de TPARAGEN.DAT y, de TECODIR.DAT, la carpeta de cada empresa. También puedes subir un .zip de la carpeta de datos (la que contiene
+        TCLIPRO.DAT y las carpetas E00001, E00002…).
         De cada empresa marcada se importan todos sus ejercicios: subcuentas, clientes y proveedores, apertura y asientos.
         Si en IConta ya hay una empresa con su NIF, se importa en ella (solo en los ejercicios vacíos); si no, se crea.</p>
       <div class="cab2">
-        <label>Fichero .zip <input id="a3Fichero" type="file" accept=".zip"></label>
+        <label>Carpeta de a3ECO <input id="a3Ruta" placeholder="C:\A3\A3ECO"></label>
+        <label>o fichero .zip <input id="a3Fichero" type="file" accept=".zip"></label>
         <label>Plan de las empresas nuevas <select id="a3Plan"></select></label>
         <label>Impuesto indirecto <select id="a3Impuesto"><option value="IVA">IVA</option><option value="IGIC">IGIC</option>
           <option value="IPSI">IPSI</option><option value="EXENTO">Exento</option></select></label>

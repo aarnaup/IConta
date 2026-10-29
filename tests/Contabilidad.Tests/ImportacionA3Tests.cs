@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Text;
 using Contabilidad.Domain;
 using Contabilidad.Domain.Importacion.A3Eco;
+using Contabilidad.Infrastructure.Importacion;
 
 namespace Contabilidad.Tests;
 
@@ -193,5 +194,66 @@ public class ImportacionA3Tests
     {
         var codigos = Enumerable.Range(1, 100).Select(i => $"4300{i:D4}0000").Append("410000000001");
         Assert.Equal(8, LectorA3Eco.DigitosA3(codigos));
+    }
+
+    // ---------------------------------------------------------------- lectura desde la carpeta de a3ECO
+
+    [Fact]
+    public void Carpeta_LeeLaRutaDeDatosDeTparagenYBuscaEnLaAplicacionLoQueFalta()
+    {
+        var raiz = Directory.CreateTempSubdirectory("a3").FullName;
+        try
+        {
+            var app = Directory.CreateDirectory(Path.Combine(raiz, "A3ECO")).FullName;
+            var datos = Directory.CreateDirectory(Path.Combine(raiz, "DATOS")).FullName;
+            File.WriteAllText(Path.Combine(app, "TPARAGEN.DAT"), $"    {datos}\r\n", Encoding.Latin1);
+            var f = Ficheros();
+            File.WriteAllBytes(Path.Combine(app, "TCLIPRO.DAT"), f["A3ECO/TCLIPRO.DAT"]);           // solo en la aplicación
+            File.WriteAllBytes(Path.Combine(datos, "TECODIR.DAT"), f["A3ECO/TECODIR.DAT"]);
+            var emp = Directory.CreateDirectory(Path.Combine(datos, "E00001")).FullName;              // TECODIR dice \A3\A3ECO\E00001\
+            foreach (var (k, v) in f.Where(x => x.Key.StartsWith("A3ECO/E00001/"))) File.WriteAllBytes(Path.Combine(emp, k[13..].ToLowerInvariant()), v);
+            Directory.CreateDirectory(Path.Combine(datos, "E00002"));                                  // carpeta sin directorio ni datos
+            File.WriteAllBytes(Path.Combine(datos, "E00002", "000025CU.DAT"), Isam(Cuenta(5700, 0, "CAJA")));
+
+            Assert.Equal(datos, CarpetaA3Eco.RutaDatos(app));
+            var leidos = CarpetaA3Eco.Leer(app, null, long.MaxValue);
+            Assert.Contains("TCLIPRO.DAT", leidos.Keys);
+            Assert.Contains("E00002/000025CU.DAT", leidos.Keys);
+            var d = LectorA3Eco.Leer(leidos, "E00001", Hoy);
+            Assert.Equal(("EMPRESA DEMO", 2), (d.Empresa!.Nombre, d.Anios[0].Asientos.Count));
+            Assert.Single(d.Terceros);
+
+            // Solo las empresas pedidas
+            Assert.DoesNotContain(CarpetaA3Eco.Leer(app, ["E00001"], long.MaxValue).Keys, k => k.StartsWith("E00002/"));
+        }
+        finally { Directory.Delete(raiz, true); }
+    }
+
+    [Fact]
+    public void Carpeta_SinTparagenLaRutaDeDatosEsLaAplicacion()
+    {
+        var app = Directory.CreateTempSubdirectory("a3").FullName;
+        try
+        {
+            Assert.Equal(app, CarpetaA3Eco.RutaDatos(app));
+            var ex = Assert.Throws<ReglaContableException>(() => CarpetaA3Eco.Leer(app, null, long.MaxValue));
+            Assert.Contains("no hay datos", ex.Message);
+            Assert.Throws<ReglaContableException>(() => CarpetaA3Eco.Leer(Path.Combine(app, "no-existe"), null, long.MaxValue));
+        }
+        finally { Directory.Delete(app, true); }
+    }
+
+    [Fact]
+    public void Carpeta_UnaRutaQueEmpiezaPorBarraVaEnLaUnidadDeLaAplicacion()
+    {
+        var raiz = Directory.CreateTempSubdirectory("a3").FullName;
+        try
+        {
+            var datos = Directory.CreateDirectory(Path.Combine(raiz, "X", "DATOS")).FullName;
+            var sinUnidad = "\\" + datos[(Path.GetPathRoot(datos)!.Length)..].Replace(Path.DirectorySeparatorChar, '\\') + "\\";
+            Assert.Equal(datos, CarpetaA3Eco.Resolver(sinUnidad, raiz));
+            Assert.Null(CarpetaA3Eco.Resolver("\\NO\\EXISTE\\", raiz));
+        }
+        finally { Directory.Delete(raiz, true); }
     }
 }
