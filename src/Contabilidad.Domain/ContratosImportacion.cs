@@ -25,3 +25,31 @@ public sealed record AnioImportadoA3Dto(int Anio, long EjercicioId, bool Ejercic
 
 public sealed record ImportacionA3Dto(int CuentasCreadas, int TercerosCreados, int TercerosActualizados,
     IReadOnlyList<AnioImportadoA3Dto> Anios, IReadOnlyList<string> Avisos);
+
+// ---- Importación de varias empresas desde Administración
+
+public sealed record AnioResumenA3Dto(int Anio, int Asientos, int Apuntes, int Descuadrados, bool Comprobado, bool Importable, string? Motivo);
+
+/// <summary>Una empresa del zip de a3ECO: la de IConta con el mismo NIF (si la hay) o los datos propuestos para crearla.</summary>
+public sealed record EmpresaA3AnalisisDto(
+    string Carpeta, string Nombre, string Nif, string? Error, long? EmpresaId, string? EmpresaNombre,
+    string Codigo, string FormaJuridica, int Digitos, IReadOnlyList<AnioResumenA3Dto> Anios, IReadOnlyList<string> Avisos);
+
+public sealed class EmpresaAImportarA3
+{
+    public string Carpeta { get; set; } = "";
+    /// <summary>Código de la empresa nueva en IConta (si ya existe una con su NIF, se importa en ella).</summary>
+    public string? Codigo { get; set; }
+    public string? FormaJuridica { get; set; }
+}
+
+public sealed class ImportarEmpresasA3Cmd
+{
+    public string Contenido { get; set; } = "";
+    public long PlanModeloId { get; set; }
+    public string ImpuestoIndirecto { get; set; } = "IVA";
+    public List<EmpresaAImportarA3> Empresas { get; set; } = [];
+}
+
+public sealed record EmpresaImportadaA3Dto(string Carpeta, string Nombre, long? EmpresaId, bool Creada, IReadOnlyList<int> Anios,
+    int Asientos, int Borradores, string? Error, IReadOnlyList<string> Avisos);

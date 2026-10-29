@@ -144,18 +144,21 @@
       <div class="acciones"><button class="btn primario" id="edGuardar" type="button">Guardar</button>
         <button class="btn" id="edCerrar" type="button">Cerrar</button><span id="edMsg" role="status"></span></div>
     </div>
-    <div class="panel" id="a3Panel" hidden>
-      <h2 id="a3Titulo">Importar de a3ECO</h2>
-      <p class="ayuda">Comprime en .zip la carpeta de datos de a3ECO (la que contiene TCLIPRO.DAT y las carpetas E00001, E00002…).
-        Se importan las subcuentas, los clientes y proveedores, la apertura y los asientos de cada año, en ejercicios naturales vacíos.</p>
+    <div class="panel" id="a3Panel">
+      <h2>Importar empresas de a3ECO</h2>
+      <p class="ayuda">Comprime en .zip la carpeta de datos de a3ECO (la que contiene TCLIPRO.DAT y las carpetas E00001, E00002…) y analízala.
+        De cada empresa marcada se importan todos sus ejercicios: subcuentas, clientes y proveedores, apertura y asientos.
+        Si en IConta ya hay una empresa con su NIF, se importa en ella (solo en los ejercicios vacíos); si no, se crea.</p>
       <div class="cab2">
         <label>Fichero .zip <input id="a3Fichero" type="file" accept=".zip"></label>
-        <label id="a3CarpetaCampo" hidden>Empresa de a3 <select id="a3Carpeta"></select></label>
+        <label>Plan de las empresas nuevas <select id="a3Plan"></select></label>
+        <label>Impuesto indirecto <select id="a3Impuesto"><option value="IVA">IVA</option><option value="IGIC">IGIC</option>
+          <option value="IPSI">IPSI</option><option value="EXENTO">Exento</option></select></label>
         <label>&nbsp;<button class="btn" id="a3Analizar" type="button">Analizar</button></label>
       </div>
       <div id="a3Resultado"></div>
-      <div class="acciones"><button class="btn primario" id="a3Importar" type="button" hidden>Importar los años marcados</button>
-        <button class="btn" id="a3Cerrar" type="button">Cerrar</button><span id="a3Msg" role="status"></span></div>
+      <div class="acciones"><button class="btn primario" id="a3Importar" type="button" hidden>Importar las empresas marcadas</button>
+        <span id="a3Msg" role="status"></span></div>
     </div>
     <div class="panel">
       <h2>Nueva empresa</h2>

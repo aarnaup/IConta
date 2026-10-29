@@ -42,7 +42,22 @@ public static class AdminEndpoints
             return Results.Ok(r);
         }).SoloSuperadmin();
 
-        // Importación desde a3ECO: primero el análisis (no cambia nada) y después la importación de los años elegidos
+        // Importación de varias empresas de a3ECO: crea las que no existen (por NIF) e importa todos sus ejercicios
+        admin.MapPost("/importar-a3/analisis", async (ImportarA3Cmd cmd, IImportacionA3Repositorio r, CancellationToken ct)
+            => Results.Ok(await r.AnalizarEmpresasAsync(cmd, ct)))
+            .SoloSuperadmin().WithMetadata(new RequestSizeLimitAttribute(TamanoImportacion));
+
+        admin.MapPost("/importar-a3", async (ImportarEmpresasA3Cmd cmd, HttpContext http, IImportacionA3Repositorio r,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var res = await r.ImportarEmpresasAsync(http.User.UsuarioId(), cmd, ct);
+            foreach (var e in res.Where(x => x.EmpresaId is not null))
+                await aud.RegistrarAsync(http.User.UsuarioId(), e.EmpresaId, "IMPORTACION_A3", "empresa", e.EmpresaId,
+                    new { e.Carpeta, e.Creada, e.Anios, e.Asientos, e.Error }, ct);
+            return Results.Ok(res);
+        }).SoloSuperadmin().WithMetadata(new RequestSizeLimitAttribute(TamanoImportacion));
+
+        // Importación desde a3ECO en una empresa ya creada: primero el análisis (no cambia nada) y después la importación de los años elegidos
         admin.MapPost("/empresas/{empresaId:long}/importar-a3/analisis", async (long empresaId, ImportarA3Cmd cmd,
             IImportacionA3Repositorio r, CancellationToken ct) => Results.Ok(await r.AnalizarAsync(empresaId, cmd, ct)))
             .SoloSuperadmin().WithMetadata(new RequestSizeLimitAttribute(TamanoImportacion));
