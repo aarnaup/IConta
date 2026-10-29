@@ -5,7 +5,8 @@ using System.Text.RegularExpressions;
 namespace Contabilidad.Domain.Importacion.A3Eco;
 
 /// <summary>Empresa del directorio de a3ECO (TECODIR.DAT).</summary>
-public sealed record EmpresaA3(string Carpeta, string Nombre, string Nif);
+/// <param name="Ruta">Carpeta de datos de la empresa tal como la guarda a3 (\A3\A3ECO\E00001\).</param>
+public sealed record EmpresaA3(string Carpeta, string Nombre, string Nif, string Ruta = "");
 
 /// <summary>Cliente, proveedor o acreedor del fichero común TCLIPRO.DAT.</summary>
 public sealed record TerceroA3(int Codigo, string Nif, string Nombre, string? Direccion, string? CodigoPostal, string? Poblacion, string? Telefono);
@@ -84,8 +85,9 @@ public static partial class LectorA3Eco
         if (dir is null) return [];
         return FicheroIsam.Registros(dir, "TECODIR.DAT").Where(r => r.Length >= 141).Select(r =>
         {
-            var ruta = Txt(r, 101, 40).Replace('\\', '/').TrimEnd('/');
-            return new EmpresaA3(ruta[(ruta.LastIndexOf('/') + 1)..].ToUpperInvariant(), Txt(r, 3, 40), Nif(Txt(r, 47, 14)));
+            var original = Txt(r, 101, 40);
+            var ruta = original.Replace('\\', '/').TrimEnd('/');
+            return new EmpresaA3(ruta[(ruta.LastIndexOf('/') + 1)..].ToUpperInvariant(), Txt(r, 3, 40), Nif(Txt(r, 47, 14)), original);
         }).ToList();
     }
 

@@ -2890,14 +2890,16 @@ $('#edCerrar').onclick = () => { $('#edPanel').hidden = true; ED = null; };
 let A3 = null;   // { contenido, empresas }
 const FORMAS = [['SL', 'S.L.'], ['SA', 'S.A.'], ['SLU', 'S.L.U.'], ['AUTONOMO', 'Autónomo'], ['COMUNIDAD_BIENES', 'Comunidad de bienes'],
   ['SOCIEDAD_CIVIL', 'Sociedad civil'], ['COOPERATIVA', 'Cooperativa'], ['ASOCIACION', 'Asociación'], ['OTRA', 'Otra']];
-$('#a3Fichero').onchange = () => { A3 = null; $('#a3Resultado').innerHTML = ''; $('#a3Importar').hidden = true; msg($('#a3Msg'), '', 'ayuda'); };
+const a3Limpia = () => { A3 = null; $('#a3Resultado').innerHTML = ''; $('#a3Importar').hidden = true; msg($('#a3Msg'), '', 'ayuda'); };
+$('#a3Fichero').onchange = () => { $('#a3Ruta').value = ''; a3Limpia(); };
+$('#a3Ruta').oninput = a3Limpia;
 $('#a3Analizar').onclick = async () => {
-  const f = $('#a3Fichero').files[0];
-  if (!f) return msg($('#a3Msg'), 'Elige el fichero .zip.', 'ayuda err-texto');
+  const f = $('#a3Fichero').files[0], ruta = $('#a3Ruta').value.trim() || null;
+  if (!f && !ruta) return msg($('#a3Msg'), 'Indica la carpeta de a3ECO o elige el fichero .zip.', 'ayuda err-texto');
   try {
     msg($('#a3Msg'), 'Analizando…', 'ayuda');
-    const contenido = A3?.contenido ?? await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = mal; r.readAsDataURL(f); });
-    A3 = { contenido, empresas: await post('/api/admin/importar-a3/analisis', { contenido }) };
+    const contenido = ruta ? '' : A3?.contenido ?? await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = mal; r.readAsDataURL(f); });
+    A3 = { contenido, ruta, empresas: await post('/api/admin/importar-a3/analisis', { contenido, ruta }) };
     pintaA3(); msg($('#a3Msg'), '', 'ayuda');
   } catch (e) { msg($('#a3Msg'), e.message, 'err-texto'); }
 };
@@ -2927,7 +2929,7 @@ $('#a3Importar').onclick = async () => {
   if (!confirm(`¿Importar ${empresas.length} empresa(s) de a3ECO? Se crean las empresas nuevas y se importan todos sus ejercicios.`)) return;
   try {
     msg($('#a3Msg'), 'Importando… puede tardar unos minutos.', 'ayuda'); $('#a3Importar').disabled = true;
-    const r = await post('/api/admin/importar-a3', { contenido: A3.contenido, planModeloId: +$('#a3Plan').value, impuestoIndirecto: $('#a3Impuesto').value, empresas });
+    const r = await post('/api/admin/importar-a3', { contenido: A3.contenido, ruta: A3.ruta, planModeloId: +$('#a3Plan').value, impuestoIndirecto: $('#a3Impuesto').value, empresas });
     $('#a3Importar').hidden = true;
     $('#a3Resultado').innerHTML = `<ul>${r.map(x => `<li><strong>${esc(x.carpeta)} · ${esc(x.nombre)}</strong>: ${x.error ? `<span class="err-texto">${esc(x.error)}</span>`
       : `${x.creada ? 'empresa creada; ' : ''}ejercicios ${x.anios.join(', ')} con ${x.asientos} asiento(s)${x.borradores ? `; ${x.borradores} en borrador para revisar` : ''}.`}

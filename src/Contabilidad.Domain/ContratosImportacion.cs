@@ -4,6 +4,8 @@ public sealed class ImportarA3Cmd
 {
     /// <summary>Fichero .zip en base64 con la carpeta de datos de a3ECO (o la de la empresa y TCLIPRO.DAT).</summary>
     public string Contenido { get; set; } = "";
+    /// <summary>En lugar del zip: carpeta de a3ECO en el ordenador donde se ejecuta IConta (C:\A3\A3ECO).</summary>
+    public string? Ruta { get; set; }
     /// <summary>Carpeta de la empresa en a3 (E00001…); obligatoria si el zip trae varias.</summary>
     public string? Carpeta { get; set; }
     /// <summary>Años que se importan; en el análisis no se usa.</summary>
@@ -46,6 +48,8 @@ public sealed class EmpresaAImportarA3
 public sealed class ImportarEmpresasA3Cmd
 {
     public string Contenido { get; set; } = "";
+    /// <summary>En lugar del zip: carpeta de a3ECO en el ordenador donde se ejecuta IConta.</summary>
+    public string? Ruta { get; set; }
     public long PlanModeloId { get; set; }
     public string ImpuestoIndirecto { get; set; } = "IVA";
     public List<EmpresaAImportarA3> Empresas { get; set; } = [];
