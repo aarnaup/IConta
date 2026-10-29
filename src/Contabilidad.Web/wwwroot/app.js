@@ -2819,10 +2819,11 @@ async function cargaEmpresasAdmin() {
   const [emps, planes] = await Promise.all([api('/api/admin/empresas'), api('/api/admin/planes-modelo')]);
   $('#admEmpresasBody').innerHTML = emps.map(e => `<tr><td>${esc(e.codigo)}</td><td>${esc(e.nombre)}</td><td>${esc(e.nif)}</td>
     <td>${esc(e.formaJuridica)}</td><td>${esc(e.plan)}</td><td>${esc(e.impuestoIndirecto)}</td>
-    <td><button class="btn" type="button" data-editar="${e.id}">Editar</button>
-      <button class="btn" type="button" data-a3="${e.id}" data-nombre="${esc(e.nombre)}">Importar a3ECO</button></td></tr>`).join('')
+    <td><button class="btn" type="button" data-editar="${e.id}">Editar</button></td></tr>`).join('')
     || '<tr><td colspan="7" class="vacio">Todavía no hay empresas.</td></tr>';
   $('#nePlan').innerHTML = planes.map(p => `<option value="${p.id}">${esc(p.nombre)}</option>`).join('');
+  if (!$('#a3Plan').options.length)
+    $('#a3Plan').innerHTML = planes.map(p => `<option value="${p.id}" ${p.tipo === 'PYMES' ? 'selected' : ''}>${esc(p.nombre)}</option>`).join('');
   $('#ejEmpresa').innerHTML = emps.map(e => `<option value="${e.id}">${esc(e.nombre)}</option>`).join('');
 }
 
@@ -2885,75 +2886,58 @@ $('#edAnadirAct').onclick = () => {
 };
 $('#edCerrar').onclick = () => { $('#edPanel').hidden = true; ED = null; };
 
-// ---- importación desde a3ECO: análisis (no cambia nada) y luego importación de los años marcados
-let A3 = null;   // { empresaId, contenido, analisis }
-$('#admEmpresasBody').addEventListener('click', e => {
-  const b = e.target.closest('button[data-a3]'); if (!b) return;
-  A3 = { empresaId: +b.dataset.a3, contenido: null, analisis: null };
-  $('#a3Titulo').textContent = `Importar de a3ECO · ${b.dataset.nombre}`;
-  $('#a3Fichero').value = ''; $('#a3Resultado').innerHTML = ''; $('#a3Importar').hidden = true; $('#a3CarpetaCampo').hidden = true;
-  msg($('#a3Msg'), '', 'ayuda');
-  $('#a3Panel').hidden = false; $('#a3Panel').scrollIntoView({ behavior: 'smooth' });
-});
-$('#a3Fichero').onchange = () => { A3.contenido = null; $('#a3CarpetaCampo').hidden = true; $('#a3Resultado').innerHTML = ''; $('#a3Importar').hidden = true; };
-$('#a3Cerrar').onclick = () => { $('#a3Panel').hidden = true; A3 = null; };
+// ---- importación de empresas de a3ECO: análisis (no cambia nada) y luego importación de las marcadas
+let A3 = null;   // { contenido, empresas }
+const FORMAS = [['SL', 'S.L.'], ['SA', 'S.A.'], ['SLU', 'S.L.U.'], ['AUTONOMO', 'Autónomo'], ['COMUNIDAD_BIENES', 'Comunidad de bienes'],
+  ['SOCIEDAD_CIVIL', 'Sociedad civil'], ['COOPERATIVA', 'Cooperativa'], ['ASOCIACION', 'Asociación'], ['OTRA', 'Otra']];
+$('#a3Fichero').onchange = () => { A3 = null; $('#a3Resultado').innerHTML = ''; $('#a3Importar').hidden = true; msg($('#a3Msg'), '', 'ayuda'); };
 $('#a3Analizar').onclick = async () => {
   const f = $('#a3Fichero').files[0];
   if (!f) return msg($('#a3Msg'), 'Elige el fichero .zip.', 'ayuda err-texto');
   try {
     msg($('#a3Msg'), 'Analizando…', 'ayuda');
-    A3.contenido ??= await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = mal; r.readAsDataURL(f); });
-    const carpeta = $('#a3CarpetaCampo').hidden ? null : $('#a3Carpeta').value;
-    A3.analisis = await post(`/api/admin/empresas/${A3.empresaId}/importar-a3/analisis`, { contenido: A3.contenido, carpeta });
+    const contenido = A3?.contenido ?? await new Promise((ok, mal) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = mal; r.readAsDataURL(f); });
+    A3 = { contenido, empresas: await post('/api/admin/importar-a3/analisis', { contenido }) };
     pintaA3(); msg($('#a3Msg'), '', 'ayuda');
-  } catch (e) {
-    // Varias empresas en el zip: hay que elegir una
-    if (/varias empresas/i.test(e.message)) {
-      const cs = (e.message.match(/\(([^)]*)\)/)?.[1] || '').split(',').map(x => x.trim()).filter(Boolean);
-      $('#a3Carpeta').innerHTML = cs.map(c => `<option>${esc(c)}</option>`).join(''); $('#a3CarpetaCampo').hidden = false;
-      return msg($('#a3Msg'), 'El zip trae varias empresas: elige cuál y vuelve a analizar.', 'ayuda err-texto');
-    }
-    msg($('#a3Msg'), e.message, 'err-texto');
-  }
-};
-function pintaA3() {
-  const a = A3.analisis, e = a.empresa;
-  if (a.empresas.length > 1) {
-    $('#a3Carpeta').innerHTML = a.empresas.map(x => `<option value="${esc(x.carpeta)}" ${x.carpeta === a.carpeta ? 'selected' : ''}>${esc(x.carpeta)} · ${esc(x.nombre)}</option>`).join('');
-    $('#a3CarpetaCampo').hidden = false;
-  }
-  $('#a3Resultado').innerHTML = `
-    <p><strong>${esc(a.carpeta)}${e ? ' · ' + esc(e.nombre) + ' · ' + esc(e.nif) : ''}</strong> — subcuentas de ${a.digitosA3} dígitos
-      (la empresa usa ${a.digitosEmpresa}); ${a.terceros} clientes y proveedores con NIF, ${a.tercerosNuevos} nuevos.</p>
-    <table><thead><tr><th></th><th>Año</th><th>Ejercicio</th><th class="num">Asientos</th><th class="num">Apuntes</th><th class="num">Subcuentas nuevas</th>
-      <th class="num">Apertura debe</th><th class="num">Apertura haber</th><th>Comprobación</th><th>Observaciones</th></tr></thead>
-    <tbody>${a.anios.map(x => `<tr>
-      <td><input type="checkbox" data-anio="${x.anio}" ${x.importable ? 'checked' : 'disabled'}></td>
-      <td>${x.anio}</td><td>${x.ejercicio ? esc(x.ejercicio) : x.crearEjercicio ? 'se crea' : '—'}</td>
-      <td class="num">${x.asientos}</td><td class="num">${x.apuntes}</td><td class="num">${x.subcuentasNuevas}</td>
-      <td class="num">${fmt(x.aperturaDebe)}</td><td class="num">${fmt(x.aperturaHaber)}</td>
-      <td>${x.comprobado ? 'Cuadra con a3' : 'No coincide: ' + esc(x.cuentasNoCoinciden.join(', '))}</td>
-      <td>${esc([x.motivo, x.asientosDescuadrados.length ? `Asientos que no cuadran en a3 (irán como borrador): ${x.asientosDescuadrados.join(', ')}` : '',
-                 x.aperturaDebe !== x.aperturaHaber ? 'La apertura no cuadra (irá como borrador)' : ''].filter(Boolean).join('. '))}</td></tr>`).join('')}</tbody></table>
-    ${a.avisos.length ? `<ul class="ayuda">${a.avisos.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}`;
-  $('#a3Importar').hidden = !a.anios.some(x => x.importable);
-}
-$('#a3Importar').onclick = async () => {
-  const anios = [...$('#a3Resultado').querySelectorAll('input[data-anio]:checked')].map(x => +x.dataset.anio);
-  if (!anios.length) return msg($('#a3Msg'), 'Marca algún año.', 'ayuda err-texto');
-  if (!confirm(`¿Importar ${anios.join(', ')} en esta empresa? Se crean los ejercicios, cuentas, terceros y asientos.`)) return;
-  try {
-    msg($('#a3Msg'), 'Importando… puede tardar unos minutos.', 'ayuda');
-    const r = await post(`/api/admin/empresas/${A3.empresaId}/importar-a3`, { contenido: A3.contenido, carpeta: A3.analisis.carpeta, anios });
-    $('#a3Importar').hidden = true;
-    $('#a3Resultado').innerHTML = `<p>Importado: ${r.cuentasCreadas} subcuenta(s) nuevas, ${r.tercerosCreados} cliente(s) y proveedor(es) nuevos
-      ${r.tercerosActualizados ? `y ${r.tercerosActualizados} actualizados` : ''}.</p>
-      <ul>${r.anios.map(x => `<li>${x.anio}: ${x.asientos} asiento(s)${x.apertura ? ' y la apertura' : ''}${x.ejercicioCreado ? ', ejercicio creado' : ''}${x.borradores ? `; ${x.borradores} en borrador para revisar (Pendientes de revisión)` : ''}.</li>`).join('')}</ul>`;
-    msg($('#a3Msg'), 'Importación terminada.', 'ayuda');
-    cargaEmpresasAdmin();
   } catch (e) { msg($('#a3Msg'), e.message, 'err-texto'); }
 };
-$('#edGuardar').onclick = async () => {
+function pintaA3() {
+  const anio = a => `<span title="${esc(a.motivo || '')}" style="${a.importable ? '' : 'text-decoration:line-through;opacity:.6'}">${a.anio}</span>
+    <small>(${a.asientos} asientos${a.descuadrados ? `, ${a.descuadrados} sin cuadrar` : ''}${a.comprobado ? '' : ', <b>no cuadra con a3</b>'})</small>`;
+  $('#a3Resultado').innerHTML = `
+    <table><thead><tr><th></th><th>a3</th><th>Empresa</th><th>NIF</th><th>En IConta</th><th>Ejercicios</th><th>Observaciones</th></tr></thead>
+    <tbody>${A3.empresas.map((e, i) => {
+      const importables = e.anios.filter(a => a.importable).length;
+      const marca = !e.error && importables > 0;
+      const destino = e.error ? '—' : e.empresaId ? `Ya existe: ${esc(e.empresaNombre)}`
+        : `Nueva · código <input data-i="${i}" data-k="codigo" value="${esc(e.codigo)}" maxlength="10" style="width:7em">
+           <select data-i="${i}" data-k="forma">${FORMAS.map(([v, t]) => `<option value="${v}" ${v === e.formaJuridica ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+      const obs = [e.error, ...e.anios.filter(a => !a.importable).map(a => `${a.anio}: ${a.motivo}`), ...e.avisos].filter(Boolean);
+      return `<tr><td><input type="checkbox" data-i="${i}" data-k="marcada" ${marca ? 'checked' : 'disabled'}></td>
+        <td>${esc(e.carpeta)}</td><td>${esc(e.nombre)}</td><td>${esc(e.nif)}</td><td>${destino}</td>
+        <td>${e.anios.map(anio).join('<br>') || '—'}</td><td class="ayuda">${obs.map(esc).join('<br>')}</td></tr>`;
+    }).join('')}</tbody></table>`;
+  $('#a3Importar').hidden = !A3.empresas.some(e => !e.error && e.anios.some(a => a.importable));
+}
+$('#a3Importar').onclick = async () => {
+  const val = (i, k) => $(`#a3Resultado [data-i="${i}"][data-k="${k}"]`);
+  const empresas = A3.empresas.map((e, i) => ({ e, i })).filter(({ i }) => val(i, 'marcada')?.checked)
+    .map(({ e, i }) => ({ carpeta: e.carpeta, codigo: val(i, 'codigo')?.value || null, formaJuridica: val(i, 'forma')?.value || null }));
+  if (!empresas.length) return msg($('#a3Msg'), 'Marca alguna empresa.', 'ayuda err-texto');
+  if (!confirm(`¿Importar ${empresas.length} empresa(s) de a3ECO? Se crean las empresas nuevas y se importan todos sus ejercicios.`)) return;
+  try {
+    msg($('#a3Msg'), 'Importando… puede tardar unos minutos.', 'ayuda'); $('#a3Importar').disabled = true;
+    const r = await post('/api/admin/importar-a3', { contenido: A3.contenido, planModeloId: +$('#a3Plan').value, impuestoIndirecto: $('#a3Impuesto').value, empresas });
+    $('#a3Importar').hidden = true;
+    $('#a3Resultado').innerHTML = `<ul>${r.map(x => `<li><strong>${esc(x.carpeta)} · ${esc(x.nombre)}</strong>: ${x.error ? `<span class="err-texto">${esc(x.error)}</span>`
+      : `${x.creada ? 'empresa creada; ' : ''}ejercicios ${x.anios.join(', ')} con ${x.asientos} asiento(s)${x.borradores ? `; ${x.borradores} en borrador para revisar` : ''}.`}
+      ${x.avisos.length ? `<br><small class="ayuda">${x.avisos.map(esc).join('<br>')}</small>` : ''}</li>`).join('')}</ul>`;
+    const bien = r.filter(x => !x.error).length;
+    msg($('#a3Msg'), `Importación terminada: ${bien} de ${r.length} empresa(s) sin errores.`, 'ayuda');
+    cargaEmpresasAdmin();
+  } catch (e) { msg($('#a3Msg'), e.message, 'err-texto'); }
+  finally { $('#a3Importar').disabled = false; }
+};$('#edGuardar').onclick = async () => {
   const cuerpo = { ...ED, nombre: $('#edNombre').value, nombreComercial: $('#edComercial').value || null, formaJuridica: $('#edForma').value,
     direccion: $('#edDireccion').value || null, codigoPostal: $('#edCp').value || null, poblacion: $('#edPoblacion').value || null,
     telefono: $('#edTelefono').value || null, email: $('#edEmail').value || null, sepaSufijo: $('#edSepa').value, activa: $('#edActiva').checked };

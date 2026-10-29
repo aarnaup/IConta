@@ -16,9 +16,15 @@ public interface IImportacionA3Repositorio
 {
     Task<AnalisisA3Dto> AnalizarAsync(long empresaId, ImportarA3Cmd cmd, CancellationToken ct);
     Task<ImportacionA3Dto> ImportarAsync(long empresaId, long usuarioId, ImportarA3Cmd cmd, CancellationToken ct);
+
+    /// <summary>Todas las empresas del zip, cada una con la empresa de IConta que tiene su NIF o los datos para crearla.</summary>
+    Task<IReadOnlyList<EmpresaA3AnalisisDto>> AnalizarEmpresasAsync(ImportarA3Cmd cmd, CancellationToken ct);
+    /// <summary>Crea las empresas que no existen e importa todos sus ejercicios importables; un error en una no para las demás.</summary>
+    Task<IReadOnlyList<EmpresaImportadaA3Dto>> ImportarEmpresasAsync(long usuarioId, ImportarEmpresasA3Cmd cmd, CancellationToken ct);
 }
 
-public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones, IAsientoRepositorio asientos) : IImportacionA3Repositorio
+public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones, IAsientoRepositorio asientos, IEmpresaAdminRepositorio empresasAdmin)
+    : IImportacionA3Repositorio
 {
     private const long MaxFichero = 200L * 1024 * 1024;
     private const long MaxTotal = 1024L * 1024 * 1024;
@@ -81,19 +87,23 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
 
     // ------------------------------------------------------------------------------------------------ importación
 
-    public async Task<ImportacionA3Dto> ImportarAsync(long empresaId, long usuarioId, ImportarA3Cmd cmd, CancellationToken ct)
+    public Task<ImportacionA3Dto> ImportarAsync(long empresaId, long usuarioId, ImportarA3Cmd cmd, CancellationToken ct)
     {
         if (cmd.Anios is not { Count: > 0 }) throw new ReglaContableException("Elige al menos un año para importar.");
-        var ficheros = Descomprimir(cmd.Contenido);
+        return ImportarFicherosAsync(empresaId, usuarioId, Descomprimir(cmd.Contenido), cmd.Carpeta, cmd.Anios, ct);
+    }
 
+    private async Task<ImportacionA3Dto> ImportarFicherosAsync(long empresaId, long usuarioId, Dictionary<string, byte[]> ficheros,
+        string? carpeta, List<int> elegidos, CancellationToken ct)
+    {
         await using var cn = await conexiones.AbrirAsync(ct);
         await using var tx = await cn.BeginTransactionAsync(ct);
         // Una importación a la vez por empresa
         await cn.ExecuteAsync(new CommandDefinition("SELECT 1 FROM core.empresa WHERE id = @empresaId FOR UPDATE",
             new { empresaId }, tx, cancellationToken: ct));
 
-        var p = await PlanificarAsync(cn, tx, empresaId, ficheros, cmd.Carpeta, cmd.Anios, ct);
-        var faltan = cmd.Anios.Except(p.Anios.Select(a => a.A3.Anio)).ToList();
+        var p = await PlanificarAsync(cn, tx, empresaId, ficheros, carpeta, elegidos, ct);
+        var faltan = elegidos.Except(p.Anios.Select(a => a.A3.Anio)).ToList();
         if (faltan.Count > 0) throw new ReglaContableException($"En los ficheros no está el año {string.Join(", ", faltan)}.");
         if (p.Anios.FirstOrDefault(a => a.Motivo is not null) is { } mal)
             throw new ReglaContableException($"El año {mal.A3.Anio} no se puede importar.", mal.Motivo);
@@ -184,6 +194,153 @@ public sealed partial class ImportacionA3Repositorio(IConexionFactory conexiones
         await tx.CommitAsync(ct);
         return new ImportacionA3Dto(necesarias.Count, creados, actualizados, resultado, p.Avisos);
     }
+
+    // ------------------------------------------------------------------------------------------------ varias empresas
+
+    private sealed class EmpresaFila { public long Id { get; set; } public string Nombre { get; set; } = ""; public string Numero { get; set; } = ""; public string Codigo { get; set; } = ""; }
+
+    public async Task<IReadOnlyList<EmpresaA3AnalisisDto>> AnalizarEmpresasAsync(ImportarA3Cmd cmd, CancellationToken ct)
+    {
+        var ficheros = Descomprimir(cmd.Contenido);
+        var carpetas = LectorA3Eco.Carpetas(ficheros);
+        if (carpetas.Count == 0)
+            throw new ReglaContableException("No hay ninguna carpeta de empresa de a3ECO (E00001, E00002…).",
+                "Comprime la carpeta de datos de a3ECO: la que contiene TCLIPRO.DAT y las carpetas Ennnnn.");
+        var directorio = LectorA3Eco.Empresas(ficheros);
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var (porNif, codigos) = await EmpresasExistentesAsync(cn, ct);
+        var usados = new HashSet<string>(codigos, StringComparer.OrdinalIgnoreCase);
+
+        var lista = new List<EmpresaA3AnalisisDto>();
+        foreach (var carpeta in carpetas)
+        {
+            var dir = directorio.FirstOrDefault(e => e.Carpeta == carpeta);
+            var nombre = dir?.Nombre ?? carpeta;
+            var nif = dir?.Nif ?? "";
+            DatosA3 datos;
+            try { datos = LectorA3Eco.Leer(ficheros, carpeta, DateOnly.FromDateTime(DateTime.Today)); }
+            catch (ReglaContableException ex)
+            {
+                lista.Add(new EmpresaA3AnalisisDto(carpeta, nombre, nif, ex.Message, null, null, "", "", 0, [], []));
+                continue;
+            }
+
+            var existente = nif.Length > 0 ? porNif.GetValueOrDefault(nif) : null;
+            var codigo = existente?.Codigo ?? CodigoLibre(carpeta, usados);
+            usados.Add(codigo);
+            var digitos = Math.Clamp(datos.DigitosCuenta, 6, 12);
+
+            // En una empresa que ya existe, cada año se comprueba contra sus ejercicios; en una nueva, todos se pueden importar
+            Dictionary<int, string?> motivos = [];
+            var avisos = new List<string>(datos.Avisos);
+            if (existente is not null)
+            {
+                var p = await PlanificarAsync(cn, null, existente.Id, ficheros, carpeta, null, ct);
+                motivos = p.Anios.ToDictionary(a => a.A3.Anio, a => a.Motivo);
+                avisos = p.Avisos;
+            }
+            var anios = datos.Anios.Select(a =>
+            {
+                var motivo = existente is not null ? motivos.GetValueOrDefault(a.Anio)
+                    : a.Asientos.Count == 0 && !a.Cuentas.Any(c => c.EsSubcuenta && c.AperturaDebe != c.AperturaHaber) ? "No tiene asientos ni saldos de apertura." : null;
+                return new AnioResumenA3Dto(a.Anio, a.Asientos.Count, a.Asientos.Sum(x => x.Apuntes.Count), a.Asientos.Count(x => !x.Cuadra),
+                    a.Descuadres().Count == 0, motivo is null, motivo);
+            }).ToList();
+            lista.Add(new EmpresaA3AnalisisDto(carpeta, nombre, nif, null, existente?.Id, existente?.Nombre, codigo, FormaJuridica(nif),
+                digitos, anios, avisos));
+        }
+        return lista;
+    }
+
+    public async Task<IReadOnlyList<EmpresaImportadaA3Dto>> ImportarEmpresasAsync(long usuarioId, ImportarEmpresasA3Cmd cmd, CancellationToken ct)
+    {
+        if (cmd.Empresas.Count == 0) throw new ReglaContableException("Marca al menos una empresa.");
+        var ficheros = Descomprimir(cmd.Contenido);
+        var directorio = LectorA3Eco.Empresas(ficheros);
+        var resultado = new List<EmpresaImportadaA3Dto>();
+
+        foreach (var e in cmd.Empresas)
+        {
+            var carpeta = (e.Carpeta ?? "").Trim().ToUpperInvariant();
+            var dir = directorio.FirstOrDefault(x => x.Carpeta == carpeta);
+            var nombre = dir?.Nombre ?? carpeta;
+            long? empresaId = null;
+            var creada = false;
+            try
+            {
+                var datos = LectorA3Eco.Leer(ficheros, carpeta, DateOnly.FromDateTime(DateTime.Today));
+                var nif = dir?.Nif ?? "";
+                if (nif.Length == 0) throw new ReglaContableException("La empresa no tiene NIF en el directorio de a3ECO (TECODIR.DAT).");
+
+                await using (var cn = await conexiones.AbrirAsync(ct))
+                {
+                    var (porNif, _) = await EmpresasExistentesAsync(cn, ct);
+                    empresaId = porNif.GetValueOrDefault(nif)?.Id;
+                }
+                if (empresaId is null)
+                {
+                    var alta = await empresasAdmin.CrearAsync(new CrearEmpresaCmd
+                    {
+                        TipoDocumento = TipoDocumento(nif), Nif = nif, Nombre = nombre,
+                        Codigo = string.IsNullOrWhiteSpace(e.Codigo) ? carpeta : e.Codigo.Trim(),
+                        FormaJuridica = string.IsNullOrWhiteSpace(e.FormaJuridica) ? FormaJuridica(nif) : e.FormaJuridica,
+                        PlanModeloId = cmd.PlanModeloId, ImpuestoIndirecto = cmd.ImpuestoIndirecto,
+                        DigitosCuenta = Math.Clamp(datos.DigitosCuenta, 6, 12),
+                        TributaIs = (string.IsNullOrWhiteSpace(e.FormaJuridica) ? FormaJuridica(nif) : e.FormaJuridica) is "SL" or "SA" or "SLU" or "COOPERATIVA"
+                    }, ct);
+                    empresaId = alta.EmpresaId;
+                    creada = true;
+                }
+
+                // Todos los años que se pueden importar (en una empresa existente, los de ejercicios vacíos)
+                List<int> anios;
+                await using (var cn = await conexiones.AbrirAsync(ct))
+                    anios = (await PlanificarAsync(cn, null, empresaId.Value, ficheros, carpeta, null, ct)).Anios
+                        .Where(a => a.Motivo is null).Select(a => a.A3.Anio).ToList();
+                if (anios.Count == 0)
+                {
+                    resultado.Add(new EmpresaImportadaA3Dto(carpeta, nombre, empresaId, creada, [], 0, 0,
+                        "No hay ningún año que importar (los ejercicios ya tienen asientos o no hay movimientos).", []));
+                    continue;
+                }
+                var r = await ImportarFicherosAsync(empresaId.Value, usuarioId, ficheros, carpeta, anios, ct);
+                resultado.Add(new EmpresaImportadaA3Dto(carpeta, nombre, empresaId, creada, r.Anios.Select(a => a.Anio).ToList(),
+                    r.Anios.Sum(a => a.Asientos), r.Anios.Sum(a => a.Borradores), null, r.Avisos));
+            }
+            catch (ReglaContableException ex)
+            {
+                var error = ex.Detalle is null ? ex.Message : $"{ex.Message} ({ex.Detalle})";
+                if (creada) error += " La empresa se ha creado, pero sin la contabilidad: puedes volver a importarla.";
+                resultado.Add(new EmpresaImportadaA3Dto(carpeta, nombre, empresaId, creada, [], 0, 0, error, []));
+            }
+        }
+        return resultado;
+    }
+
+    private static async Task<(Dictionary<string, EmpresaFila> PorNif, List<string> Codigos)> EmpresasExistentesAsync(NpgsqlConnection cn, CancellationToken ct)
+    {
+        var filas = (await cn.QueryAsync<EmpresaFila>(new CommandDefinition(
+            "SELECT e.id, e.nombre, e.codigo, n.numero FROM core.empresa e JOIN core.nif n ON n.id = e.nif_id", cancellationToken: ct))).AsList();
+        return (filas.GroupBy(f => f.Numero, StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase),
+                filas.Select(f => f.Codigo).ToList());
+    }
+
+    /// <summary>Código para la empresa nueva: el de su carpeta en a3 (E00001) o, si está cogido, con un sufijo.</summary>
+    private static string CodigoLibre(string carpeta, HashSet<string> usados)
+    {
+        if (!usados.Contains(carpeta)) return carpeta;
+        for (var i = 2; ; i++)
+            if (!usados.Contains($"{carpeta}-{i}")) return $"{carpeta}-{i}";
+    }
+
+    /// <summary>Forma jurídica según la letra del NIF (B: S.L., A: S.A., F: cooperativa…; una persona física, autónomo).</summary>
+    private static string FormaJuridica(string nif)
+        => nif.Length == 0 ? "OTRA" : char.IsAsciiDigit(nif[0]) || nif[0] is 'X' or 'Y' or 'Z' or 'K' or 'L' or 'M' ? "AUTONOMO"
+           : nif[0] switch { 'A' => "SA", 'B' => "SL", 'E' => "COMUNIDAD_BIENES", 'J' => "SOCIEDAD_CIVIL", 'F' => "COOPERATIVA", 'G' => "ASOCIACION", _ => "OTRA" };
+
+    private static string TipoDocumento(string nif)
+        => !NifEspanol().IsMatch(nif) ? "OTRO" : nif[0] is 'X' or 'Y' or 'Z' ? "NIE" : char.IsAsciiDigit(nif[0]) || nif[0] is 'K' or 'L' or 'M' ? "NIF" : "CIF";
 
     // ------------------------------------------------------------------------------------------------ planificación
 
