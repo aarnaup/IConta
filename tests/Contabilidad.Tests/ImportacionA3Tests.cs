@@ -223,6 +223,11 @@ public class ImportacionA3Tests
             Assert.Equal(("EMPRESA DEMO", 2), (d.Empresa!.Nombre, d.Anios[0].Asientos.Count));
             Assert.Single(d.Terceros);
 
+            // Los datos de una empresa no se buscan en la carpeta de la aplicación
+            Directory.CreateDirectory(Path.Combine(app, "E00003"));
+            File.WriteAllBytes(Path.Combine(app, "E00003", "000035CU.DAT"), Isam(Cuenta(5700, 0, "CAJA")));
+            Assert.DoesNotContain(CarpetaA3Eco.Leer(app, null, long.MaxValue).Keys, k => k.StartsWith("E00003/"));
+
             // Solo las empresas pedidas
             Assert.DoesNotContain(CarpetaA3Eco.Leer(app, ["E00001"], long.MaxValue).Keys, k => k.StartsWith("E00002/"));
         }

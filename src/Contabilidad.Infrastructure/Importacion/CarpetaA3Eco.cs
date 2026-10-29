@@ -8,7 +8,8 @@ namespace Contabilidad.Infrastructure.Importacion;
 /// <summary>
 /// Lee los ficheros de a3ECO directamente de su carpeta de instalación (en el ordenador donde se ejecuta IConta), en lugar de un zip.
 /// TPARAGEN.DAT, en la carpeta de la aplicación, es una línea con la ruta de datos (\A3\A3ECO\); ahí está TECODIR.DAT, que guarda la
-/// carpeta de cada empresa (\A3\A3ECO\E00001\). Un fichero que no esté en la carpeta de datos se busca en la de la aplicación.
+/// carpeta de cada empresa (\A3\A3ECO\E00001\). TECODIR.DAT y TCLIPRO.DAT, si no están en la carpeta de datos, se buscan en la de
+/// la aplicación; los datos de cada empresa solo se leen de su carpeta.
 /// Devuelve los ficheros con las mismas claves que un zip: «TECODIR.DAT», «TCLIPRO.DAT» y «E00001/000015CU.DAT».
 /// </summary>
 public static partial class CarpetaA3Eco
@@ -44,13 +45,13 @@ public static partial class CarpetaA3Eco
             if ((Fichero(datos, nombre) ?? Fichero(app, nombre)) is { } f) Anadir(nombre, f);
 
         // Carpetas de las empresas: la que guarda TECODIR (resuelta desde la unidad de a3) o, si no existe, Ennnnn en la carpeta
-        // de datos o en la de la aplicación; también las Ennnnn que haya en ellas aunque no estén en el directorio
+        // de datos; también las Ennnnn de la carpeta de datos aunque no estén en el directorio. Los datos de una empresa solo se
+        // leen de su carpeta: no se buscan en la de la aplicación.
         var carpetas = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in LectorA3Eco.Empresas(r))
-            if ((Resolver(e.Ruta, app) ?? Subcarpeta(datos, e.Carpeta) ?? Subcarpeta(app, e.Carpeta)) is { } d) carpetas.TryAdd(e.Carpeta, d);
-        foreach (var raiz in new[] { datos, app }.Distinct())
-            foreach (var d in Directory.EnumerateDirectories(raiz).Where(d => CarpetaEmpresa().IsMatch(Path.GetFileName(d))))
-                carpetas.TryAdd(Path.GetFileName(d).ToUpperInvariant(), d);
+            if ((Resolver(e.Ruta, app) ?? Subcarpeta(datos, e.Carpeta)) is { } d) carpetas.TryAdd(e.Carpeta, d);
+        foreach (var d in Directory.EnumerateDirectories(datos).Where(d => CarpetaEmpresa().IsMatch(Path.GetFileName(d))))
+            carpetas.TryAdd(Path.GetFileName(d).ToUpperInvariant(), d);
 
         foreach (var (carpeta, dir) in carpetas.OrderBy(c => c.Key, StringComparer.Ordinal))
         {
@@ -60,7 +61,7 @@ public static partial class CarpetaA3Eco
         }
         if (!r.Keys.Any(k => k.Contains('/')))
             throw new ReglaContableException($"En «{app}» no hay datos de empresas de a3ECO.",
-                $"Se han buscado las carpetas Ennnnn en la ruta de datos ({datos}) y en la de la aplicación.");
+                $"Se han buscado las carpetas de TECODIR.DAT y las carpetas Ennnnn de la ruta de datos ({datos}).");
         return r;
     }
 
