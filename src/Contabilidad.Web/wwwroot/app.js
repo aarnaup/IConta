@@ -1966,7 +1966,9 @@ function pintaControlesBalance() {
   const inf = $('#baInforme').value, anual = ['patrimonio-neto', 'flujos-efectivo', 'memoria'].includes(inf);
   $('#baDesdeL').hidden = inf === 'situacion' || anual;
   $('#baHasta').parentElement.hidden = anual;
-  $('#baNivelL').hidden = $('#baIncluirL').hidden = inf !== 'sumas-saldos';
+  $('#baNivelL').hidden = inf !== 'sumas-saldos';
+  $('#baIncluirL').hidden = !['sumas-saldos', 'plan-cuentas'].includes(inf);
+  $('#baTodasL').hidden = inf !== 'plan-cuentas';
   $('#baFormatoL').hidden = !['situacion', 'perdidas-ganancias'].includes(inf);
 }
 $('#baInforme').onchange = () => { pintaControlesBalance(); verBalance(); };
@@ -1978,12 +1980,14 @@ async function verBalance() {
   if (!anual) q.set('hasta', $('#baHasta').value);
   if (!anual && inf !== 'situacion') q.set('desde', $('#baDesde').value);
   if (inf === 'sumas-saldos') { q.set('nivel', $('#baNivel').value); q.set('incluir', $('#baIncluir').value); }
+  if (inf === 'plan-cuentas') { q.set('incluir', $('#baIncluir').value); if ($('#baTodas').checked) q.set('todas', 'true'); }
   if (['situacion', 'perdidas-ganancias'].includes(inf) && $('#baFormato').value) q.set('formato', $('#baFormato').value);
   try {
     const r = await api(urlX(`/balances/${inf}?${q}`));
     msg($('#baMsg'), '', 'ayuda');
     $('#baTabla').hidden = inf === 'memoria'; $('#baExtra').innerHTML = '';
     if (inf === 'sumas-saldos') pintaSumasSaldos(r);
+    else if (inf === 'plan-cuentas') pintaPlanSaldos(r);
     else if (inf === 'patrimonio-neto') pintaEcpn(r);
     else if (inf === 'flujos-efectivo') pintaEfe(r);
     else if (inf === 'memoria') pintaMemoria(r);
@@ -2009,6 +2013,22 @@ function pintaSumasSaldos(r) {
     + `<tr class="total"><td colspan="2">Totales</td><td class="num">${fmt(r.totalDebe)}</td><td class="num">${fmt(r.totalHaber)}</td>
        <td class="num">${fmt(r.totalSaldoDeudor)}</td><td class="num">${fmt(r.totalSaldoAcreedor)}</td></tr>`;
   $('#baPista').textContent = '';
+}
+
+// Saldo con D (deudor) o H (acreedor)
+const saldoDH = n => !n ? '' : `${fmt(Math.abs(n))} ${n > 0 ? 'D' : 'H'}`;
+function pintaPlanSaldos(r) {
+  cabeceraBalance('Plan de cuentas con saldos', r);
+  $('#baAvisos').innerHTML = '';
+  $('#baHead').innerHTML = '<tr><th>Cuenta</th><th>Nombre</th><th class="num">Saldo anterior</th><th class="num">Debe</th><th class="num">Haber</th><th class="num">Saldo final</th></tr>';
+  $('#baBody').innerHTML = (r.filas.map(f => `<tr class="${f.esSubcuenta ? '' : 'plan-n' + f.nivel}">
+      <td style="padding-left:${6 + (f.nivel - 1) * 12}px">${esc(f.codigo)}</td><td>${esc(f.nombre)}</td>
+      <td class="num">${saldoDH(f.saldoAnterior)}</td><td class="num">${f.debe ? fmt(f.debe) : ''}</td><td class="num">${f.haber ? fmt(f.haber) : ''}</td>
+      <td class="num">${saldoDH(f.saldoFinal)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">No hay cuentas con saldo ni movimientos en esas fechas.</td></tr>')
+    + `<tr class="total"><td colspan="2">Totales (subcuentas)</td><td class="num">${saldoDH(r.totalAnterior)}</td><td class="num">${fmt(r.totalDebe)}</td>
+       <td class="num">${fmt(r.totalHaber)}</td><td class="num">${saldoDH(r.totalFinal)}</td></tr>`;
+  $('#baPista').textContent = 'El saldo anterior es la apertura más los movimientos anteriores a «Desde». D: deudor; H: acreedor. Grupos, subgrupos y cuentas suman sus subcuentas.';
 }
 
 function pintaEstado(r) {

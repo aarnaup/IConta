@@ -11,6 +11,10 @@ public interface IBalancesRepositorio
     Task<SumasSaldosDto> SumasSaldosAsync(long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta, int nivel,
         string incluir, CancellationToken ct);
 
+    /// <summary>Plan de cuentas con saldo anterior (lo previo a «desde» y la apertura), debe, haber y saldo final.</summary>
+    Task<PlanSaldosDto> PlanSaldosAsync(long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta, string incluir,
+        bool soloConSaldo, CancellationToken ct);
+
     /// <param name="formato">PYMES (abreviado) o NORMAL; por defecto, NORMAL si la empresa usa el PGC normal.</param>
     Task<EstadoFinancieroDto> BalanceSituacionAsync(long empresaId, long ejercicioId, long? canalId, DateOnly? hasta, CancellationToken ct,
         string? formato = null);
@@ -64,6 +68,39 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
         var (td, th) = (filas.Sum(f => f.Debe), filas.Sum(f => f.Haber));
         return new SumasSaldosDto(c.Canal, c.Canales, d, h, nivel, incluir, filas, td, th,
             filas.Sum(f => f.SaldoDeudor), filas.Sum(f => f.SaldoAcreedor), td == th);
+    }
+
+    // ------------------------------------------------------------------ plan de cuentas con saldos
+    public async Task<PlanSaldosDto> PlanSaldosAsync(long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta,
+        string incluir, bool soloConSaldo, CancellationToken ct)
+    {
+        incluir = (incluir ?? "MOVIMIENTOS").ToUpperInvariant();
+        string[] excluir = incluir switch
+        {
+            "MOVIMIENTOS" => OrigenesCierre,
+            "REGULARIZACION" => ["CIERRE"],
+            "CIERRE" => [],
+            _ => throw new ReglaContableException("«incluir» debe ser MOVIMIENTOS, REGULARIZACION o CIERRE.")
+        };
+
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var c = await ContextoAsync(cn, empresaId, ejercicioId, canalId, ct);
+        var (d, h) = Fechas(c.Ejercicio, desde, hasta);
+
+        // Saldo anterior: los movimientos de antes de «desde» y el asiento de apertura; el periodo, el resto
+        var anterior = d > c.Ejercicio.FechaInicio
+            ? await MovimientosAsync(cn, empresaId, ejercicioId, c.Canal.Id, c.Ejercicio.FechaInicio, d.AddDays(-1), excluir, ct)
+            : [];
+        anterior.AddRange(await MovimientosAsync(cn, empresaId, ejercicioId, c.Canal.Id, d, h, excluir, ct, soloOrigenes: ["APERTURA"]));
+        var periodo = await MovimientosAsync(cn, empresaId, ejercicioId, c.Canal.Id, d, h, [.. excluir, "APERTURA"], ct);
+
+        var plan = (await cn.QueryAsync<(string Codigo, string Nombre, bool EsImputable)>(new CommandDefinition(
+            "SELECT codigo, nombre, es_imputable FROM conta.cuenta WHERE empresa_id = @empresaId",
+            new { empresaId }, cancellationToken: ct))).Select(x => new CuentaPlan(x.Codigo, x.Nombre, x.EsImputable));
+        var filas = PlanSaldos.Construir(plan, anterior, periodo, soloConSaldo);
+        var sub = filas.Where(f => f.EsSubcuenta).ToList();
+        return new PlanSaldosDto(c.Canal, c.Canales, d, h, incluir, filas,
+            sub.Sum(f => f.SaldoAnterior), sub.Sum(f => f.Debe), sub.Sum(f => f.Haber), sub.Sum(f => f.SaldoFinal));
     }
 
     // ------------------------------------------------------------------ balance y pérdidas y ganancias
@@ -362,7 +399,7 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
     }
 
     private static async Task<List<MovimientoCuenta>> MovimientosAsync(NpgsqlConnection cn, long empresaId, long ejercicioId, long canalId,
-        DateOnly desde, DateOnly hasta, string[] excluirOrigenes, CancellationToken ct)
+        DateOnly desde, DateOnly hasta, string[] excluirOrigenes, CancellationToken ct, string[]? soloOrigenes = null)
         => (await cn.QueryAsync<MovFila>(new CommandDefinition("""
                SELECT c.codigo, SUM(m.debe) AS debe, SUM(m.haber) AS haber
                FROM conta.v_mayor m
@@ -370,8 +407,9 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
                JOIN conta.asiento s ON s.id = m.asiento_id
                WHERE m.empresa_id = @empresaId AND m.ejercicio_id = @ejercicioId AND m.canal_base_id = @canalId
                  AND m.fecha BETWEEN @desde AND @hasta AND s.origen <> ALL(@excluir::text[])
+                 AND (@solo::text[] IS NULL OR s.origen = ANY(@solo::text[]))
                GROUP BY c.codigo
-               """, new { empresaId, ejercicioId, canalId, desde, hasta, excluir = excluirOrigenes }, cancellationToken: ct)))
+               """, new { empresaId, ejercicioId, canalId, desde, hasta, excluir = excluirOrigenes, solo = soloOrigenes }, cancellationToken: ct)))
            .Select(f => new MovimientoCuenta(f.Codigo, f.Debe, f.Haber)).ToList();
 
     private static async Task<Contexto> ContextoAsync(NpgsqlConnection cn, long empresaId, long ejercicioId, long? canalId, CancellationToken ct)

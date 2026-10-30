@@ -9,6 +9,11 @@ public sealed record SumasSaldosDto(
     IReadOnlyList<FilaSumasSaldos> Filas, decimal TotalDebe, decimal TotalHaber, decimal TotalSaldoDeudor, decimal TotalSaldoAcreedor,
     bool Cuadra);
 
+/// <summary>Plan de cuentas con saldo anterior, debe, haber y saldo final; los totales, de las subcuentas.</summary>
+public sealed record PlanSaldosDto(
+    CanalRefDto Canal, IReadOnlyList<CanalRefDto> Canales, DateOnly Desde, DateOnly Hasta, string Incluir,
+    IReadOnlyList<FilaPlanSaldos> Filas, decimal TotalAnterior, decimal TotalDebe, decimal TotalHaber, decimal TotalFinal);
+
 public sealed record PartidaDto(string Id, string Texto, int Nivel, bool EsTotal, decimal Importe, decimal? ImporteAnterior,
     IReadOnlyList<CuentaEnPartida> Cuentas);
 

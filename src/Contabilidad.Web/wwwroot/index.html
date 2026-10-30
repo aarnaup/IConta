@@ -1070,6 +1070,7 @@
           <option value="situacion">Balance de situación</option>
           <option value="perdidas-ganancias">Pérdidas y ganancias</option>
           <option value="sumas-saldos">Sumas y saldos</option>
+          <option value="plan-cuentas">Plan de cuentas con saldos</option>
           <option value="patrimonio-neto">Cambios en el patrimonio neto</option>
           <option value="flujos-efectivo">Flujos de efectivo</option>
           <option value="memoria">Memoria (borrador)</option></select></label>
@@ -1084,6 +1085,8 @@
         <label id="baIncluirL">Asientos <select id="baIncluir">
           <option value="MOVIMIENTOS">Sin regularización ni cierre</option><option value="REGULARIZACION">Con regularización</option>
           <option value="CIERRE">Con cierre</option></select></label>
+        <label id="baTodasL" class="campo" style="flex-direction:row; align-items:center; gap:8px; margin:22px 0 0">
+          <input type="checkbox" id="baTodas"> Cuentas sin saldo ni movimientos</label>
       </div>
       <div class="fila-acciones solo-pantalla">
         <button class="btn primario" id="baVer" type="button">Ver</button>

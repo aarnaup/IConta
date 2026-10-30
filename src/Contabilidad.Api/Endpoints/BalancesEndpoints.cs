@@ -21,6 +21,12 @@ public static class BalancesEndpoints
                                                   string.IsNullOrWhiteSpace(incluir) ? "MOVIMIENTOS" : incluir, ct)))
             .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
 
+        b.MapGet("/plan-cuentas", async (long empresaId, long ejercicioId, long? canalId, DateOnly? desde, DateOnly? hasta, string? incluir,
+            bool? todas, IBalancesRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.PlanSaldosAsync(empresaId, ejercicioId, canalId, desde, hasta,
+                                                 string.IsNullOrWhiteSpace(incluir) ? "MOVIMIENTOS" : incluir, todas != true, ct)))
+            .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);
+
         b.MapGet("/situacion", async (long empresaId, long ejercicioId, long? canalId, DateOnly? hasta, string? formato, IBalancesRepositorio r, CancellationToken ct)
             => Results.Ok(await r.BalanceSituacionAsync(empresaId, ejercicioId, canalId, hasta, ct, formato)))
             .Requiere(Nivel.Lectura, Modulo.Balances, Modulo.Contabilidad);

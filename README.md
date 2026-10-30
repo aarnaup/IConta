@@ -310,6 +310,7 @@ Arts. 107 a 110 de la Ley del IVA (las mismas reglas en el IGIC). Registro en la
 | Informe | Ruta | Parámetros |
 |---|---|---|
 | Sumas y saldos | `sumas-saldos` | `desde`, `hasta`, `nivel` (1 grupo … 4 subcuenta, 5 cuenta completa), `incluir` (MOVIMIENTOS, REGULARIZACION, CIERRE) |
+| Plan de cuentas con saldos | `plan-cuentas` | `desde`, `hasta`, `incluir`, `todas` (también las cuentas sin saldo ni movimientos). Cada cuenta del plan, con jerarquía, con saldo anterior (la apertura y lo anterior a `desde`), debe, haber y saldo final; grupos, subgrupos y cuentas suman sus subcuentas |
 | Balance de situación | `situacion` | `hasta`, `formato` (NORMAL o PYMES) |
 | Pérdidas y ganancias | `perdidas-ganancias` | `desde`, `hasta`, `formato` |
 | Estado de cambios en el patrimonio neto | `patrimonio-neto` | — |

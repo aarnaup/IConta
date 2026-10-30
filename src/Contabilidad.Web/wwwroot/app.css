@@ -129,3 +129,4 @@
   table.presupuesto td input[data-f=total]{min-width:110px}
   table.presupuesto tfoot td{font-weight:650}
   .desf{color:var(--bad)} .fav{color:var(--good)}
+  .plan-n1 td{font-weight:700} .plan-n2 td{font-weight:600} .plan-n3 td,.plan-n4 td{font-weight:600; color:var(--muted)}
