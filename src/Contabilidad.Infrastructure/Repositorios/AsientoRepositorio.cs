@@ -21,6 +21,9 @@ public interface IAsientoRepositorio
     Task<IReadOnlyList<FilaMayorDto>> MayorAsync(long empresaId, long ejercicioId, string cuenta, long? canalBaseId, CancellationToken ct);
 
     Task<AsientoDetalleDto> ObtenerAsync(long empresaId, long ejercicioId, long asientoId, CancellationToken ct);
+    /// <summary>Asientos completos (con sus apuntes) de un diario y unas fechas, para la rejilla; sin los anulados.</summary>
+    Task<IReadOnlyList<AsientoDetalleDto>> ListarDetalleAsync(long empresaId, long ejercicioId, long? diarioId, DateOnly? desde, DateOnly? hasta,
+        int limite, CancellationToken ct);
     /// <summary>Cambia fecha, concepto y apuntes de un asiento manual, importado o de apertura importada; conserva diario y número.</summary>
     Task<AsientoCreado> ModificarAsync(long empresaId, long ejercicioId, long asientoId, long usuarioId, CrearAsientoCmd cmd,
         bool soloBorradores, CancellationToken ct);
@@ -291,6 +294,45 @@ public sealed class AsientoRepositorio(
         foreach (var p in a.Apuntes)
             p.Analitica = imputaciones[p.Id].Select(x => new ImputacionCmd { ElementoId = x.ElementoId, Porcentaje = x.Porcentaje }).ToList();
         return a;
+    }
+
+    public async Task<IReadOnlyList<AsientoDetalleDto>> ListarDetalleAsync(long empresaId, long ejercicioId, long? diarioId, DateOnly? desde,
+        DateOnly? hasta, int limite, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var lista = (await cn.QueryAsync<AsientoDetalleDto>(new CommandDefinition($"""
+            SELECT * FROM (
+              SELECT s.id, s.numero, s.fecha, s.diario_id, s.concepto, s.estado, s.origen, {SqlBloqueo} AS bloqueo
+              FROM conta.asiento s
+              JOIN core.ejercicio e ON e.id = s.ejercicio_id
+              JOIN core.periodo pe ON pe.id = s.periodo_id
+              WHERE s.empresa_id = @empresaId AND s.ejercicio_id = @ejercicioId AND s.estado <> 'ANULADO'
+                AND (@diarioId::bigint IS NULL OR s.diario_id = @diarioId)
+                AND (@desde::date IS NULL OR s.fecha >= @desde) AND (@hasta::date IS NULL OR s.fecha <= @hasta)
+              ORDER BY s.fecha DESC, s.numero DESC LIMIT @limite) x
+            ORDER BY fecha, numero, id
+            """, new { empresaId, ejercicioId, diarioId, desde, hasta, limite }, cancellationToken: ct))).AsList();
+        if (lista.Count == 0) return lista;
+
+        var ids = lista.Select(a => a.Id).ToArray();
+        var apuntes = (await cn.QueryAsync<long, ApunteDetalleDto, (long AsientoId, ApunteDetalleDto Apunte)>(new CommandDefinition("""
+            SELECT p.asiento_id, p.id, p.linea, p.cuenta_id, c.codigo AS cuenta, c.nombre AS cuenta_nombre, p.tercero_id, p.actividad_id, p.canal_id,
+                   p.debe, p.haber, p.concepto, p.documento
+            FROM conta.apunte p JOIN conta.cuenta c ON c.id = p.cuenta_id
+            WHERE p.asiento_id = ANY(@ids) ORDER BY p.asiento_id, p.linea
+            """, new { ids }, cancellationToken: ct),
+            (asientoId, ap) => (asientoId, ap), splitOn: "id")).ToLookup(x => x.AsientoId, x => x.Apunte);
+        var imputaciones = (await cn.QueryAsync<(long ApunteId, long ElementoId, decimal Porcentaje)>(new CommandDefinition("""
+            SELECT x.apunte_id, x.elemento_id, x.porcentaje FROM gest.apunte_analitica x
+            JOIN conta.apunte p ON p.id = x.apunte_id WHERE p.asiento_id = ANY(@ids) ORDER BY x.id
+            """, new { ids }, cancellationToken: ct))).ToLookup(x => x.ApunteId);
+        foreach (var a in lista)
+        {
+            a.Apuntes = apuntes[a.Id].ToList();
+            foreach (var p in a.Apuntes)
+                p.Analitica = imputaciones[p.Id].Select(x => new ImputacionCmd { ElementoId = x.ElementoId, Porcentaje = x.Porcentaje }).ToList();
+        }
+        return lista;
     }
 
     public async Task<AsientoCreado> ModificarAsync(long empresaId, long ejercicioId, long asientoId, long usuarioId, CrearAsientoCmd cmd,

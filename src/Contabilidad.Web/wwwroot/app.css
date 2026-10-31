@@ -173,3 +173,20 @@
     header.lateral:not(.abierto) .contexto-lat, header.lateral:not(.abierto) nav, header.lateral:not(.abierto) .der{display:none}
     header.lateral .der{margin-top:0}
   }
+
+  /* ---------------------------------------------------------------- rejilla de diario */
+  .rj-tabla{overflow-x:auto}
+  .rj-resumen{margin:4px 0 10px; color:var(--muted); font-size:14px}
+  table.rj tr.rj-cab td{background:var(--bg); padding:5px 8px; font-size:13px}
+  table.rj tr.rj-cab td:first-child{border-left:4px solid var(--good)}
+  table.rj .rj-cab-in{display:flex; gap:12px; align-items:center; flex-wrap:wrap}
+  table.rj tr.rj-cab.descuadre td:first-child{border-left-color:var(--bad)}
+  table.rj tr.rj-cab.ro td:first-child{border-left-color:var(--line)}
+  table.rj tr.rj-cab .rj-num{font-weight:650; min-width:80px}
+  table.rj tr.rj-cab input[type=date]{width:auto; padding:3px 6px; border:1px solid var(--line); background:var(--surface); border-radius:6px}
+  table.rj tr.rj-cab td.num{font-weight:600; padding:5px 8px}
+  table.rj .rj-est{color:var(--muted)} table.rj .rj-est.mal{color:var(--bad); font-weight:600} table.rj .rj-est.ok{color:var(--good)}
+  table.rj tr.rj-cab.descuadre td.num{color:var(--bad)}
+  table.rj tr.ro td{color:var(--muted); background:color-mix(in srgb, var(--bg) 60%, var(--surface))}
+  table.rj tr.ro input,table.rj tr.ro select{color:var(--muted)}
+  table.rj .rj-mini{padding:2px 10px; font-size:12px; margin-left:auto}

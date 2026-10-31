@@ -110,6 +110,12 @@ public static class EmpresaEndpoints
                 new { creado.Id, creado.Numero, creado.Estado, forzadoBorrador = forzado });
         }).Requiere(Nivel.Escritura, Modulo.Contabilidad);
 
+        // Asientos completos para la rejilla del diario (la ruta va antes que /asientos/{id})
+        ej.MapGet("/asientos/detalle", (long empresaId, long ejercicioId, long? diarioId, DateOnly? desde, DateOnly? hasta, int? limite,
+            IAsientoRepositorio a, CancellationToken ct)
+            => a.ListarDetalleAsync(empresaId, ejercicioId, diarioId, desde, hasta, Math.Clamp(limite ?? 500, 1, 2000), ct))
+            .Requiere(Nivel.Lectura, Modulo.Contabilidad);
+
         ej.MapGet("/asientos/{asientoId:long}", (long empresaId, long ejercicioId, long asientoId, IAsientoRepositorio a, CancellationToken ct)
             => a.ObtenerAsync(empresaId, ejercicioId, asientoId, ct))
             .Requiere(Nivel.Lectura, Modulo.Contabilidad);

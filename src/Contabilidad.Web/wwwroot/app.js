@@ -236,8 +236,8 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
-  const carga = { factura: cargaFacturas, diario: cargaDiario, tesoreria: cargaTesoreria, nominas: cargaNominas, fiscal: cargaFiscal, pendientes: cargaPendientes,
+  ['asiento', 'factura', 'diario', 'rejilla', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  const carga = { factura: cargaFacturas, diario: cargaDiario, rejilla: cargaRejilla, tesoreria: cargaTesoreria, nominas: cargaNominas, fiscal: cargaFiscal, pendientes: cargaPendientes,
                   inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
                   cierre: cargaCierre }[nombre];
   if (carga) carga().catch(e => alert(e.message));
@@ -478,6 +478,234 @@ $('#mayorBtn').onclick = async () => {
       <td class="num">${f.debe ? fmt(f.debe) : ''}</td><td class="num">${f.haber ? fmt(f.haber) : ''}</td><td class="num">${fmt(f.saldo)}</td></tr>`).join('');
   } catch (e) { $('#msgMayor').textContent = e.message; }
 };
+
+// ------------------------------------------------------------ rejilla de diario
+// Los asientos de un diario como una hoja de cálculo: cada línea se graba al pasar a otra; un asiento que no cuadra queda en
+// borrador y se marca con su descuadre, y al cuadrar se contabiliza.
+const RJ = { asientos: [], uid: 0 };
+const rjVacia = () => ({ cuenta: '', cuentaId: null, nombre: '', concepto: '', documento: '', canalId: null, debe: '', haber: '',
+  terceroId: null, actividadId: null, analitica: [] });
+const rjImporte = n => n ? Number(n).toFixed(2).replace('.', ',') : '';
+const rjSumas = a => { const d = a.lineas.reduce((x, l) => x + num(l.debe), 0), h = a.lineas.reduce((x, l) => x + num(l.haber), 0);
+                       return { debe: d, haber: h, dif: Math.round((d - h) * 100) / 100 }; };
+const rjEditable = a => permitido('CONTABILIDAD:ESCRITURA') && S.ejercicio.estado === 'ABIERTO' && !a.bloqueo;
+const rjBusca = uid => RJ.asientos.find(a => a.uid === +uid);
+const rjCelda = (uid, l, f) => $(`#rjBody tr.rj-linea[data-a="${uid}"][data-l="${l}"] [data-f="${f}"]`);
+
+async function cargaRejilla() {
+  if (!$('#rjDiario').options.length) {
+    $('#rjDiario').innerHTML = '<option value="">Todos los diarios</option>' + S.diarios.map(d => `<option value="${d.id}">${esc(d.codigo)} · ${esc(d.nombre)}</option>`).join('');
+  }
+  if ($('#rjHasta').dataset.ejercicio !== String(S.ejercicio.id)) {
+    for (const id of ['#rjDesde', '#rjHasta']) { $(id).min = S.ejercicio.fechaInicio; $(id).max = S.ejercicio.fechaFin; }
+    const h = hoy(), dentro = h >= S.ejercicio.fechaInicio && h <= S.ejercicio.fechaFin;
+    $('#rjDesde').value = dentro ? h.slice(0, 8) + '01' < S.ejercicio.fechaInicio ? S.ejercicio.fechaInicio : h.slice(0, 8) + '01' : S.ejercicio.fechaInicio;
+    $('#rjHasta').value = S.ejercicio.fechaFin;
+    $('#rjHasta').dataset.ejercicio = String(S.ejercicio.id);
+  }
+  const q = new URLSearchParams({ desde: $('#rjDesde').value, hasta: $('#rjHasta').value });
+  if ($('#rjDiario').value) q.set('diarioId', $('#rjDiario').value);
+  const lista = await api(urlX('/asientos/detalle?' + q));
+  RJ.asientos = lista.map(a => ({ uid: ++RJ.uid, id: a.id, numero: a.numero, fecha: a.fecha, diarioId: a.diarioId, estado: a.estado,
+    origen: a.origen, bloqueo: a.bloqueo, concepto: a.concepto, sucio: false, guardando: false, error: null,
+    lineas: a.apuntes.map(p => ({ cuenta: p.cuenta, cuentaId: p.cuentaId, nombre: p.cuentaNombre, concepto: p.concepto === a.concepto ? '' : (p.concepto || ''),
+      documento: p.documento || '', canalId: p.canalId, debe: rjImporte(p.debe), haber: rjImporte(p.haber), terceroId: p.terceroId,
+      actividadId: p.actividadId, analitica: p.analitica || [] })) }));
+  msg($('#rjMsg'), lista.length >= 500 ? 'Se muestran los 500 últimos asientos: acota las fechas para ver el resto.' : '', 'ayuda');
+  rjPinta();
+}
+$('#rjVer').onclick = () => cargaRejilla().catch(e => msg($('#rjMsg'), e.message, 'err-texto'));
+$('#rjDiario').onchange = $('#rjVer').onclick;
+
+// Número del asiento; con todos los diarios, con el código del diario (cada diario numera por su cuenta)
+const rjNumero = a => !a.id ? 'Nuevo asiento'
+  : ($('#rjDiario').value ? '' : (S.diarios.find(d => d.id === a.diarioId)?.codigo || '') + ' ') + 'Nº ' + a.numero;
+function rjEstado(a) {
+  const { dif } = rjSumas(a);
+  if (a.guardando) return ['', 'Guardando…'];
+  if (a.error) return ['mal', a.error];
+  if (a.bloqueo) return ['', origenTexto(a.origen)];
+  if (dif) return ['mal', `Descuadre ${fmt(Math.abs(dif))} al ${dif > 0 ? 'haber' : 'debe'}`];
+  if (!a.id) return ['', 'Sin grabar'];
+  return a.estado === 'BORRADOR' ? ['', 'Borrador'] : ['ok', 'Contabilizado'];
+}
+function rjCabHtml(a) {
+  const ed = rjEditable(a), { debe, haber, dif } = rjSumas(a), [cls, txt] = rjEstado(a);
+  return `<tr class="rj-cab ${dif ? 'descuadre' : ''} ${ed ? '' : 'ro'}" data-a="${a.uid}"><td colspan="6"><div class="rj-cab-in">
+      <span class="rj-num">${esc(rjNumero(a))}</span>
+      ${ed ? `<input type="date" data-k="fecha" value="${a.fecha}" min="${S.ejercicio.fechaInicio}" max="${S.ejercicio.fechaFin}" aria-label="Fecha del asiento">`
+           : `<span>${fechaES(a.fecha)}</span>`}
+      <span class="rj-est ${cls}" ${a.bloqueo ? `title="${esc(a.bloqueo)}"` : ''}>${esc(txt)}</span>
+      ${ed ? `<button class="btn rj-mini" type="button" data-anadir tabindex="-1">+ Línea</button>` : ''}</div></td>
+    <td class="num">${fmt(debe)}</td><td class="num">${fmt(haber)}</td>
+    <td>${ed ? `<button class="x" type="button" data-borrar-asiento tabindex="-1" title="Borrar el asiento" aria-label="Borrar el asiento">×</button>` : ''}</td></tr>`;
+}
+function rjLineaHtml(a, l, i) {
+  const ed = rjEditable(a), dis = ed ? '' : 'disabled';
+  return `<tr class="rj-linea ${ed ? '' : 'ro'}" data-a="${a.uid}" data-l="${i}">
+    <td class="fila">${i + 1}</td>
+    <td><input data-f="cuenta" list="dl-cuentas" value="${esc(l.cuenta)}" autocomplete="off" class="${l.cuenta && !l.cuentaId ? 'mal' : ''}" ${dis} aria-label="Cuenta"></td>
+    <td class="nombre">${esc(l.nombre) || (l.cuenta ? 'No existe' : '—')}</td>
+    <td><input data-f="concepto" value="${esc(l.concepto)}" placeholder="${esc(a.concepto || '')}" ${dis} aria-label="Concepto"></td>
+    <td><input data-f="documento" value="${esc(l.documento)}" ${dis} aria-label="Documento"></td>
+    <td><select data-f="canalId" ${dis} aria-label="Canal">${canalOpts(l.canalId)}</select></td>
+    <td><input data-f="debe" class="num" inputmode="decimal" value="${esc(l.debe)}" ${dis} aria-label="Debe"></td>
+    <td><input data-f="haber" class="num" inputmode="decimal" value="${esc(l.haber)}" ${dis} aria-label="Haber"></td>
+    <td>${ed ? `<button class="x" type="button" data-del tabindex="-1" aria-label="Quitar la línea">×</button>` : ''}</td></tr>`;
+}
+function rjPinta(foco) {
+  const def = S.canales.find(c => c.codigo === 'A') || S.canales[0];
+  RJ.asientos.forEach(a => a.lineas.forEach(l => { if (!l.canalId && def) l.canalId = def.id; }));
+  $('#rjBody').innerHTML = RJ.asientos.map(a => rjCabHtml(a) + a.lineas.map((l, i) => rjLineaHtml(a, l, i)).join('')).join('')
+    || '<tr><td colspan="9" class="vacio">No hay asientos en esas fechas. Pulsa «Nuevo asiento» para empezar.</td></tr>';
+  rjResumen();
+  if (foco) { const c = rjCelda(foco.a, foco.l, foco.f || 'cuenta'); c?.focus(); c?.scrollIntoView({ block: 'nearest' }); }
+}
+// Cabecera de un asiento (sumas y estado) sin volver a pintar sus líneas
+function rjCab(a) {
+  const tr = $(`#rjBody tr.rj-cab[data-a="${a.uid}"]`); if (!tr) return;
+  const enFecha = document.activeElement === tr.querySelector('[data-k=fecha]');
+  if (enFecha) { const [cls, txt] = rjEstado(a); const e = tr.querySelector('.rj-est'); e.className = 'rj-est ' + cls; e.textContent = txt; }
+  else tr.outerHTML = rjCabHtml(a);
+  const n = $(`#rjBody tr.rj-cab[data-a="${a.uid}"] .rj-num`); if (n) n.textContent = rjNumero(a);
+  rjResumen();
+}
+function rjResumen() {
+  const n = RJ.asientos.length, desc = RJ.asientos.filter(a => rjSumas(a).dif).length;
+  const d = RJ.asientos.reduce((x, a) => x + rjSumas(a).debe, 0), h = RJ.asientos.reduce((x, a) => x + rjSumas(a).haber, 0);
+  $('#rjResumen').innerHTML = `${n} asiento(s) · debe ${fmt(d)} · haber ${fmt(h)}` +
+    (desc ? ` · <strong class="err-texto">${desc} sin cuadrar</strong>` : n ? ' · todos cuadran' : '');
+}
+
+async function rjGuarda(a) {
+  if (!a || !a.sucio || !rjEditable(a)) return;
+  if (a.guardando) { a.repetir = true; return; }
+  const usadas = a.lineas.filter(l => l.cuenta.trim() || num(l.debe) || num(l.haber));
+  if (usadas.some(l => !l.cuentaId)) { a.error = 'Hay una cuenta que no existe.'; rjCab(a); return; }
+  a.guardando = true; a.sucio = false; a.error = null; rjCab(a);
+  try {
+    if (!usadas.length) {                                   // sin líneas: el asiento desaparece
+      if (a.id) await api(urlX('/asientos/' + a.id), { method: 'DELETE' });
+      RJ.asientos = RJ.asientos.filter(x => x !== a);
+      $$(`#rjBody tr[data-a="${a.uid}"]`).forEach(tr => tr.remove()); rjResumen();
+      return;
+    }
+    const { debe, dif } = rjSumas(a);
+    const concepto = a.concepto || usadas.find(l => l.concepto.trim())?.concepto.trim() || usadas[0].nombre || 'Asiento';
+    const cmd = { fecha: a.fecha, diarioId: a.diarioId, concepto, borrador: !!dif || usadas.length < 2 || !debe,
+      apuntes: usadas.map(l => ({ cuentaId: l.cuentaId, canalId: l.canalId, debe: num(l.debe), haber: num(l.haber),
+        concepto: l.concepto.trim() || concepto, documento: l.documento.trim() || null, terceroId: l.terceroId, actividadId: l.actividadId,
+        analitica: l.analitica.length ? l.analitica : null })) };
+    const r = a.id ? await put(urlX('/asientos/' + a.id), cmd) : await post(urlX('/asientos'), cmd);
+    a.id = r.id; a.numero = r.numero; a.estado = r.estado; a.concepto = concepto;
+  } catch (e) { a.error = e.message; a.sucio = true; }
+  finally {
+    a.guardando = false; rjCab(a);
+    if (a.repetir) { a.repetir = false; rjGuarda(a); }
+  }
+}
+
+$('#rjBody').addEventListener('input', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const a = rjBusca(tr.dataset.a); if (!a) return;
+  if (e.target.dataset.k === 'fecha') return;
+  const l = a.lineas[+tr.dataset.l], f = e.target.dataset.f; if (!l || !f) return;
+  l[f] = e.target.value; a.sucio = true; a.error = null;
+  if (f === 'cuenta') {
+    const c = S.cuentas.find(x => x.codigo === l.cuenta.trim());
+    l.cuentaId = c ? c.id : null; l.nombre = c ? c.nombre : '';
+    tr.querySelector('.nombre').textContent = l.nombre || '—'; e.target.classList.remove('mal');
+  }
+  if (f === 'debe' && num(l.debe)) { l.haber = ''; tr.querySelector('[data-f=haber]').value = ''; }
+  if (f === 'haber' && num(l.haber)) { l.debe = ''; tr.querySelector('[data-f=debe]').value = ''; }
+  if (f === 'debe' || f === 'haber') rjCab(a);
+});
+$('#rjBody').addEventListener('change', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const a = rjBusca(tr.dataset.a); if (!a) return;
+  if (e.target.dataset.k === 'fecha') { a.fecha = e.target.value; a.sucio = true; rjGuarda(a); return; }
+  const l = a.lineas[+tr.dataset.l];
+  if (e.target.dataset.f === 'canalId') { l.canalId = +e.target.value; a.sucio = true; }
+  if (e.target.dataset.f === 'cuenta') {
+    const c = resuelveCuenta(l.cuenta);
+    l.cuentaId = c ? c.id : null; l.nombre = c ? c.nombre : ''; if (c) { l.cuenta = c.codigo; e.target.value = c.codigo; }
+    e.target.classList.toggle('mal', !!l.cuenta.trim() && !c);
+    tr.querySelector('.nombre').textContent = l.nombre || (l.cuenta.trim() ? 'No existe' : '—');
+  }
+});
+// Al llegar al importe de una línea con cuenta y sin importe, se propone lo que falta para cuadrar el asiento
+$('#rjBody').addEventListener('focusin', e => {
+  const f = e.target.dataset.f; if (f !== 'debe' && f !== 'haber') return;
+  const tr = e.target.closest('tr'), a = rjBusca(tr.dataset.a), i = +tr.dataset.l, l = a.lineas[i];
+  if (!l.cuentaId || num(l.debe) || num(l.haber)) return;
+  const dif = Math.round(a.lineas.reduce((s, x, j) => j === i ? s : s + num(x.debe) - num(x.haber), 0) * 100) / 100;
+  if (!dif) return;
+  const lado = dif > 0 ? 'haber' : 'debe', valor = Math.abs(dif).toFixed(2).replace('.', ',');
+  l[lado] = valor; tr.querySelector(`[data-f=${lado}]`).value = valor; a.sucio = true; rjCab(a);
+  setTimeout(() => { const c = rjCelda(a.uid, i, lado); if (lado !== f) c.focus(); c.select(); });
+});
+// Al salir de una línea que ha cambiado, se graba su asiento
+$('#rjBody').addEventListener('focusout', e => {
+  const tr = e.target.closest('tr.rj-linea'); if (!tr) return;
+  const destino = e.relatedTarget?.closest?.('tr');
+  if (destino === tr) return;
+  const a = rjBusca(tr.dataset.a);
+  if (a?.sucio) rjGuarda(a);
+});
+$('#rjBody').addEventListener('click', async e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  const a = rjBusca(tr.dataset.a); if (!a) return;
+  if (e.target.closest('[data-del]')) return rjQuitaLinea(a, +tr.dataset.l);
+  if (e.target.closest('[data-anadir]')) { a.lineas.push(rjVacia()); rjPinta({ a: a.uid, l: a.lineas.length - 1 }); return; }
+  if (e.target.closest('[data-borrar-asiento]')) {
+    if (!confirm(a.id ? `¿Borrar el asiento ${a.numero}? No se puede deshacer.` : '¿Descartar este asiento?')) return;
+    try { if (a.id) await api(urlX('/asientos/' + a.id), { method: 'DELETE' }); RJ.asientos = RJ.asientos.filter(x => x !== a); rjPinta(); }
+    catch (err) { a.error = err.message; rjCab(a); }
+  }
+});
+function rjQuitaLinea(a, i) {
+  a.lineas.splice(i, 1); a.sucio = true;
+  if (!a.lineas.length && !a.id) { RJ.asientos = RJ.asientos.filter(x => x !== a); rjPinta(); return; }
+  if (!a.lineas.length) a.lineas.push(rjVacia());
+  rjPinta({ a: a.uid, l: Math.min(i, a.lineas.length - 1) });
+  rjGuarda(a);
+}
+function rjNuevoAsiento(fecha) {
+  const ultimo = RJ.asientos.at(-1);
+  const diarioId = +$('#rjDiario').value || S.diarios.find(d => d.tipo === 'GENERAL')?.id || S.diarios[0]?.id;
+  const a = { uid: ++RJ.uid, id: null, numero: null, fecha: fecha || ultimo?.fecha || $('#rjDesde').value, diarioId, estado: null, origen: 'MANUAL',
+    bloqueo: null, concepto: '', sucio: false, guardando: false, error: null, lineas: [rjVacia(), rjVacia()] };
+  RJ.asientos.push(a); rjPinta({ a: a.uid, l: 0 });
+}
+$('#rjNuevo').onclick = () => rjNuevoAsiento();
+
+$('#rjBody').addEventListener('keydown', e => {
+  const f = e.target.dataset.f; if (!f) return;
+  const tr = e.target.closest('tr'), a = rjBusca(tr.dataset.a), i = +tr.dataset.l, l = a.lineas[i];
+  if (e.key === 'Delete' && e.ctrlKey) { e.preventDefault(); return rjQuitaLinea(a, i); }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && f !== 'cuenta' && f !== 'canalId') {
+    // Recorre las líneas de todos los asientos editables en orden
+    const filas = $$('#rjBody tr.rj-linea:not(.ro)'), k = filas.indexOf(tr) + (e.key === 'ArrowDown' ? 1 : -1);
+    if (k >= 0 && k < filas.length) { e.preventDefault(); const c = filas[k].querySelector(`[data-f="${f}"]`); c.focus(); c.select?.(); }
+    return;
+  }
+  if (e.key !== 'Enter' || e.shiftKey) return;
+  e.preventDefault();
+  if (f === 'cuenta') e.target.dispatchEvent(new Event('change', { bubbles: true }));
+  const celdas = [...tr.querySelectorAll('[data-f]')];
+  let k = celdas.indexOf(e.target) + 1;
+  if (f === 'debe' && num(l.debe)) k = celdas.length;
+  if (k < celdas.length) { celdas[k].focus(); celdas[k].select?.(); return; }
+  if (i + 1 < a.lineas.length) return rjCelda(a.uid, i + 1, 'cuenta').focus();
+  // Final del asiento: si cuadra, asiento nuevo (con la misma fecha); si no, otra línea
+  const vacia = !l.cuenta.trim() && !num(l.debe) && !num(l.haber);
+  if (!rjSumas(a).dif && a.lineas.filter(x => x.cuentaId).length >= 2) {
+    if (vacia) a.lineas.pop();
+    a.sucio = a.sucio || vacia; rjGuarda(a);
+    return rjNuevoAsiento(a.fecha);
+  }
+  a.lineas.push(rjVacia()); rjPinta({ a: a.uid, l: a.lineas.length - 1 });
+});
 
 // ------------------------------------------------------------ facturas
 const fst = { tipos: [], rets: [], terceros: [], formas: [], lineas: [] };
