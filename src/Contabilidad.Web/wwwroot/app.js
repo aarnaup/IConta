@@ -60,6 +60,9 @@ const VISTAS = ['login', 'cambio', 'empresas', 'admin', 'app'];
 function vista(id) {
   VISTAS.forEach(v => $('#vista-' + v).hidden = v !== id);
   $('#cabecera').hidden = id === 'login';
+  document.body.classList.toggle('con-lateral', id !== 'login');
+  $('#navApp').hidden = id !== 'app'; $('#navAdmin').hidden = id !== 'admin';
+  $('#cabecera').classList.remove('abierto'); $('#btnMenu').setAttribute('aria-expanded', 'false');
   $('#usuarioNombre').textContent = S.user ? S.user.nombre : '';
   $('#btnCambiar').hidden = !(id === 'app' || id === 'admin');
   $('#btnCambiar').textContent = id === 'admin' ? 'Volver a las empresas' : 'Cambiar empresa';
@@ -80,6 +83,14 @@ $('#ejCab').addEventListener('change', async e => {
 });
 
 $('#btnSalir').onclick = () => salir('');
+// En pantallas estrechas el lateral es una barra arriba y el menú se abre con «Menú»; al elegir una opción se cierra
+$('#btnMenu').onclick = () => {
+  const abierto = $('#cabecera').classList.toggle('abierto');
+  $('#btnMenu').setAttribute('aria-expanded', String(abierto));
+};
+$('#cabecera').addEventListener('click', e => {
+  if (e.target.closest('nav button')) { $('#cabecera').classList.remove('abierto'); $('#btnMenu').setAttribute('aria-expanded', 'false'); }
+});
 $('#btnCambiar').onclick = () => irSelector().catch(e => msg($('#selMsg'), e.message, 'ayuda err-texto'));
 
 // ============================================================ login y cambio de contraseña
@@ -166,7 +177,11 @@ function permitido(req) {
   const [m, n] = req.split(':');
   return ORDEN[S.acceso.permisos[m]] >= ORDEN[n];
 }
-const aplicaPermisos = () => $$('#vista-app [data-req]').forEach(el => el.hidden = !permitido(el.dataset.req));
+const aplicaPermisos = () => {
+  $$('#vista-app [data-req], #navApp [data-req]').forEach(el => el.hidden = !permitido(el.dataset.req));
+  // Un grupo del menú sin ninguna opción visible no se muestra
+  $$('#navApp .grupo-nav').forEach(g => g.hidden = !g.querySelector('button:not([hidden])'));
+};
 
 async function entrarEmpresa(empresa, ejercicio, tab) {
   S.empresa = empresa; S.ejercicio = ejercicio;

@@ -14,12 +14,6 @@
   html,body{margin:0}
   body{font:15px/1.45 var(--font); color:var(--ink); background:var(--bg)}
   .num{font-variant-numeric:tabular-nums; text-align:right}
-  header{display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; padding:12px 24px; background:var(--surface); border-bottom:1px solid var(--line)}
-  header h1{font-size:18px; margin:0; font-weight:650; letter-spacing:.2px}
-  header label{display:flex; gap:8px; align-items:center; color:var(--muted)}
-  nav{display:flex; gap:4px; flex-wrap:wrap; margin:0 0 16px}
-  nav button{border:0; background:none; font:inherit; padding:8px 14px; border-radius:6px; color:var(--muted); cursor:pointer}
-  nav button[aria-pressed="true"]{background:var(--accent); color:var(--accent-ink)}
   main{padding:20px 24px; max-width:1280px; margin:0 auto}
   select,input,button.btn{font:inherit; color:var(--ink)}
   select,input{border:1px solid var(--line); background:var(--surface); border-radius:6px; padding:7px 9px; min-width:0}
@@ -47,8 +41,7 @@
   table.rejilla input.mal{color:var(--bad)}
   table.rejilla tfoot td{border:0; padding:6px 4px}
   .acciones{display:flex; gap:10px; align-items:center; margin-top:14px; flex-wrap:wrap}
-  button.btn{border:1px solid var(--line); background:var(--surface); padding:8px 14px; border-radius:6px; cursor:pointer}
-  button.primario{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600}
+
   button.btn:disabled{opacity:.5; cursor:not-allowed}
   .x{border:0; background:none; color:var(--muted); cursor:pointer; font-size:16px}
   #msg{min-height:22px; font-size:14px}
@@ -77,9 +70,6 @@
   details.nuevo .cab2{margin-top:12px}
   [hidden]{display:none!important}
 
-  header .der{margin-left:auto; display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-  #contexto{color:var(--muted); font-weight:600}
-  #usuarioNombre{color:var(--muted)}
   .centrado{max-width:420px; margin:8vh auto 0}
   .campo{display:flex; flex-direction:column; gap:4px; margin-bottom:12px; color:var(--muted); font-size:13px}
   .campo input,.campo select{color:var(--ink)}
@@ -112,6 +102,7 @@
   table.balance tr.detalle td{color:var(--muted); font-size:13px}
   @media print{
     header, nav, .solo-pantalla, #avisoEjercicio, #avisoBorrador{display:none !important}
+    body.con-lateral{padding-left:0}
     body, .panel{background:#fff; color:#000; border:0}
     main{padding:0; max-width:none}
     table.balance tr.detalle{display:none}
@@ -130,3 +121,55 @@
   table.presupuesto tfoot td{font-weight:650}
   .desf{color:var(--bad)} .fav{color:var(--good)}
   .plan-n1 td{font-weight:700} .plan-n2 td{font-weight:600} .plan-n3 td,.plan-n4 td{font-weight:600; color:var(--muted)}
+
+  /* ---------------------------------------------------------------- botones */
+  button.btn{border:1px solid var(--line); background:var(--surface); padding:8px 14px; border-radius:8px; cursor:pointer;
+    font-weight:500; transition:background-color .15s, border-color .15s, box-shadow .15s}
+  button.btn:hover:not(:disabled){border-color:var(--accent); background:color-mix(in srgb, var(--accent) 7%, var(--surface))}
+  button.btn:active:not(:disabled){box-shadow:inset 0 1px 2px rgba(0,0,0,.15)}
+  button.primario{background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:600}
+  button.primario:hover:not(:disabled){background:color-mix(in srgb, var(--accent) 85%, #000); border-color:color-mix(in srgb, var(--accent) 85%, #000)}
+
+  /* ---------------------------------------------------------------- barra lateral (cabecera y menú) */
+  :root{ --lat-bg:#0f3a45; --lat-ink:#e4eef1; --lat-muted:#9bb6be; --lat-hover:rgba(255,255,255,.08); --lat-activo:rgba(255,255,255,.16); --lat-ancho:248px }
+  @media (prefers-color-scheme: dark){ :root{ --lat-bg:#0d1419; --lat-ink:#dde6eb; --lat-muted:#8597a3; } }
+  body.con-lateral{padding-left:var(--lat-ancho)}
+  header.lateral{position:fixed; inset:0 auto 0 0; width:var(--lat-ancho); display:flex; flex-direction:column; gap:14px;
+    padding:16px 12px 12px; background:var(--lat-bg); color:var(--lat-ink); overflow-y:auto; z-index:10}
+  header.lateral .marca{display:flex; align-items:center; gap:10px; padding:0 6px}
+  header.lateral .logo{display:grid; place-items:center; width:34px; height:34px; border-radius:9px; background:var(--accent);
+    color:var(--accent-ink); font-weight:700; font-size:14px; letter-spacing:.5px}
+  header.lateral h1{font-size:17px; margin:0; font-weight:650; letter-spacing:.2px}
+  header.lateral .menu-movil{display:none}
+  .contexto-lat{display:flex; flex-direction:column; gap:8px; padding:10px; border-radius:10px; background:rgba(255,255,255,.06)}
+  .contexto-lat:not(:has(#contexto:not(:empty))){display:none}
+  #contexto{font-weight:600; line-height:1.3}
+  header.lateral label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--lat-muted)}
+  header.lateral select{width:100%; background:rgba(255,255,255,.1); border-color:rgba(255,255,255,.18); color:var(--lat-ink)}
+  header.lateral select option{color:var(--ink); background:var(--surface)}
+  header.lateral nav{display:flex; flex-direction:column; gap:10px}
+  .grupo-nav{display:flex; flex-direction:column; gap:2px}
+  .grupo-nav p{margin:0 0 4px; padding:0 10px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.08em; color:var(--lat-muted)}
+  header.lateral nav button{display:flex; align-items:center; gap:10px; width:100%; border:0; background:none; font:inherit; font-size:14px;
+    color:var(--lat-ink); text-align:left; padding:6px 10px; border-radius:8px; cursor:pointer; position:relative}
+  header.lateral nav button svg{width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round;
+    stroke-linejoin:round; opacity:.85}
+  header.lateral nav button:hover{background:var(--lat-hover)}
+  header.lateral nav button[aria-pressed="true"]{background:var(--lat-activo); font-weight:600}
+  header.lateral nav button[aria-pressed="true"]::before{content:""; position:absolute; left:-12px; top:6px; bottom:6px; width:4px;
+    border-radius:0 3px 3px 0; background:var(--accent)}
+  header.lateral .der{margin-top:auto; display:grid; grid-template-columns:1fr auto; gap:8px; padding:12px 6px 0; border-top:1px solid rgba(255,255,255,.12)}
+  #usuarioNombre{grid-column:1 / -1; font-size:13px; color:var(--lat-muted)}
+  header.lateral .der .btn{background:transparent; color:var(--lat-ink); border-color:rgba(255,255,255,.22); padding:7px 10px; font-size:13px}
+  header.lateral .der .btn[hidden] + .btn{grid-column:1 / -1}
+  header.lateral .der .btn:hover{background:var(--lat-hover); border-color:rgba(255,255,255,.4)}
+
+  /* Pantallas estrechas: barra arriba; el menú se despliega con «Menú» */
+  @media (max-width:900px){
+    body.con-lateral{padding-left:0}
+    header.lateral{position:sticky; inset:auto; top:0; width:auto; max-height:100vh; padding:10px 12px; gap:12px}
+    header.lateral .menu-movil{display:block; margin-left:auto; border:1px solid rgba(255,255,255,.3); background:none; color:var(--lat-ink);
+      font:inherit; padding:6px 12px; border-radius:8px; cursor:pointer}
+    header.lateral:not(.abierto) .contexto-lat, header.lateral:not(.abierto) nav, header.lateral:not(.abierto) .der{display:none}
+    header.lateral .der{margin-top:0}
+  }
