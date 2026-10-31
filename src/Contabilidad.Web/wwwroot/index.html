@@ -32,7 +32,11 @@
       <button data-tab="nominas" data-req="CONTABILIDAD:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-4 4-6 8-6s7 2 8 6"/></svg>Nóminas</button>
     </div>
     <div class="grupo-nav"><p>Impuestos</p>
-      <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>Modelos fiscales</button>
+      <button data-tab="fiscal" data-req="FISCAL:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg>Declaraciones</button>
+      <div id="navModelos" class="sub-nav"></div>
+      <button data-tab="fiscal-libros" data-req="FISCAL:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M4 17a2 2 0 0 1 2-2h13M9 7h6"/></svg>Libros registro</button>
+      <button data-tab="fiscal-sii" data-req="FISCAL:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h12M12 6l6 6-6 6"/><path d="M20 4v16"/></svg>SII</button>
+      <button data-tab="fiscal-config" data-req="FISCAL:LECTURA" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>Configuración fiscal</button>
     </div>
     <div class="grupo-nav"><p>Informes</p>
       <button data-tab="balances" data-req="BALANCES" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 7h14M5 7l-3 6a3 3 0 0 0 6 0zM19 7l-3 6a3 3 0 0 0 6 0z"/></svg>Balances</button>
@@ -656,8 +660,15 @@
 
   <section id="tab-fiscal" hidden>
     <div class="stack">
-      <div class="panel">
-        <h2>Calcular un modelo</h2>
+      <div class="panel" data-sub="declaraciones">
+        <h2>Declaraciones</h2>
+        <div class="fila-acciones"><label>Año <input id="fdAnio" type="number" min="2000" max="2100" style="width:7em"></label></div>
+        <p class="ayuda">Cada modelo de la empresa con sus periodos. Pulsa un periodo para abrir el modelo: calcularlo, cambiar casillas a mano,
+          presentarlo o corregirlo en el periodo siguiente.</p>
+        <div class="fd-tabla"><table class="fd"><thead id="fdHead"></thead><tbody id="fdBody"></tbody></table></div>
+      </div>
+      <div class="panel" data-sub="modelo">
+        <h2 id="mfCab">Modelo</h2>
         <div class="cab2">
           <label>Modelo <select id="mfModelo"></select></label>
           <label>Año <input id="mfAnio" type="number" min="2000" max="2100"></label>
@@ -668,18 +679,20 @@
             <select id="mfDevolucion"><option value="0">Compensar en periodos siguientes</option><option value="1">Solicitar devolución (último periodo)</option></select></label>
         </div>
         <div class="fila-acciones">
-          <button class="btn primario" id="mfCalcular" type="button">Calcular</button>
-          <button class="btn" id="mfGuardar" data-req="FISCAL:ESCRITURA" type="button">Guardar la declaración</button>
+          <button class="btn" id="mfCalcular" type="button" title="Calcula sin guardar">Vista previa</button>
+          <button class="btn" id="mfGuardar" data-req="FISCAL:ESCRITURA" type="button">Calcular y guardar</button>
         </div>
         <p id="mfMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel" id="mfResultado" hidden>
+      <div class="panel" id="mfResultado" hidden data-sub="modelo">
         <h2 id="mfTitulo"></h2>
         <p id="mfSub" class="ayuda"></p>
         <div class="totales" id="mfTotales"></div>
         <ul id="mfAvisos" class="avisos"></ul>
-        <table><thead><tr><th>Casilla</th><th>Concepto</th><th class="num">Importe</th></tr></thead><tbody id="mfCasillas"></tbody></table>
+        <div class="fila-acciones" id="mfAcciones"></div>
+        <p id="mfAccMsg" class="ayuda" role="status"></p>
+        <div id="mfForm"></div>
         <div id="mfDetalle" hidden>
           <h3 id="mfDetalleTitulo">Terceros declarados</h3>
           <div style="overflow-x:auto"><table><thead id="mfDetalleHead"></thead><tbody id="mfDetalleBody"></tbody></table></div>
@@ -709,7 +722,23 @@
         </details>
       </div>
 
-      <div class="panel" id="mfPresentarPanel" hidden>
+      <div class="panel" id="mfCorPanel" data-sub="modelo" hidden>
+        <h2 id="mfCorTitulo">Corregir en el periodo siguiente</h2>
+        <p class="ayuda">Diferencias entre lo presentado y lo que sale ahora (facturas que llegaron tarde, cambios en la contabilidad…).
+          Se llevan al periodo siguiente: en el 303 y el 420, lo devengado a «modificación de bases y cuotas» y lo deducible a «rectificación
+          de deducciones»; en el resto, a la misma casilla.</p>
+        <ul id="mfCorAvisos" class="avisos"></ul>
+        <table><thead><tr><th>Casilla</th><th>Concepto</th><th class="num">Presentado</th><th class="num">Ahora</th><th class="num">Diferencia</th><th>Va a</th></tr></thead>
+          <tbody id="mfCorBody"></tbody></table>
+        <div class="fila-acciones">
+          <button class="btn primario" id="mfCorGuardar" type="button">Llevar al periodo siguiente</button>
+          <button class="btn" id="mfCorQuitar" type="button" hidden>Quitar la corrección</button>
+          <button class="btn" id="mfCorCerrar" type="button">Cerrar</button>
+        </div>
+        <p id="mfCorMsg" class="ayuda" role="status"></p>
+      </div>
+
+      <div class="panel" id="mfPresentarPanel" hidden data-sub="modelo">
         <h2 id="mfPresentarTitulo">Marcar como presentada</h2>
         <p class="ayuda">La aplicación no envía nada a la Agencia Tributaria: registra que ya presentaste la declaración y fija sus cifras.</p>
         <div class="cab2">
@@ -723,7 +752,7 @@
         <p id="mfPresentarMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel" id="mfLiqPanel" hidden>
+      <div class="panel" id="mfLiqPanel" hidden data-sub="modelo">
         <h2 id="mfLiqTitulo">Asiento de liquidación</h2>
         <p class="ayuda">Salda las cuentas de IVA/IGIC soportado (472) y repercutido (477) a la fecha de fin del periodo, canal a canal.
           La diferencia va a Hacienda acreedora (4750) si sale a ingresar, o deudora (4700) si sale a compensar o devolver.</p>
@@ -743,7 +772,7 @@
         <p id="mfLiqMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel">
+      <div class="panel" data-sub="libros">
         <h2>Libros registro</h2>
         <p class="ayuda">Facturas contabilizadas por fecha contable, una línea por tipo impositivo, con los mismos criterios que la autoliquidación.
           Las recibidas llevan su número de registro (orden de recepción), que no cambia.</p>
@@ -767,7 +796,7 @@
         </div>
       </div>
 
-      <div class="panel" id="siiPanel">
+      <div class="panel" id="siiPanel" data-sub="sii">
         <h2>SII · Suministro Inmediato de Información</h2>
         <p class="ayuda">Envío de los libros de facturas expedidas y recibidas a la AEAT (versión 1.1). Sin certificado configurado en el servidor
           se descarga el mensaje XML para enviarlo con otra herramienta, y luego se puede registrar aquí la respuesta para marcar las facturas.
@@ -790,7 +819,7 @@
         </details>
       </div>
 
-      <div class="panel">
+      <div class="panel" data-sub="config">
         <h2>Régimen de IVA, IRPF y criterio de caja</h2>
         <p class="ayuda">En el criterio de caja el impuesto de las operaciones interiores se devenga al cobrar y se deduce al pagar (como tarde, el 31 de
           diciembre del año siguiente). Las facturas lo dejan en 4779 / 4729 y aquí se traspasa a 477 / 472 lo de cada periodo antes de liquidar.
@@ -824,7 +853,7 @@
         <p id="ccMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel" id="isPanel" hidden>
+      <div class="panel" id="isPanel" hidden data-sub="config">
         <h2 id="isTitulo">Impuesto sobre Sociedades</h2>
         <p class="ayuda">El resultado contable sale de los asientos del ejercicio (sin las cuentas 630, 633 y 638 del propio impuesto), las retenciones de la 473
           y los pagos fraccionados de los 202 presentados. Aquí se indican los ajustes extracontables (positivo aumenta la base, negativo la disminuye) y lo que no
@@ -852,7 +881,7 @@
         <p id="isMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel" id="moPanel">
+      <div class="panel" id="moPanel" data-sub="config">
         <h2>Módulos (estimación objetiva y régimen simplificado)</h2>
         <p class="ayuda">Importes de la orden de módulos del año para cada actividad: rendimiento neto previo del IRPF (modelo 131: 4 % con más de un
           asalariado, 3 % con uno y 2 % sin asalariados; las agrícolas pagan el 2 % del volumen de ingresos del trimestre) y, en el simplificado del IVA,
@@ -869,7 +898,7 @@
         <p id="moMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel">
+      <div class="panel" data-sub="config">
         <h2>Inmuebles arrendados (modelo 180)</h2>
         <p class="ayuda">Cada arrendador con sus inmuebles: el 180 lleva la referencia catastral y la dirección de cada uno. En las facturas del
           arrendador se indica el inmueble (si tiene uno solo, se toma ese).</p>
@@ -892,7 +921,7 @@
           <button class="btn" id="imNuevo" type="button">Nuevo</button><span id="imMsg" role="status"></span></div>
       </div>
 
-      <div class="panel">
+      <div class="panel" data-sub="config">
         <h2>Prorrata</h2>
         <p class="ayuda">Porcentaje de deducción por año natural. Durante el año se aplica el provisional; en el último periodo se regulariza con el
           definitivo, que se calcula con las operaciones del año (redondeado a la unidad superior).</p>
@@ -923,7 +952,7 @@
         <p id="prRegMsg" class="ayuda" role="status"></p>
       </div>
 
-      <div class="panel">
+      <div class="panel" data-sub="declaraciones">
         <h2>Declaraciones guardadas</h2>
         <table><thead><tr><th>Modelo</th><th>Año</th><th>Periodo</th><th>Estado</th><th class="num">Resultado</th><th>Presentada</th><th>Asiento</th><th></th></tr></thead>
         <tbody id="mfLista"></tbody></table>

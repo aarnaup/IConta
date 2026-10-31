@@ -214,7 +214,8 @@ async function entrarEmpresa(empresa, ejercicio, tab) {
   $('#asEditando').hidden = true; $('#diario').disabled = false; $('#guardar').textContent = 'Contabilizar asiento';
   fst.lineas = [];
   PR.actual = null; $('#ppPanel').hidden = true; ANA.informe = null; $('#anBody').innerHTML = ''; $('#anDesde').value = ''; $('#anCanal').innerHTML = '';
-  MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null;
+  MF.modelos = []; MF.actual = null; MF.presentando = null; MF.liq = null; MF.cargado = false;
+  cargaMenuModelos().catch(() => { $('#navModelos').innerHTML = ''; });
   $('#mfResultado').hidden = true; $('#mfPresentarPanel').hidden = true; $('#mfLiqPanel').hidden = true;
   TES.liq = null; $('#liqPanel').hidden = true;
   IN.ficha = null; $('#inFicha').hidden = true; $('#inNuevo').hidden = true;
@@ -236,7 +237,10 @@ function aplicaEstadoEjercicio() {
 
 function abreTab(nombre) {
   $$('#navApp button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === nombre)));
-  ['asiento', 'factura', 'diario', 'rejilla', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== nombre);
+  // Impuestos: una sola sección con subvistas (declaraciones, un modelo, libros, SII, configuración)
+  const seccion = nombre.startsWith('fiscal') ? 'fiscal' : nombre;
+  ['asiento', 'factura', 'diario', 'rejilla', 'mayor', 'tesoreria', 'nominas', 'fiscal', 'pendientes', 'inmovilizado', 'balances', 'analitica', 'presupuestos', 'cierre'].forEach(t => $('#tab-' + t).hidden = t !== seccion);
+  if (seccion === 'fiscal') return abreFiscal(nombre).catch(e => alert(e.message));
   const carga = { factura: cargaFacturas, diario: cargaDiario, rejilla: cargaRejilla, tesoreria: cargaTesoreria, nominas: cargaNominas, fiscal: cargaFiscal, pendientes: cargaPendientes,
                   inmovilizado: cargaInmovilizado, balances: cargaBalances, analitica: cargaAnalitica, presupuestos: cargaPresupuestos,
                   cierre: cargaCierre }[nombre];
@@ -1408,10 +1412,28 @@ const estadoDecl = { CALCULADA: 'calculada', PRESENTADA: 'presentada', SIN_GUARD
 const periodoTxt = p => ({ '0A': 'Anual', '1T': '1.er trimestre', '2T': '2.º trimestre', '3T': '3.er trimestre', '4T': '4.º trimestre',
   '1P': '1.er pago (abril)', '2P': '2.º pago (octubre)', '3P': '3.er pago (diciembre)' }[p] || 'Mes ' + p);
 
+// Una entrada del menú por cada modelo de la empresa, debajo de «Declaraciones»
+async function cargaMenuModelos() {
+  $('#navModelos').innerHTML = '';
+  if (!permitido('FISCAL:LECTURA')) return;
+  MF.modelos = await api(urlE('/fiscal/modelos'));
+  $('#navModelos').innerHTML = MF.modelos.map(m => `<button data-tab="fiscal-m-${esc(m.codigo)}" aria-pressed="false" title="${esc(m.codigo)} · ${esc(m.nombre)}">${esc(m.codigo)} · ${esc(m.nombre.split(' - ')[0])}</button>`).join('');
+}
+
+// Subvistas de Impuestos: «fiscal» (cuadro de declaraciones), «fiscal-m-303» (un modelo), «fiscal-libros», «fiscal-sii», «fiscal-config»
+async function abreFiscal(nombre) {
+  const sub = nombre === 'fiscal' ? 'declaraciones' : nombre.startsWith('fiscal-m-') ? 'modelo' : nombre.slice(7);
+  $('#tab-fiscal').dataset.sub = sub;
+  if (!MF.cargado) { await cargaFiscal(); MF.cargado = true; }
+  if (sub === 'declaraciones') await pintaCuadro();
+  if (sub === 'modelo') await abreModelo(nombre.slice(9));
+}
+
 async function cargaFiscal() {
-  if (!$('#mfAnio').value) $('#mfAnio').value = new Date().getFullYear();
-  if (!MF.modelos.length) {
-    MF.modelos = await api(urlE('/fiscal/modelos'));
+  if (!$('#mfAnio').value) $('#mfAnio').value = S.ejercicio.fechaFin.slice(0, 4) <= String(new Date().getFullYear()) ? S.ejercicio.fechaFin.slice(0, 4) : new Date().getFullYear();
+  if (!$('#fdAnio').value) $('#fdAnio').value = $('#mfAnio').value;
+  if (!$('#mfModelo').options.length) {
+    if (!MF.modelos.length) MF.modelos = await api(urlE('/fiscal/modelos'));
     $('#mfModelo').innerHTML = MF.modelos.length
       ? MF.modelos.map(m => `<option value="${esc(m.codigo)}">${esc(m.codigo)} · ${esc(m.nombre)}</option>`).join('')
       : '<option value="">Ningún modelo aplicable a esta empresa</option>';
@@ -1601,7 +1623,7 @@ $('#ccGuardar').onclick = async () => {
       SIMPLIFICADO: 'Empresa en el régimen simplificado: indica los módulos del año para calcular el 303 y el 131.',
       RECARGO_EQUIVALENCIA: 'Empresa en recargo de equivalencia: las compras llevan recargo y su IVA va al coste; el IVA de las ventas va a ingresos. No presenta 303.',
     }[c.regimenIva] || 'Empresa en régimen general. Las facturas ya contabilizadas en criterio de caja lo siguen aplicando.', 'ayuda ok-texto');
-    MF.modelos = []; await cargaFiscal();
+    MF.modelos = []; $('#mfModelo').innerHTML = ''; MF.cargado = false; await cargaMenuModelos(); await cargaFiscal(); MF.cargado = true;
   } catch (e) { msg($('#ccMsg'), e.message, 'ayuda err-texto'); }
 };
 $('#ccTraspasar').onclick = async () => {
@@ -1755,7 +1777,8 @@ function pintaPeriodos() {
   $('#mfPeriodo').innerHTML = m ? m.periodos.map(p => `<option value="${esc(p)}">${esc(periodoTxt(p))}</option>`).join('') : '';
   $('#mfDevolucionLabel').hidden = !m || !['IVA', 'IGIC'].includes(m.impuesto) || m.periodos[0] === '0A';
 }
-$('#mfModelo').onchange = pintaPeriodos;
+// Cambiar de modelo en su vista es como elegirlo en el menú
+$('#mfModelo').onchange = () => abreTab('fiscal-m-' + $('#mfModelo').value);
 
 const peticionModelo = () => ({ modelo: $('#mfModelo').value, anio: +$('#mfAnio').value, periodo: $('#mfPeriodo').value, solicitaDevolucion: $('#mfDevolucion').value === '1',
   tipoDeclaracion: $('#mfTipo').value });
@@ -1768,8 +1791,7 @@ function muestraDeclaracion(v) {
   $('#mfTotales').innerHTML = caja('Resultado', v.resultado, v.resultado < 0 ? 'estado-mal' : '')
     + (v.aIngresar ? caja('A ingresar', v.aIngresar) : '') + (v.aDevolver ? caja('A devolver', v.aDevolver) : '') + (v.aCompensar ? caja('A compensar', v.aCompensar) : '');
   $('#mfAvisos').innerHTML = v.avisos.map(a => `<li>${esc(a)}</li>`).join('');
-  $('#mfCasillas').innerHTML = v.casillas.map(c => `<tr><td>${esc(c.clave)}</td><td>${esc(c.descripcion)}</td><td class="num">${fmt(c.importe)}</td></tr>`).join('')
-    || '<tr><td colspan="3" class="vacio">No hay operaciones en este periodo.</td></tr>';
+  pintaFormulario(v);
   const det = v.detalle, th = cols => `<tr>${cols.map(c => c.startsWith('#') ? `<th class="num">${esc(c.slice(1))}</th>` : `<th>${esc(c)}</th>`).join('')}</tr>`;
   let titulo = 'Terceros declarados', cab = '', cuerpo = '', rect = null;
   if (['111', '115'].includes(v.modelo) && Array.isArray(det)) {
@@ -1874,12 +1896,13 @@ async function cargaDeclaraciones() {
 }
 // 303/420: liquidación del IVA/IGIC; 202: pago fraccionado; 200: impuesto corriente y diferido del ejercicio
 const liquidable = d => d.estado === 'PRESENTADA' && (['303', '420', '202'].includes(d.modelo) && d.periodo !== '0A' || d.modelo === '200');
-$('#mfAnio').onchange = () => cargaDeclaraciones().catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto'));
+$('#mfAnio').onchange = () => Promise.all([cargaDeclaraciones(), $('#tab-fiscal').dataset.sub === 'modelo' ? cargaPeriodoModelo() : null])
+  .catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto'));
 
 $('#mfLista').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
   try {
-    if (b.dataset.ver) { muestraDeclaracion(await api(urlE('/fiscal/declaraciones/' + b.dataset.ver))); $('#mfResultado').scrollIntoView({ behavior: 'smooth' }); }
+    if (b.dataset.ver) { const v = await api(urlE('/fiscal/declaraciones/' + b.dataset.ver)); MF.abrir = v; abreTab('fiscal-m-' + v.modelo); }
     if (b.dataset.liq) await previsualizaLiquidacion(b.dataset.liq, null);
     if (b.dataset.anliq && confirm('¿Anular el asiento de liquidación de esta declaración?')) {
       await api(urlX(`/fiscal/declaraciones/${b.dataset.anliq}/asiento`), { method: 'DELETE' });
@@ -1895,6 +1918,172 @@ $('#mfLista').addEventListener('click', async e => {
     }
   } catch (err) { msg($('#mfMsg'), err.message, 'ayuda err-texto'); }
 });
+
+// ------------------------------------------------------------ cuadro de declaraciones y vista de cada modelo
+// Columnas del cuadro según los periodos del modelo: trimestres, pagos del 202 o anual (los meses solo si hay alguno guardado)
+const columnasModelo = m => m.periodos.includes('1T') ? ['1T', '2T', '3T', '4T'] : m.periodos.includes('1P') ? ['1P', '2P', '3P'] : ['0A'];
+async function pintaCuadro() {
+  const anio = +$('#fdAnio').value || new Date().getFullYear();
+  const decls = await api(urlE('/fiscal/declaraciones?anio=' + anio));
+  const ultima = (m, p) => decls.filter(d => d.modelo === m && d.periodo === p).sort((x, y) => y.numeroPresentacion - x.numeroPresentacion)[0];
+  const meses = new Set(decls.filter(d => /^\d\d$/.test(d.periodo)).map(d => d.modelo));
+  const cols = ['1T', '2T', '3T', '4T', 'Pagos / anual'];
+  $('#fdHead').innerHTML = `<tr><th>Modelo</th>${cols.map(c => `<th>${c}</th>`).join('')}</tr>`;
+  const celda = (m, p) => {
+    const d = ultima(m.codigo, p), txt = p.length === 2 && p.endsWith('T') ? p : periodoTxt(p).replace(/ \(.*\)/, '');
+    if (!d) return `<button class="fd-c" data-m="${esc(m.codigo)}" data-p="${p}">${esc(txt)}<strong>—</strong></button>`;
+    const cls = d.estado === 'PRESENTADA' ? 'pres' : 'calc';
+    return `<button class="fd-c ${cls}" data-m="${esc(m.codigo)}" data-p="${p}" title="${esc(estadoDecl[d.estado] || d.estado)}">${esc(txt)}
+      <strong>${d.resultado == null ? '' : fmt(d.resultado)}</strong>${esc(estadoDecl[d.estado] || d.estado)}</button>`;
+  };
+  $('#fdBody').innerHTML = MF.modelos.map(m => {
+    const per = meses.has(m.codigo) ? m.periodos.filter(p => /^\d\d$/.test(p)) : columnasModelo(m);
+    const trimestral = per.length === 4 && per[0] === '1T';
+    const tds = trimestral ? per.map(p => `<td>${celda(m, p)}</td>`).join('') + '<td></td>'
+      : per.length > 4 ? `<td colspan="5" style="text-align:left">${per.map(p => celda(m, p)).join(' ')}</td>`
+      : `<td colspan="4"></td><td>${per.map(p => celda(m, p)).join(' ')}</td>`;
+    return `<tr><td><strong>${esc(m.codigo)}</strong> <small>${esc(m.nombre)}</small></td>${tds}</tr>`;
+  }).join('') || '<tr><td colspan="6" class="vacio">Ningún modelo aplicable a esta empresa.</td></tr>';
+}
+$('#fdAnio').onchange = () => { $('#mfAnio').value = $('#fdAnio').value; pintaCuadro().catch(e => alert(e.message)); };
+$('#fdBody').addEventListener('click', e => {
+  const b = e.target.closest('button[data-m]'); if (!b) return;
+  MF.abrir = { modelo: b.dataset.m, anio: +$('#fdAnio').value, periodo: b.dataset.p };
+  abreTab('fiscal-m-' + b.dataset.m);
+});
+
+// Abre un modelo: el periodo pedido (desde el cuadro o la lista) o el último guardado, y su declaración si existe
+async function abreModelo(codigo) {
+  const m = MF.modelos.find(x => x.codigo === codigo);
+  if (!m) throw new Error(`El modelo ${codigo} no está disponible para esta empresa.`);
+  $('#mfModelo').value = codigo; pintaPeriodos();
+  $('#mfCab').textContent = `Modelo ${m.codigo} · ${m.nombre}`;
+  $('#mfCorPanel').hidden = true; $('#mfPresentarPanel').hidden = true;
+  const ab = MF.abrir; MF.abrir = null;
+  if (ab && ab.id) { $('#mfAnio').value = ab.anio; $('#mfPeriodo').value = ab.periodo; muestraDeclaracion(ab); return; }
+  if (ab) { $('#mfAnio').value = ab.anio; $('#mfPeriodo').value = ab.periodo; }
+  else {
+    // Sin periodo pedido: el último periodo con declaración del año o el del trimestre en curso
+    const decls = (await api(urlE('/fiscal/declaraciones?anio=' + $('#mfAnio').value))).filter(d => d.modelo === codigo);
+    const p = decls[0]?.periodo || (m.periodos.includes('1T') ? `${Math.ceil((new Date().getMonth() + 1) / 3)}T` : m.periodos[0]);
+    if (m.periodos.includes(p)) $('#mfPeriodo').value = p;
+  }
+  await cargaPeriodoModelo();
+}
+// Declaración guardada del modelo, año y periodo elegidos (la última presentación); si no hay, se invita a calcularla
+async function cargaPeriodoModelo() {
+  const codigo = $('#mfModelo').value, anio = +$('#mfAnio').value, periodo = $('#mfPeriodo').value;
+  const d = (await api(urlE('/fiscal/declaraciones?anio=' + anio))).filter(x => x.modelo === codigo && x.periodo === periodo)
+    .sort((x, y) => y.numeroPresentacion - x.numeroPresentacion)[0];
+  msg($('#mfMsg'), '', 'ayuda'); $('#mfCorPanel').hidden = true;
+  if (d) { muestraDeclaracion(await api(urlE('/fiscal/declaraciones/' + d.id))); return; }
+  MF.actual = null; $('#mfResultado').hidden = true;
+  msg($('#mfMsg'), `El ${periodoTxt(periodo).toLowerCase()} de ${anio} no está calculado: pulsa «Calcular y guardar» (o «Vista previa» para verlo sin guardar).`, 'ayuda');
+}
+$('#mfPeriodo').addEventListener('change', () => cargaPeriodoModelo().catch(e => msg($('#mfMsg'), e.message, 'ayuda err-texto')));
+
+// Formulario con el aspecto del impreso: apartados y casillas; en una declaración guardada sin presentar, editables
+function pintaFormulario(v) {
+  const f = v.formulario, valores = Object.fromEntries(v.casillas.map(c => [c.clave, c])), manuales = new Set(v.manuales || []);
+  const editable = !!v.id && v.estado === 'CALCULADA' && permitido('FISCAL:ESCRITURA') && S.ejercicio.estado === 'ABIERTO';
+  const totales = new Set(f?.totales || []);
+  const celda = k => {
+    if (!k) return '<td class="mf-c"></td>';
+    const c = valores[k], imp = c ? c.importe : 0, man = manuales.has(k), calc = v.calculadas?.[k] ?? 0;
+    const val = editable
+      ? `<input data-cas="${esc(k)}" inputmode="decimal" value="${esc(rjImporte(imp) || '0,00')}" aria-label="Casilla ${esc(k)}">`
+      : `<span class="mf-v">${fmt(imp)}</span>`;
+    const rec = man && editable ? `<button class="mf-rec" type="button" data-rec="${esc(k)}" title="Volver a lo calculado: ${fmt(calc)}" aria-label="Volver a lo calculado">↺</button>` : '';
+    return `<td class="mf-c ${man ? 'manual' : ''}" ${man ? `title="Escrita a mano (calculado: ${fmt(calc)})"` : ''}><span class="mf-n">${esc(k)}</span>${val}${rec}</td>`;
+  };
+  if (!f || !f.apartados.length) { $('#mfForm').innerHTML = '<p class="vacio">No hay casillas en este periodo.</p>'; return; }
+  $('#mfForm').innerHTML = f.apartados.map(a => `<div class="mf-apartado"><h3>${esc(a.titulo)}</h3>
+    <table class="mf"><thead><tr><th></th>${a.columnas.map(c => `<th class="num">${esc(c)}</th>`).join('')}</tr></thead><tbody>
+    ${a.filas.map(r => `<tr class="${r.total ? 'total' : ''}"><td>${esc(r.texto || valores[r.casillas[0]]?.descripcion || '')}</td>
+      ${a.columnas.map((_, i) => celda(r.casillas[i])).join('')}</tr>`).join('')}</tbody></table></div>`).join('');
+  // Acciones de la declaración
+  const directo = permitido('FISCAL_DIRECTO'), escribe = permitido('FISCAL:ESCRITURA');
+  $('#mfAcciones').innerHTML = [
+    v.correccionesRecibidas?.length ? `<span class="ayuda">Incluye la corrección de ${esc(v.correccionesRecibidas.join(', '))}.</span>` : '',
+    editable && manuales.size ? `<button class="btn" type="button" id="mfRecTodo">Recuperar todo lo calculado (${manuales.size} a mano)</button>` : '',
+    v.id && v.estado === 'CALCULADA' && directo ? `<button class="btn primario" type="button" id="mfPresentarYa">Marcar como presentada</button>` : '',
+    v.estado === 'PRESENTADA' && directo && !['130', '0A'].includes(v.modelo) && v.periodo !== '0A'
+      ? `<button class="btn" type="button" id="mfCorregir">${v.correccion ? `Corrección llevada al ${esc(periodoTxt(v.correccion.periodo).toLowerCase())}` : 'Corregir en el periodo siguiente'}</button>` : '',
+    v.estado === 'PRESENTADA' && escribe ? '<span class="ayuda">Presentada: para cambiarla, haz una complementaria (Tipo) o corrígela en el periodo siguiente.</span>' : '',
+    !v.id ? '<span class="ayuda">Vista previa sin guardar: «Calcular y guardar» para poder cambiar casillas a mano.</span>' : '',
+  ].filter(Boolean).join(' ');
+  msg($('#mfAccMsg'), '', 'ayuda');
+}
+
+async function guardaCasillas(cuerpo) {
+  const v = MF.actual; if (!v?.id) return;
+  try {
+    muestraDeclaracion(await put(urlE(`/fiscal/declaraciones/${v.id}/casillas`), cuerpo));
+    msg($('#mfAccMsg'), 'Guardado. Los totales se han recalculado.', 'ayuda ok-texto');
+  } catch (e) { msg($('#mfAccMsg'), e.message, 'ayuda err-texto'); }
+}
+$('#mfForm').addEventListener('change', e => {
+  const k = e.target.dataset.cas; if (!k) return;
+  guardaCasillas({ casillas: { [k]: num(e.target.value) } });
+});
+$('#mfForm').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.dataset.cas) return;
+  e.preventDefault();
+  const ins = $$('#mfForm input[data-cas]'), i = ins.indexOf(e.target);
+  e.target.blur(); ins[i + 1]?.focus();
+});
+$('#mfForm').addEventListener('click', e => {
+  const k = e.target.closest('[data-rec]')?.dataset.rec; if (k) guardaCasillas({ casillas: { [k]: null } });
+});
+$('#mfAcciones').addEventListener('click', async e => {
+  const v = MF.actual; if (!v) return;
+  if (e.target.id === 'mfRecTodo' && confirm('¿Volver a lo calculado en todas las casillas escritas a mano?')) guardaCasillas({ recuperarTodo: true });
+  if (e.target.id === 'mfPresentarYa') {
+    MF.presentando = v;
+    $('#mfPresentarTitulo').textContent = `Marcar como presentada: modelo ${v.modelo} ${v.anio} ${periodoTxt(v.periodo)}`;
+    $('#mfFecha').value = hoy(); $('#mfJustificante').value = ''; msg($('#mfPresentarMsg'), '', 'ayuda');
+    $('#mfPresentarPanel').hidden = false; $('#mfPresentarPanel').scrollIntoView({ behavior: 'smooth' });
+  }
+  if (e.target.id === 'mfCorregir') {
+    try { pintaCorreccion(await api(urlE(`/fiscal/declaraciones/${v.id}/correccion`))); }
+    catch (err) { msg($('#mfAccMsg'), err.message, 'ayuda err-texto'); }
+  }
+});
+
+// Corrección de un periodo presentado en el siguiente
+function pintaCorreccion(c) {
+  const v = MF.actual;
+  $('#mfCorTitulo').textContent = `Corregir el ${periodoTxt(v.periodo).toLowerCase()} de ${v.anio} en el ${periodoTxt(c.periodo).toLowerCase()} de ${c.anio}`
+    + (c.guardada ? ' (guardada)' : '');
+  $('#mfCorAvisos').innerHTML = c.avisos.map(a => `<li>${esc(a)}</li>`).join('');
+  $('#mfCorBody').innerHTML = c.diferencias.map(d => `<tr><td>${esc(d.casilla)}</td><td>${esc(d.texto)}</td><td class="num">${fmt(d.presentado)}</td>
+      <td class="num">${fmt(d.ahora)}</td><td class="num">${fmt(d.diferencia)}</td><td>${esc(d.destino)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="vacio">Sin diferencias.</td></tr>';
+  const directo = permitido('FISCAL_DIRECTO');
+  $('#mfCorGuardar').hidden = !directo || c.guardada || !c.diferencias.length;
+  $('#mfCorQuitar').hidden = !directo || !c.guardada;
+  msg($('#mfCorMsg'), '', 'ayuda');
+  $('#mfCorPanel').hidden = false; $('#mfCorPanel').scrollIntoView({ behavior: 'smooth' });
+}
+$('#mfCorCerrar').onclick = () => { $('#mfCorPanel').hidden = true; };
+$('#mfCorGuardar').onclick = async () => {
+  const v = MF.actual;
+  try {
+    const c = await post(urlE(`/fiscal/declaraciones/${v.id}/correccion`));
+    pintaCorreccion({ ...c, guardada: true });
+    msg($('#mfCorMsg'), `Hecho: al calcular el ${periodoTxt(c.periodo).toLowerCase()} de ${c.anio} se suman estas diferencias.`, 'ayuda ok-texto');
+    MF.actual = await api(urlE('/fiscal/declaraciones/' + v.id)); pintaFormulario(MF.actual);
+  } catch (e) { msg($('#mfCorMsg'), e.message, 'ayuda err-texto'); }
+};
+$('#mfCorQuitar').onclick = async () => {
+  const v = MF.actual; if (!confirm('¿Quitar la corrección del periodo siguiente?')) return;
+  try {
+    await api(urlE(`/fiscal/declaraciones/${v.id}/correccion`), { method: 'DELETE' });
+    $('#mfCorPanel').hidden = true;
+    MF.actual = await api(urlE('/fiscal/declaraciones/' + v.id)); pintaFormulario(MF.actual);
+    msg($('#mfAccMsg'), 'Corrección quitada.', 'ayuda ok-texto');
+  } catch (e) { msg($('#mfCorMsg'), e.message, 'ayuda err-texto'); }
+};
 
 $('#mfPresentarCancelar').onclick = () => { MF.presentando = null; $('#mfPresentarPanel').hidden = true; };
 $('#mfPresentar').onclick = async () => {

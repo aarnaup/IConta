@@ -46,7 +46,37 @@ public sealed record DeclaracionVista(
     long? Id, string Modelo, string Nombre, string Estado, int Anio, string Periodo, DateOnly FechaInicio, DateOnly FechaFin,
     IReadOnlyList<Casilla> Casillas, decimal Resultado, decimal AIngresar, decimal ADevolver, decimal ACompensar,
     IReadOnlyList<string> Avisos, object? Detalle, DateOnly PlazoDesde, DateOnly PlazoHasta,
-    short NumeroPresentacion = 1, string TipoDeclaracion = "ORDINARIA");
+    short NumeroPresentacion = 1, string TipoDeclaracion = "ORDINARIA")
+{
+    /// <summary>Formulario con el aspecto del impreso oficial (apartados, filas y casillas).</summary>
+    public FormularioDto? Formulario { get; init; }
+    /// <summary>Lo que salió del cálculo, para recuperarlo en las casillas escritas a mano.</summary>
+    public IReadOnlyDictionary<string, decimal>? Calculadas { get; init; }
+    /// <summary>Casillas escritas a mano.</summary>
+    public IReadOnlyList<string> Manuales { get; init; } = [];
+    /// <summary>Correcciones de periodos anteriores que entran en esta declaración.</summary>
+    public IReadOnlyList<string> CorreccionesRecibidas { get; init; } = [];
+    /// <summary>Corrección de esta declaración (presentada) llevada al periodo siguiente.</summary>
+    public CorreccionDto? Correccion { get; init; }
+}
+
+public sealed record FilaFormularioDto(string Texto, string[] Casillas, bool Total);
+public sealed record ApartadoFormularioDto(string Titulo, string[] Columnas, IReadOnlyList<FilaFormularioDto> Filas);
+/// <param name="Totales">Casillas que se calculan a partir de otras (se recalculan al escribir en las demás).</param>
+public sealed record FormularioDto(IReadOnlyList<ApartadoFormularioDto> Apartados, IReadOnlyList<string> Totales, string? CasillaResultado);
+
+/// <summary>Casillas escritas a mano (null: volver a lo calculado) o recuperar todo lo calculado.</summary>
+public sealed class CasillasManualesCmd
+{
+    public Dictionary<string, decimal?> Casillas { get; set; } = [];
+    public bool RecuperarTodo { get; set; }
+}
+
+public sealed record DiferenciaCorreccionDto(string Casilla, string Texto, decimal Presentado, decimal Ahora, decimal Diferencia, string Destino);
+
+/// <summary>Corrección de un periodo presentado en el periodo siguiente: diferencias por casilla y a qué casilla van.</summary>
+public sealed record CorreccionDto(long? Id, int Anio, string Periodo, IReadOnlyList<DiferenciaCorreccionDto> Diferencias,
+    IReadOnlyDictionary<string, decimal> Casillas, bool Guardada, IReadOnlyList<string> Avisos);
 
 /// <summary>Libro registro de facturas expedidas o recibidas de un periodo (por fecha contable, como las autoliquidaciones).</summary>
 public sealed record LibroRegistroDto(

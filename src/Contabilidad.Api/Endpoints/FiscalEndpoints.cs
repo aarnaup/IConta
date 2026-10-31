@@ -118,6 +118,38 @@ public static class FiscalEndpoints
             return Results.Ok(v);
         }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
 
+        // Casillas escritas a mano (o recuperar lo calculado) en una declaración guardada sin presentar
+        f.MapPut("/declaraciones/{id:long}/casillas", async (long empresaId, long id, CasillasManualesCmd cmd, HttpContext http,
+            IFiscalRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var v = await r.GuardarCasillasAsync(empresaId, id, cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "DECLARACION_CASILLAS", "declaracion", id,
+                new { cmd.Casillas, cmd.RecuperarTodo, v.Resultado }, ct);
+            return Results.Ok(v);
+        }).Requiere(Nivel.Escritura, Modulo.Fiscal);
+
+        // Corrección de una declaración presentada en el periodo siguiente: ver las diferencias, guardarla o quitarla
+        f.MapGet("/declaraciones/{id:long}/correccion", async (long empresaId, long id, HttpContext http, IFiscalRepositorio r, CancellationToken ct)
+            => Results.Ok(await r.CorreccionAsync(empresaId, id, false, http.User.UsuarioId(), ct)))
+            .Requiere(Nivel.Lectura, Modulo.Fiscal);
+
+        f.MapPost("/declaraciones/{id:long}/correccion", async (long empresaId, long id, HttpContext http, IFiscalRepositorio r,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            var c = await r.CorreccionAsync(empresaId, id, true, http.User.UsuarioId(), ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "DECLARACION_CORRECCION", "declaracion", id,
+                new { c.Anio, c.Periodo, c.Casillas }, ct);
+            return Results.Ok(c);
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+
+        f.MapDelete("/declaraciones/{id:long}/correccion", async (long empresaId, long id, HttpContext http, IFiscalRepositorio r,
+            IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.BorrarCorreccionAsync(empresaId, id, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), empresaId, "DECLARACION_CORRECCION_QUITADA", "declaracion", id, null, ct);
+            return Results.NoContent();
+        }).RequiereDirecto(Nivel.Escritura, Modulo.Fiscal);
+
         f.MapPost("/declaraciones/{id:long}/descartar", async (long empresaId, long id, HttpContext http,
             IFiscalRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
         {

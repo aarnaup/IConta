@@ -15,6 +15,11 @@ public interface IFiscalRepositorio
     Task<DeclaracionVista> ObtenerAsync(long empresaId, long declaracionId, CancellationToken ct);
     Task<DeclaracionVista> PresentarAsync(long empresaId, long declaracionId, PresentarDeclaracionCmd cmd, CancellationToken ct);
     Task AnularAsync(long empresaId, long declaracionId, CancellationToken ct);
+    /// <summary>Escribe casillas a mano (o vuelve a lo calculado) en una declaración guardada sin presentar y recalcula sus totales.</summary>
+    Task<DeclaracionVista> GuardarCasillasAsync(long empresaId, long declaracionId, CasillasManualesCmd cmd, CancellationToken ct);
+    /// <summary>Diferencias de una declaración presentada con lo que sale ahora, para llevarlas al periodo siguiente (con guardar, se guardan).</summary>
+    Task<CorreccionDto> CorreccionAsync(long empresaId, long declaracionId, bool guardar, long usuarioId, CancellationToken ct);
+    Task BorrarCorreccionAsync(long empresaId, long declaracionId, CancellationToken ct);
 }
 
 public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepositorio
@@ -93,6 +98,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         public decimal? ACompensar { get; set; }
         public string? Datos { get; set; }
         public string? Opciones { get; set; }
+        public string? Calculadas { get; set; }
+        public string? Manuales { get; set; }
     }
     private sealed class TotalesFila { public decimal Ingresos { get; set; } public decimal Gastos { get; set; } }
     private sealed class ExistenteFila { public long Id { get; set; } public string Estado { get; set; } = ""; public short NumeroPresentacion { get; set; } }
@@ -186,6 +193,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             case "IS":
                 await Calcular202Async(cn, tx, empresaId, empresa, p, d, ct);
                 break;
+        }
+
+        // Correcciones de periodos anteriores ya presentados que se llevan a este
+        var (ajustes, origenes) = await CorreccionesRecibidasAsync(cn, tx, empresaId, modelo.Codigo, p.Anio, p.Codigo, ct);
+        if (ajustes.Count > 0)
+        {
+            AplicarFormulario(d, ajustes, Vacio, DevolucionPedida(cmd.SolicitaDevolucion, p.Codigo));
+            d.CorreccionesRecibidas.AddRange(origenes);
+            d.Avisos.Add($"Incluye la corrección de {string.Join(", ", origenes)}: las diferencias se suman a las casillas de modificación.");
         }
 
         var tipo = (cmd.TipoDeclaracion ?? "ORDINARIA").Trim().ToUpperInvariant();
@@ -948,9 +964,14 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
     // =====================================================================
     // Guardar / consultar / presentar
     // =====================================================================
-    private static DeclaracionVista VistaDe(long? id, ModeloSoportado m, string estado, DeclaracionCalculada d)
+    private static DeclaracionVista VistaDe(long? id, ModeloSoportado m, string estado, DeclaracionCalculada d,
+        IReadOnlyDictionary<string, decimal>? calculadas = null, IReadOnlyCollection<string>? manuales = null)
         => new(id, m.Codigo, m.Nombre, estado, d.Anio, d.Periodo, d.FechaInicio, d.FechaFin, d.Casillas, d.Resultado, d.AIngresar,
-               d.ADevolver, d.ACompensar, d.Avisos, d.Detalle, d.PlazoDesde, d.PlazoHasta);
+               d.ADevolver, d.ACompensar, d.Avisos, d.Detalle, d.PlazoDesde, d.PlazoHasta)
+           {
+               Formulario = FormularioDe(d.Modelo, d.Casillas.Select(c => c.Clave).ToList()),
+               Calculadas = calculadas ?? Valores(d), Manuales = manuales?.ToList() ?? [], CorreccionesRecibidas = d.CorreccionesRecibidas
+           };
 
     public async Task<DeclaracionVista> GuardarAsync(long empresaId, long usuarioId, CalcularModeloCmd cmd, CancellationToken ct)
     {
@@ -985,6 +1006,13 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             throw new ReglaContableException("El periodo ya tiene una declaración presentada: guarda una complementaria o sustitutiva.");
 
         var d = await CalcularInternoAsync(cn, tx, empresaId, cmd, ct);
+        // Las casillas escritas a mano en la declaración sin presentar se mantienen al recalcular
+        var calculadas = Valores(d);
+        var manuales = existente is { Estado: not "PRESENTADA" }
+            ? Diccionario(await cn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                "SELECT casillas_manuales::text FROM fiscal.declaracion WHERE id = @id", new { id = existente.Id }, tx, cancellationToken: ct)))
+            : [];
+        AplicarFormulario(d, Vacio, manuales, DevolucionPedida(cmd.SolicitaDevolucion, p.Codigo));
         var datos = JsonSerializer.Serialize(new { avisos = d.Avisos, detalle = d.Detalle }, Json);
         var opciones = JsonSerializer.Serialize(new { cmd.SolicitaDevolucion }, Json);
 
@@ -1037,9 +1065,12 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             INSERT INTO fiscal.declaracion_casilla (declaracion_id, casilla, importe, texto, orden) VALUES (@id, @clave, @importe, @texto, @orden)
             """, d.Casillas.Select((c, i) => new { id, clave = c.Clave, importe = c.Importe, texto = c.Descripcion, orden = (short)i }),
             tx, cancellationToken: ct));
+        await cn.ExecuteAsync(new CommandDefinition("""
+            UPDATE fiscal.declaracion SET casillas_calculadas = @calc::jsonb, casillas_manuales = @man::jsonb WHERE id = @id
+            """, new { id, calc = JsonSerializer.Serialize(calculadas), man = JsonSerializer.Serialize(manuales) }, tx, cancellationToken: ct));
 
         await tx.CommitAsync(ct);
-        return VistaDe(id, modelo, "CALCULADA", d) with { NumeroPresentacion = numero, TipoDeclaracion = tipo };
+        return VistaDe(id, modelo, "CALCULADA", d, calculadas, manuales.Keys) with { NumeroPresentacion = numero, TipoDeclaracion = tipo };
     }
 
     public async Task<IReadOnlyList<DeclaracionResumenDto>> ListarAsync(long empresaId, int? anio, CancellationToken ct)
@@ -1060,7 +1091,8 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         => await cn.QuerySingleOrDefaultAsync<DeclaracionFila>(new CommandDefinition($"""
                SELECT d.id, m.codigo, m.administracion, m.nombre, d.anio, d.periodo, d.fecha_inicio, d.fecha_fin, d.numero_presentacion,
                       d.tipo_declaracion, d.estado,
-                      d.resultado, d.a_ingresar, d.a_devolver, d.a_compensar, d.datos::text AS datos, d.opciones::text AS opciones
+                      d.resultado, d.a_ingresar, d.a_devolver, d.a_compensar, d.datos::text AS datos, d.opciones::text AS opciones,
+                      d.casillas_calculadas::text AS calculadas, d.casillas_manuales::text AS manuales
                FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
                WHERE d.id = @declaracionId AND d.empresa_id = @empresaId {(bloquear ? "FOR UPDATE OF d" : "")}
                """, new { declaracionId, empresaId }, tx, cancellationToken: ct))
@@ -1086,8 +1118,15 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         var p = PeriodoFiscal.Resolver(f.Anio, f.Periodo);
         if (f.Codigo == "200") p = p with { Inicio = f.FechaInicio, Fin = f.FechaFin };   // periodo impositivo (puede ser partido)
         var (pd, ph) = PlazoPresentacion.Calcular(f.Codigo, p);
+        var calculadas = f.Calculadas is null ? casillas.GroupBy(c => c.Clave).ToDictionary(g => g.Key, g => g.First().Importe) : Diccionario(f.Calculadas);
+        var (_, origenes) = await CorreccionesRecibidasAsync(cn, null, empresaId, f.Codigo, f.Anio, f.Periodo, ct);
         return new DeclaracionVista(f.Id, f.Codigo, f.Nombre, f.Estado, f.Anio, f.Periodo, f.FechaInicio, f.FechaFin, casillas,
-            f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph, f.NumeroPresentacion, f.TipoDeclaracion);
+            f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph, f.NumeroPresentacion, f.TipoDeclaracion)
+        {
+            Formulario = FormularioDe(f.Codigo, casillas.Select(c => c.Clave).ToList()),
+            Calculadas = calculadas, Manuales = Diccionario(f.Manuales).Keys.ToList(), CorreccionesRecibidas = origenes,
+            Correccion = f.Estado == "PRESENTADA" ? await CorreccionGuardadaAsync(cn, f.Id, ct) : null,
+        };
     }
 
     public async Task<DeclaracionVista> PresentarAsync(long empresaId, long declaracionId, PresentarDeclaracionCmd cmd, CancellationToken ct)
@@ -1113,6 +1152,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             var actual = await CalcularInternoAsync(cn, tx, empresaId,
                 new CalcularModeloCmd { Modelo = f.Codigo, Anio = f.Anio, Periodo = f.Periodo, SolicitaDevolucion = solicita,
                                         TipoDeclaracion = f.TipoDeclaracion }, ct);
+            AplicarFormulario(actual, Vacio, Diccionario(f.Manuales), DevolucionPedida(solicita, f.Periodo));
             if (actual.Resultado != (f.Resultado ?? 0) || actual.AIngresar != (f.AIngresar ?? 0) || actual.ADevolver != (f.ADevolver ?? 0))
                 throw new ReglaContableException("Los datos contables han cambiado desde que se calculó la declaración.",
                     $"Guardada: {f.Resultado:N2}; ahora: {actual.Resultado:N2}. Vuelve a calcularla y revísala.");
@@ -1133,5 +1173,229 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "UPDATE fiscal.declaracion SET estado = 'ANULADA' WHERE id = @declaracionId AND empresa_id = @empresaId AND estado IN ('BORRADOR','CALCULADA')",
             new { declaracionId, empresaId }, cancellationToken: ct));
         if (n == 0) throw new ReglaContableException("Solo se pueden descartar declaraciones calculadas que no estén presentadas.");
+    }
+
+    // =====================================================================
+    // Casillas a mano y corrección en el periodo siguiente
+    // =====================================================================
+    private static readonly IReadOnlyDictionary<string, decimal> Vacio = new Dictionary<string, decimal>();
+
+    private static bool DevolucionPedida(bool solicita, string periodo) => solicita && periodo is "4T" or "12";
+
+    private static Dictionary<string, decimal> Valores(DeclaracionCalculada d)
+        => d.Casillas.GroupBy(c => c.Clave).ToDictionary(g => g.Key, g => g.First().Importe);
+
+    private static Dictionary<string, decimal> Diccionario(string? json)
+        => string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<Dictionary<string, decimal>>(json) ?? [];
+
+    private static FormularioDto FormularioDe(string modelo, IReadOnlyCollection<string> casillas)
+    {
+        var f = FormulariosFiscales.Obtener(modelo, casillas);
+        return new FormularioDto(
+            f.Apartados.Select(a => new ApartadoFormularioDto(a.Titulo, a.Columnas, a.Filas.Select(x => new FilaFormularioDto(x.Texto, x.Casillas, x.Total)).ToList())).ToList(),
+            f.CasillasTotales.ToList(), f.CasillaResultado);
+    }
+
+    private static string TextoCasilla(FormularioModelo f, string casilla)
+    {
+        foreach (var a in f.Apartados)
+            foreach (var fila in a.Filas)
+                if (Array.IndexOf(fila.Casillas, casilla) is var i and >= 0)
+                    return fila.Casillas.Length > 1 && i < a.Columnas.Length ? $"{fila.Texto}: {a.Columnas[i].ToLowerInvariant()}" : fila.Texto;
+        return "";
+    }
+
+    /// <summary>Recalcula la declaración con ajustes (correcciones recibidas) y casillas a mano, con su resultado.</summary>
+    private static void AplicarFormulario(DeclaracionCalculada d, IReadOnlyDictionary<string, decimal> ajustes,
+        IReadOnlyDictionary<string, decimal> manuales, bool devolucion)
+    {
+        if (ajustes.Count == 0 && manuales.Count == 0) return;
+        var calc = Valores(d);
+        var f = FormulariosFiscales.Obtener(d.Modelo, calc.Keys.Union(ajustes.Keys).Union(manuales.Keys).ToList());
+        var v = FormulariosFiscales.Recalcular(f, calc, ajustes, manuales);
+        for (var i = 0; i < d.Casillas.Count; i++)
+            if (v.TryGetValue(d.Casillas[i].Clave, out var x)) d.Casillas[i] = d.Casillas[i] with { Importe = x };
+        foreach (var (k, x) in v.Where(kv => !calc.ContainsKey(kv.Key))) d.Casillas.Add(new Casilla(k, TextoCasilla(f, k), x));
+        if (f.CasillaResultado is { } r)
+        {
+            d.Resultado = v.GetValueOrDefault(r);
+            (d.AIngresar, d.ADevolver, d.ACompensar) = FormulariosFiscales.Repartir(f, d.Resultado, devolucion);
+        }
+    }
+
+    private sealed class CorreccionFila { public long Id { get; set; } public int Anio { get; set; } public string Periodo { get; set; } = ""; public string Casillas { get; set; } = ""; public string Detalle { get; set; } = ""; public int OrigenAnio { get; set; } public string OrigenPeriodo { get; set; } = ""; }
+
+    private static async Task<(Dictionary<string, decimal> Ajustes, List<string> Origenes)> CorreccionesRecibidasAsync(NpgsqlConnection cn,
+        NpgsqlTransaction? tx, long empresaId, string modelo, int anio, string periodo, CancellationToken ct)
+    {
+        var filas = (await cn.QueryAsync<CorreccionFila>(new CommandDefinition("""
+            SELECT c.id, c.anio, c.periodo, c.casillas::text AS casillas, c.detalle::text AS detalle, o.anio AS origen_anio, o.periodo AS origen_periodo
+            FROM fiscal.correccion_declaracion c
+            JOIN fiscal.declaracion o ON o.id = c.origen_id
+            JOIN fiscal.modelo_fiscal m ON m.id = c.modelo_id
+            WHERE c.empresa_id = @empresaId AND m.codigo = @modelo AND c.anio = @anio AND c.periodo = @periodo AND o.estado = 'PRESENTADA'
+            ORDER BY o.fecha_fin
+            """, new { empresaId, modelo, anio = (short)anio, periodo }, tx, cancellationToken: ct))).AsList();
+        var ajustes = new Dictionary<string, decimal>();
+        foreach (var (k, v) in filas.SelectMany(f => Diccionario(f.Casillas))) ajustes[k] = ajustes.GetValueOrDefault(k) + v;
+        return (ajustes, filas.Select(f => $"{PeriodoFiscal.Resolver(f.OrigenAnio, f.OrigenPeriodo).Codigo} {f.OrigenAnio}").ToList());
+    }
+
+    private static async Task<CorreccionDto?> CorreccionGuardadaAsync(NpgsqlConnection cn, long origenId, CancellationToken ct)
+    {
+        var c = await cn.QuerySingleOrDefaultAsync<CorreccionFila>(new CommandDefinition("""
+            SELECT id, anio, periodo, casillas::text AS casillas, detalle::text AS detalle FROM fiscal.correccion_declaracion WHERE origen_id = @origenId
+            """, new { origenId }, cancellationToken: ct));
+        return c is null ? null
+            : new CorreccionDto(c.Id, c.Anio, c.Periodo, JsonSerializer.Deserialize<List<DiferenciaCorreccionDto>>(c.Detalle, Json) ?? [],
+                Diccionario(c.Casillas), true, []);
+    }
+
+    public async Task<DeclaracionVista> GuardarCasillasAsync(long empresaId, long declaracionId, CasillasManualesCmd cmd, CancellationToken ct)
+    {
+        await using (var cn = await conexiones.AbrirAsync(ct))
+        await using (var tx = await cn.BeginTransactionAsync(ct))
+        {
+            var f = await CargarAsync(cn, tx, empresaId, declaracionId, true, ct);
+            if (f.Estado != "CALCULADA")
+                throw new ReglaContableException(f.Estado == "PRESENTADA"
+                    ? "La declaración está presentada: para cambiarla, haz una complementaria o corrígela en el periodo siguiente."
+                    : "Guarda la declaración antes de escribir casillas a mano.");
+            var actuales = (await cn.QueryAsync<CasillaFila>(new CommandDefinition(
+                "SELECT casilla, texto, importe FROM fiscal.declaracion_casilla WHERE declaracion_id = @declaracionId",
+                new { declaracionId }, tx, cancellationToken: ct))).ToDictionary(c => c.Casilla);
+            var calc = f.Calculadas is null ? actuales.ToDictionary(x => x.Key, x => x.Value.Importe ?? 0) : Diccionario(f.Calculadas);
+            var manuales = cmd.RecuperarTodo ? [] : Diccionario(f.Manuales);
+            foreach (var (k, v) in cmd.Casillas)
+            {
+                var clave = k.Trim().ToUpperInvariant();
+                if (clave.Length is 0 or > 10) throw new ReglaContableException($"Casilla no válida: «{k}».");
+                if (v is null || calc.TryGetValue(clave, out var c) && c == v) manuales.Remove(clave);
+                else manuales[clave] = Math.Round(v.Value, 2, MidpointRounding.AwayFromZero);
+            }
+
+            var form = FormulariosFiscales.Obtener(f.Codigo, calc.Keys.Union(manuales.Keys).ToList());
+            var valores = FormulariosFiscales.Recalcular(form, calc, Vacio, manuales);
+            var solicita = false;
+            if (!string.IsNullOrWhiteSpace(f.Opciones))
+            {
+                using var doc = JsonDocument.Parse(f.Opciones);
+                solicita = doc.RootElement.TryGetProperty("solicitaDevolucion", out var s) && s.ValueKind == JsonValueKind.True;
+            }
+            decimal res = f.Resultado ?? 0, ing = f.AIngresar ?? 0, dev = f.ADevolver ?? 0, comp = f.ACompensar ?? 0;
+            if (form.CasillaResultado is { } r)
+            {
+                res = valores.GetValueOrDefault(r);
+                (ing, dev, comp) = FormulariosFiscales.Repartir(form, res, DevolucionPedida(solicita, f.Periodo));
+            }
+
+            var orden = actuales.Count;
+            await cn.ExecuteAsync(new CommandDefinition("""
+                INSERT INTO fiscal.declaracion_casilla (declaracion_id, casilla, importe, texto, orden) VALUES (@declaracionId, @clave, @importe, @texto, @orden)
+                ON CONFLICT (declaracion_id, casilla) DO UPDATE SET importe = EXCLUDED.importe
+                """, valores.Select(x => new
+            {
+                declaracionId, clave = x.Key, importe = x.Value,
+                texto = actuales.TryGetValue(x.Key, out var a) ? a.Texto : TextoCasilla(form, x.Key), orden = (short)orden++
+            }), tx, cancellationToken: ct));
+            await cn.ExecuteAsync(new CommandDefinition("""
+                UPDATE fiscal.declaracion SET resultado = @res, a_ingresar = @ing, a_devolver = @dev, a_compensar = @comp,
+                    casillas_calculadas = @calc::jsonb, casillas_manuales = @man::jsonb
+                WHERE id = @declaracionId
+                """, new { declaracionId, res, ing, dev, comp, calc = JsonSerializer.Serialize(calc), man = JsonSerializer.Serialize(manuales) },
+                tx, cancellationToken: ct));
+            await tx.CommitAsync(ct);
+        }
+        return await ObtenerAsync(empresaId, declaracionId, ct);
+    }
+
+    public async Task<CorreccionDto> CorreccionAsync(long empresaId, long declaracionId, bool guardar, long usuarioId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await using var tx = await cn.BeginTransactionAsync(ct);
+        var f = await CargarAsync(cn, tx, empresaId, declaracionId, true, ct);
+        if (f.Estado != "PRESENTADA") throw new ReglaContableException("Solo se corrige en el periodo siguiente una declaración presentada.");
+        if (await CorreccionGuardadaAsync(cn, declaracionId, ct) is { } ya && !guardar) { await tx.CommitAsync(ct); return ya; }
+
+        var (anioSig, periodoSig) = FormulariosFiscales.Siguiente(f.Anio, f.Periodo);
+        var avisos = new List<string>();
+        var modelo = ModelosFiscales.Obtener(f.Codigo);
+        if (!modelo.Periodos.Contains(periodoSig))
+            throw new ReglaContableException($"El modelo {f.Codigo} no tiene periodo {periodoSig}.");
+        if (f.Codigo == "130")
+            throw new ReglaContableException("El 130 se calcula con los importes acumulados del año: el trimestre siguiente ya recoge las diferencias.");
+
+        // Lo que sale ahora (con las casillas que se escribieron a mano) frente a lo presentado
+        var solicita = false;
+        if (!string.IsNullOrWhiteSpace(f.Opciones))
+        {
+            using var doc = JsonDocument.Parse(f.Opciones);
+            solicita = doc.RootElement.TryGetProperty("solicitaDevolucion", out var s) && s.ValueKind == JsonValueKind.True;
+        }
+        var ahora = await CalcularInternoAsync(cn, tx, empresaId,
+            new CalcularModeloCmd { Modelo = f.Codigo, Anio = f.Anio, Periodo = f.Periodo, SolicitaDevolucion = solicita }, ct);
+        AplicarFormulario(ahora, Vacio, Diccionario(f.Manuales), DevolucionPedida(solicita, f.Periodo));
+        var presentado = (await cn.QueryAsync<CasillaFila>(new CommandDefinition(
+            "SELECT casilla, texto, importe FROM fiscal.declaracion_casilla WHERE declaracion_id = @declaracionId",
+            new { declaracionId }, tx, cancellationToken: ct))).ToDictionary(c => c.Casilla);
+        var vAhora = Valores(ahora);
+        var form = FormulariosFiscales.Obtener(f.Codigo, vAhora.Keys.Union(presentado.Keys).ToList());
+
+        var diferencias = new List<DiferenciaCorreccionDto>();
+        foreach (var k in vAhora.Keys.Union(presentado.Keys).Order(StringComparer.Ordinal))
+        {
+            if (FormulariosFiscales.CasillaCorreccion(f.Codigo, k) is not { } destino) continue;
+            var antes = presentado.TryGetValue(k, out var pr) ? pr.Importe ?? 0 : 0;
+            var dif = vAhora.GetValueOrDefault(k) - antes;
+            if (dif == 0) continue;
+            var texto = TextoCasilla(form, k);
+            diferencias.Add(new DiferenciaCorreccionDto(k, texto.Length > 0 ? texto : pr?.Texto ?? "", antes, vAhora.GetValueOrDefault(k), dif, destino));
+        }
+        var casillas = diferencias.GroupBy(x => x.Destino).ToDictionary(g => g.Key, g => g.Sum(x => x.Diferencia));
+        if (diferencias.Count == 0) avisos.Add("No hay diferencias entre lo presentado y lo que sale ahora en las casillas que se corrigen en el periodo siguiente.");
+
+        var estadoDestino = await cn.ExecuteScalarAsync<string?>(new CommandDefinition("""
+            SELECT d.estado FROM fiscal.declaracion d JOIN fiscal.modelo_fiscal m ON m.id = d.modelo_id
+            WHERE d.empresa_id = @empresaId AND m.codigo = @codigo AND d.anio = @anio AND d.periodo = @periodo AND d.estado <> 'ANULADA'
+            ORDER BY (d.estado = 'PRESENTADA') DESC LIMIT 1
+            """, new { empresaId, codigo = f.Codigo, anio = (short)anioSig, periodo = periodoSig }, tx, cancellationToken: ct));
+        if (estadoDestino == "PRESENTADA")
+            avisos.Add($"El {periodoSig} {anioSig} ya está presentado: corrige este periodo con una complementaria o sustitutiva.");
+        else if (estadoDestino == "CALCULADA")
+            avisos.Add($"El {periodoSig} {anioSig} ya está guardado: vuelve a calcularlo para que recoja la corrección.");
+
+        if (guardar)
+        {
+            if (estadoDestino == "PRESENTADA")
+                throw new ReglaContableException($"El {periodoSig} {anioSig} ya está presentado: no se puede corregir en él.",
+                    "Haz una complementaria o sustitutiva de este periodo.");
+            if (diferencias.Count == 0) throw new ReglaContableException("No hay diferencias que llevar al periodo siguiente.");
+            var mid = await ModeloIdAsync(cn, tx, modelo, ct);
+            await cn.ExecuteAsync(new CommandDefinition("""
+                INSERT INTO fiscal.correccion_declaracion (empresa_id, modelo_id, origen_id, anio, periodo, casillas, detalle, creado_por)
+                VALUES (@empresaId, @mid, @declaracionId, @anio, @periodo, @casillas::jsonb, @detalle::jsonb, @usuarioId)
+                ON CONFLICT (origen_id) DO UPDATE SET anio = EXCLUDED.anio, periodo = EXCLUDED.periodo, casillas = EXCLUDED.casillas,
+                    detalle = EXCLUDED.detalle, creado_por = EXCLUDED.creado_por, creado_en = now()
+                """, new { empresaId, mid, declaracionId, anio = (short)anioSig, periodo = periodoSig, casillas = JsonSerializer.Serialize(casillas),
+                    detalle = JsonSerializer.Serialize(diferencias, Json), usuarioId }, tx, cancellationToken: ct));
+        }
+        await tx.CommitAsync(ct);
+        return new CorreccionDto(null, anioSig, periodoSig, diferencias, casillas, guardar, avisos);
+    }
+
+    public async Task BorrarCorreccionAsync(long empresaId, long declaracionId, CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        var c = await cn.QuerySingleOrDefaultAsync<CorreccionFila>(new CommandDefinition("""
+            SELECT c.id, c.anio, c.periodo FROM fiscal.correccion_declaracion c WHERE c.origen_id = @declaracionId AND c.empresa_id = @empresaId
+            """, new { declaracionId, empresaId }, cancellationToken: ct))
+            ?? throw new ReglaContableException("Esta declaración no tiene una corrección en el periodo siguiente.");
+        var presentada = await cn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+            SELECT EXISTS (SELECT 1 FROM fiscal.declaracion d JOIN fiscal.declaracion o ON o.id = @declaracionId
+                           WHERE d.empresa_id = o.empresa_id AND d.modelo_id = o.modelo_id AND d.anio = @anio AND d.periodo = @periodo
+                             AND d.estado = 'PRESENTADA')
+            """, new { declaracionId, anio = (short)c.Anio, periodo = c.Periodo }, cancellationToken: ct));
+        if (presentada) throw new ReglaContableException($"El {c.Periodo} {c.Anio} ya está presentado con esta corrección: no se puede quitar.");
+        await cn.ExecuteAsync(new CommandDefinition("DELETE FROM fiscal.correccion_declaracion WHERE id = @id", new { id = c.Id }, cancellationToken: ct));
     }
 }

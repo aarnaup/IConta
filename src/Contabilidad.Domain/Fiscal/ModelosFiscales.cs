@@ -64,6 +64,9 @@ public sealed class DeclaracionCalculada
     public DateOnly PlazoDesde { get; set; }
     public DateOnly PlazoHasta { get; set; }
 
+    /// <summary>Periodos anteriores cuyas correcciones entran en esta declaración (1T 2026…).</summary>
+    public List<string> CorreccionesRecibidas { get; init; } = [];
+
     /// <summary>Periodo impositivo del Impuesto sobre Sociedades (200/202).</summary>
     public long? EjercicioId { get; set; }
 
