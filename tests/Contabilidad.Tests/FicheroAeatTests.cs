@@ -307,7 +307,7 @@ public class FicheroAeatTests
             new("6000000", "Compras", 20_000m), new("6400000", "Sueldos", 12_000m), new("6420000", "SS", 4_000m), new("6230000", "Asesoría", 1_000m),
             new("6290000", "Otros", 500m), new("6810000", "Amortización", 2_000m), new("6620000", "Intereses", 500m),
         };
-        var c = Estados200.Casillas(saldos, out var sinClasificar);
+        var c = Estados200.Casillas(saldos, 2025, out var sinClasificar);
         Assert.Empty(sinClasificar);
         Assert.Equal(8_000m, c["B:00113"]);
         Assert.Equal(8_000m, c["B:00101"]);

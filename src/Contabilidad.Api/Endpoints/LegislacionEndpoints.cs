@@ -44,6 +44,16 @@ public static class LegislacionEndpoints
             return Results.NoContent();
         }).SoloSuperadmin();
 
+        // Cuentas de cada partida del balance y la PyG del 200 (BALANCE_200, PYG_200), por ejercicio
+        g.MapGet("/estados", (ILegislacionRepositorio r, CancellationToken ct) => r.EstadosAsync(ct)).SoloSuperadmin();
+        g.MapGet("/estados/{codigo}/{anio:int}", (string codigo, int anio, ILegislacionRepositorio r) => r.Estado(codigo, anio)).SoloSuperadmin();
+        g.MapPost("/estados", async (GuardarEstadoCmd cmd, HttpContext http, ILegislacionRepositorio r, IAuditoriaRepositorio aud, CancellationToken ct) =>
+        {
+            await r.GuardarEstadoAsync(cmd, ct);
+            await aud.RegistrarAsync(http.User.UsuarioId(), null, "LEGISLACION_ESTADO_200", "formulario_version", null, new { cmd.Codigo, cmd.DesdeAnio, cmd.Comentario }, ct);
+            return Results.NoContent();
+        }).SoloSuperadmin();
+
         g.MapGet("/disenos", (ILegislacionRepositorio r, CancellationToken ct) => r.DisenosAsync(ct)).SoloSuperadmin();
         g.MapGet("/disenos/{modelo}/{anio:int}", (string modelo, int anio, ILegislacionRepositorio r)
             => Results.Text(r.DisenoJson(modelo, anio), "application/json")).SoloSuperadmin();

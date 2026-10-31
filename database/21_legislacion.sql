@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS cat.parametro_fiscal (
 
 CREATE TABLE IF NOT EXISTS fiscal.formulario_version (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  modelo      varchar(5) NOT NULL,
+  modelo      varchar(20) NOT NULL,   -- 303, 130… o BALANCE_200 / PYG_200 (cuentas de cada partida del 200)
   desde_anio  smallint NOT NULL,
   definicion  jsonb NOT NULL,
   comentario  varchar(250),
@@ -58,3 +58,6 @@ INSERT INTO cat.parametro_fiscal (clave, desde, valor, descripcion) VALUES
   ('IS_MICRO_TRAMO', DATE '2000-01-01', 50000, 'Sociedades: microempresas, base del primer tramo (anual)'),
   ('IS_202_PCT_40_2', DATE '2000-01-01', 18, '202 (art. 40.2): porcentaje sobre la cuota del último periodo')
 ON CONFLICT (clave, desde) DO NOTHING;
+
+-- Instalaciones que ya tenían la tabla con el código de modelo corto
+ALTER TABLE fiscal.formulario_version ALTER COLUMN modelo TYPE varchar(20);

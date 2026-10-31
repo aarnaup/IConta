@@ -236,3 +236,7 @@
   tr.lg-vig td{background:color-mix(in srgb, var(--accent) 7%, var(--surface))}
   button.btn.mini{padding:0 6px; border:0; background:none; color:var(--muted); font-size:15px; line-height:1}
   button.btn.enlace{border:0; background:none; padding:0; color:var(--accent); font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px}
+  table.lg-est tr.lg-total td{font-weight:600}
+  .lg-suma{color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums}
+  .lg-hist small{color:var(--muted); margin-left:2px}
+  #lgEstCuentas input.lg-cta{width:120px}

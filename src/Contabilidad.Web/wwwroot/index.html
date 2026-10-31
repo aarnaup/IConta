@@ -246,7 +246,8 @@
         <label>Apartado <select id="lgTipo">
           <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
           <option value="par">Parámetros de cálculo</option><option value="form">Casillas de los modelos</option>
-          <option value="dis">Diseños de fichero AEAT</option></select></label>
+          <option value="dis">Diseños de fichero AEAT</option>
+          <option value="est">Balances del Impuesto sobre Sociedades (200)</option></select></label>
         <label id="lgAnioL">Vigente en el ejercicio <input id="lgAnio" type="number" min="2000" max="2100" step="1"></label>
       </div>
       <p class="ayuda">Cada valor rige desde una fecha (o un año). Cada declaración usa lo vigente en su periodo: un cambio no altera los ejercicios anteriores ni las declaraciones ya presentadas.</p>
@@ -312,6 +313,37 @@
         <textarea id="lgDisJson" class="json" rows="18" spellcheck="false" aria-label="Diseño del fichero (JSON)"></textarea>
         <div class="acciones"><button class="btn primario" id="lgDisGuardar" type="button">Guardar diseño</button><span id="lgDisFormMsg" role="status"></span></div>
         <p class="ayuda">Los elementos van en orden: <code>{"campo", "tipo": "An|Num|N", "longitud", "decimales", "clave"…}</code>, <code>{"literal"}</code> o <code>{"bloque", "coleccion", "elementos"}</code>. Un diseño guardado tiene preferencia sobre el del programa con la misma fecha.</p>
+      </div>
+    </div>
+
+    <div id="lg-est" class="stack" hidden>
+      <div class="panel">
+        <h2>Cuentas de cada partida del 200</h2>
+        <div class="cab2">
+          <label>Estado <select id="lgEstCodigo"><option value="BALANCE_200">Balance (páginas 3 a 5)</option>
+            <option value="PYG_200">Pérdidas y ganancias (páginas 6 a 8)</option></select></label>
+          <label>Buscar <input id="lgEstBusca" placeholder="cuenta (4709), casilla o texto" autocomplete="off"></label>
+        </div>
+        <p class="ayuda" id="lgEstInfo"></p>
+        <table class="lg-est"><thead><tr><th>Casilla</th><th>Partida</th><th>Cuentas</th><th></th></tr></thead><tbody id="lgEstBody"></tbody></table>
+        <span id="lgEstMsg" role="status"></span>
+        <p class="ayuda">Cada cuenta va a la partida con el prefijo más largo que coincide. En una partida de activo o gasto el saldo es debe − haber y en una de patrimonio neto, pasivo o ingreso, haber − debe: las cuentas correctoras (amortizaciones, deterioros) restan solas. «Saldo deudor» o «acreedor» solo cuenta si el saldo es de ese lado; «Debe» y «Haber» toman la suma de los movimientos de ese lado, y «Suma» o «Resta» dice cómo entran en la partida.</p>
+      </div>
+      <div class="panel" id="lgEstEdit" hidden>
+        <h2 id="lgEstTitulo">Partida</h2>
+        <table><thead><tr><th>Cuenta</th><th>Toma</th><th>Suma o resta</th><th>Cálculo</th><th></th></tr></thead><tbody id="lgEstCuentas"></tbody></table>
+        <div class="acciones"><button class="btn" id="lgEstAnadir" type="button">Añadir cuenta</button></div>
+        <div class="cab2">
+          <label>Rige desde el ejercicio <input id="lgEstDesde" type="number" min="2000" max="2100" step="1"></label>
+          <label>Comentario <input id="lgEstComent" placeholder="Motivo del cambio"></label>
+        </div>
+        <div class="acciones"><button class="btn primario" id="lgEstGuardar" type="button">Guardar versión</button>
+          <button class="btn" id="lgEstCancelar" type="button">Cancelar</button><span id="lgEstFormMsg" role="status"></span></div>
+      </div>
+      <div class="panel">
+        <h2>Versiones guardadas</h2>
+        <table><thead><tr><th>Estado</th><th>Desde el ejercicio</th><th>Comentario</th><th>Guardada</th><th></th></tr></thead><tbody id="lgEstVers"></tbody></table>
+        <p class="ayuda">Sin versiones se usa la composición del programa. Al borrar una, esos ejercicios vuelven a la anterior.</p>
       </div>
     </div>
   </div>

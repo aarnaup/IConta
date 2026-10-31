@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using Contabilidad.Domain;
+using Contabilidad.Domain.Balances;
 using Contabilidad.Domain.Fiscal;
 using Contabilidad.Domain.Fiscal.Presentacion;
 using Dapper;
@@ -26,6 +27,10 @@ public interface ILegislacionRepositorio
     string DisenoJson(string modelo, int anio);
     Task GuardarDisenoAsync(GuardarDisenoCmd cmd, CancellationToken ct);
     Task BorrarDisenoAsync(long id, CancellationToken ct);
+    /// <summary>Balance o PyG del 200 vigente en el año, con las cuentas de cada partida.</summary>
+    EstadoLegislacionDto Estado(string codigo, int anio);
+    Task<IReadOnlyList<VersionFormularioDto>> EstadosAsync(CancellationToken ct);
+    Task GuardarEstadoAsync(GuardarEstadoCmd cmd, CancellationToken ct);
 }
 
 public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegislacionRepositorio
@@ -111,7 +116,7 @@ public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegis
     {
         await using var cn = await conexiones.AbrirAsync(ct);
         return (await cn.QueryAsync<VersionFormularioDto>(new CommandDefinition(
-            "SELECT id, modelo, desde_anio, comentario, creado_en FROM fiscal.formulario_version ORDER BY modelo, desde_anio",
+            "SELECT id, modelo, desde_anio, comentario, creado_en FROM fiscal.formulario_version WHERE modelo ~ '^[0-9]+$' ORDER BY modelo, desde_anio",
             cancellationToken: ct))).AsList();
     }
 
@@ -198,6 +203,62 @@ public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegis
         await using var cn = await conexiones.AbrirAsync(ct);
         if (await cn.ExecuteAsync(new CommandDefinition("DELETE FROM fiscal.diseno_version WHERE id = @id", new { id }, cancellationToken: ct)) == 0)
             throw new ReglaContableException("El diseño no existe.");
+        Invalidar();
+    }
+
+    // ------------------------------------------------------------------------------------------------ balance y PyG del 200
+    public EstadoLegislacionDto Estado(string codigo, int anio)
+    {
+        var m = Estados200.Modelo(codigo, anio);
+        var textos = Estados200.Descripciones(anio);
+        return new EstadoLegislacionDto
+        {
+            Codigo = codigo, Anio = anio, Version = Legislacion.Formulario(codigo, anio)?.DesdeAnio,
+            Partidas = m.Partidas.Select(p => new PartidaEstadoDto
+            {
+                Id = p.Id, Descripcion = textos.GetValueOrDefault(p.Id), Acreedora = p.Acreedora,
+                Suma = p.Suma?.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Cuentas = ReglaCuenta.Lista(p.Cuentas).Select(r => new CuentaPartidaDto
+                    { Cuenta = r.Prefijo, Concepto = r.Concepto.ToString(), Resta = r.Resta, Calculo = r.Calculo(p.Acreedora) }).ToList(),
+            }).ToList(),
+        };
+    }
+
+    public async Task<IReadOnlyList<VersionFormularioDto>> EstadosAsync(CancellationToken ct)
+    {
+        await using var cn = await conexiones.AbrirAsync(ct);
+        return (await cn.QueryAsync<VersionFormularioDto>(new CommandDefinition(
+            "SELECT id, modelo, desde_anio, comentario, creado_en FROM fiscal.formulario_version WHERE modelo = ANY(@c) ORDER BY modelo, desde_anio",
+            new { c = Estados200.Codigos }, cancellationToken: ct))).AsList();
+    }
+
+    public async Task GuardarEstadoAsync(GuardarEstadoCmd cmd, CancellationToken ct)
+    {
+        var baseM = Estados200.DelPrograma(cmd.Codigo);
+        if (cmd.DesdeAnio is < 2000 or > 2100) throw new ReglaContableException("Indica el año desde el que rige la versión.");
+        if (cmd.Partidas.Count == 0) throw new ReglaContableException("El estado no tiene partidas.");
+        var partidas = cmd.Partidas.Select(p =>
+        {
+            var id = (p.Id ?? "").Trim();
+            if (id.Length == 0) throw new ReglaContableException("Hay una partida sin casilla.");
+            if (p.Suma is { Count: > 0 }) return new PartidaModelo(id, id, 1, p.Acreedora, Suma: string.Join(' ', p.Suma.Select(x => x.Trim())));
+            var reglas = p.Cuentas.Where(c => !string.IsNullOrWhiteSpace(c.Cuenta)).Select(c =>
+            {
+                if (!Enum.TryParse<ConceptoCuenta>(c.Concepto, out var concepto))
+                    throw new ReglaContableException($"Concepto no válido en la partida {id}: {c.Concepto}.");
+                var cuenta = c.Cuenta.Trim();
+                if (!cuenta.All(char.IsAsciiDigit)) throw new ReglaContableException($"La cuenta «{cuenta}» de la partida {id} solo puede tener números.");
+                return new ReglaCuenta(cuenta, concepto, c.Resta).ToString();
+            });
+            return new PartidaModelo(id, id, 2, p.Acreedora, string.Join(' ', reglas));
+        }).ToList();
+        var m = baseM with { Partidas = partidas };
+        Estados200.Validar(m);
+        await using var cn = await conexiones.AbrirAsync(ct);
+        await cn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO fiscal.formulario_version (modelo, desde_anio, definicion, comentario) VALUES (@modelo, @desde, @def::jsonb, @comentario)
+            ON CONFLICT (modelo, desde_anio) DO UPDATE SET definicion = EXCLUDED.definicion, comentario = EXCLUDED.comentario, creado_en = now()
+            """, new { modelo = cmd.Codigo, desde = (short)cmd.DesdeAnio, def = Estados200.Exportar(m), comentario = cmd.Comentario }, cancellationToken: ct));
         Invalidar();
     }
 

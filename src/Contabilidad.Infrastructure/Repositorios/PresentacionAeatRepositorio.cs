@@ -167,9 +167,18 @@ public sealed class PresentacionAeatRepositorio(IConexionFactory conexiones, IFi
         x["F:00027"] = C("00552") <= 0 ? 1 : 0;                               // base imponible negativa o cero
         x["D:tipoEjercicio"] = 1;
 
-        var saldos = (await ConsultasContables.SaldosAsync(cn, null, empresaId, f.EjercicioId, v.FechaFin, null, null, ct, sinAsientosDeCierre: true))
-            .GroupBy(s => s.Codigo).Select(g => new Domain.Balances.SaldoBalance(g.Key, g.Key, g.Sum(s => s.Saldo))).ToList();
-        var estados = Estados200.Casillas(saldos, out var sinClasificar);
+        // Saldo y sumas del debe y del haber de cada cuenta (las partidas pueden tomar cualquiera de los tres)
+        var saldos = (await cn.QueryAsync<(string Codigo, decimal Debe, decimal Haber)>(new CommandDefinition("""
+            SELECT c.codigo, SUM(m.debe) AS debe, SUM(m.haber) AS haber
+            FROM conta.v_mayor m
+            JOIN conta.cuenta c ON c.id = m.cuenta_id
+            WHERE m.empresa_id = @empresaId AND m.ejercicio_id = @ejercicioId AND m.fecha <= @hasta
+              AND NOT EXISTS (SELECT 1 FROM conta.asiento s WHERE s.id = m.asiento_id AND s.origen IN ('REGULARIZACION', 'CIERRE'))
+            GROUP BY c.codigo
+            HAVING SUM(m.debe) <> 0 OR SUM(m.haber) <> 0
+            """, new { empresaId, ejercicioId = f.EjercicioId, hasta = v.FechaFin }, cancellationToken: ct)))
+            .Select(x => new Domain.Balances.SaldoBalance(x.Codigo, x.Codigo, x.Debe - x.Haber, x.Debe, x.Haber)).ToList();
+        var estados = Estados200.Casillas(saldos, v.FechaInicio.Year, out var sinClasificar);
         foreach (var (k, valor) in estados) x[k] = valor;
         if (sinClasificar.Count > 0)
             throw new ReglaContableException("Hay cuentas con saldo que no van a ninguna casilla del balance del 200: " +

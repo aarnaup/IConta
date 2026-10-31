@@ -3158,11 +3158,11 @@ async function cargaLegislacion() {
   if (!$('#lgAnio').value) $('#lgAnio').value = new Date().getFullYear();
   if (!$('#lgFormModelo').options.length) $('#lgFormModelo').innerHTML = MODELOS_FORM.map(m => `<option>${m}</option>`).join('');
   const t = $('#lgTipo').value;
-  $('#lg-par').hidden = t !== 'par'; $('#lg-form').hidden = t !== 'form'; $('#lg-dis').hidden = t !== 'dis';
+  $('#lg-par').hidden = t !== 'par'; $('#lg-form').hidden = t !== 'form'; $('#lg-dis').hidden = t !== 'dis'; $('#lg-est').hidden = t !== 'est';
   $('#lgAnioL').hidden = ['iva', 'ret'].includes(t);
   $('#adm-catalogos').hidden = !['iva', 'ret'].includes(t);
   if (['iva', 'ret'].includes(t)) { modoCatalogos(true, t); await cargaCatalogos(); return; }
-  await ({ par: pintaParametros, form: pintaFormularios, dis: pintaDisenos })[t]();
+  await ({ par: pintaParametros, form: pintaFormularios, dis: pintaDisenos, est: cargaEstado })[t]();
 }
 
 // El valor que rige en una fecha es el de «desde» más reciente que no la supera
@@ -3292,6 +3292,91 @@ $('#lgDisGuardar').onclick = async () => {
     await pintaDisenos(); msg($('#lgDisFormMsg'), 'Guardado.', 'ayuda ok-texto');
   } catch (err) { lgErr('#lgDisFormMsg', err); }
 };
+// ---- cuentas de cada partida del balance y la PyG del 200
+const CONCEPTOS = { Saldo: 'Saldo', SaldoDeudor: 'Saldo deudor', SaldoAcreedor: 'Saldo acreedor', Debe: 'Debe', Haber: 'Haber' };
+const EST = { dto: null, edita: null };
+// Igual que el servidor: el saldo sigue el sentido de la partida; el debe y el haber se suman o se restan tal cual
+function calculoCuenta(c, acreedora) {
+  const txt = c.concepto === 'Debe' ? 'Debe' : c.concepto === 'Haber' ? 'Haber' : acreedora ? '(Haber − Debe)' : '(Debe − Haber)';
+  const cond = c.concepto === 'SaldoDeudor' ? ' si es deudor' : c.concepto === 'SaldoAcreedor' ? ' si es acreedor' : '';
+  return (c.resta ? '− ' : '+ ') + txt + cond;
+}
+async function cargaEstado() {
+  EST.dto = await api(`/api/admin/legislacion/estados/${$('#lgEstCodigo').value}/${lgAnio()}`);
+  $('#lgEstInfo').textContent = `Composición vigente en ${lgAnio()}: ` + (EST.dto.version ? `versión guardada desde ${EST.dto.version}.` : 'la del programa.');
+  if (!$('#lgEstEdit').hidden) cierraEdicionEstado();
+  pintaEstado();
+  const vs = await api('/api/admin/legislacion/estados');
+  $('#lgEstVers').innerHTML = vs.map(v => `<tr><td>${v.modelo === 'BALANCE_200' ? 'Balance' : 'Pérdidas y ganancias'}</td><td>${v.desdeAnio}</td>
+    <td>${esc(v.comentario || '')}</td><td>${new Date(v.creadoEn).toLocaleString('es-ES')}</td>
+    <td><button class="btn" type="button" data-borra="${v.id}">Borrar</button></td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Sin versiones.</td></tr>';
+}
+function pintaEstado() {
+  const q = $('#lgEstBusca').value.trim().toLowerCase();
+  const esNum = /^\d+$/.test(q);
+  const filas = EST.dto.partidas.filter(p => !q || p.id.includes(q) || (p.descripcion || '').toLowerCase().includes(q)
+    || (esNum && p.cuentas.some(c => q.startsWith(c.cuenta) || c.cuenta.startsWith(q))));
+  // Con una cuenta concreta, la partida a la que va es la del prefijo más largo
+  let destino = null;
+  if (esNum) { let largo = 0; for (const p of EST.dto.partidas) for (const c of p.cuentas)
+    if (q.startsWith(c.cuenta) && c.cuenta.length > largo) { largo = c.cuenta.length; destino = p.id; } }
+  $('#lgEstBody').innerHTML = filas.map(p => `<tr class="${p.suma ? 'lg-total' : ''}${p.id === destino ? ' lg-vig' : ''}">
+    <td>${p.id}</td><td>${esc(p.descripcion || '')}${p.acreedora ? '' : ''}</td>
+    <td>${p.suma ? `<span class="lg-suma">= ${p.suma.join(' + ')}</span>`
+      : p.cuentas.map(c => `<span class="lg-hist${esNum && (q.startsWith(c.cuenta) || c.cuenta.startsWith(q)) ? ' lg-vig' : ''}" title="${CONCEPTOS[c.concepto]}">${esc(c.cuenta)} <small>${esc(c.calculo)}</small></span>`).join(' ')
+        || '<span class="ayuda">sin cuentas</span>'}</td>
+    <td>${p.suma ? '' : `<button class="btn" type="button" data-edita="${p.id}">Editar</button>`}</td></tr>`).join('')
+    || '<tr><td colspan="4" class="vacio">Ninguna partida coincide.</td></tr>';
+}
+function filaCuentaEstado(c) {
+  return `<tr><td><input class="lg-cta" value="${esc(c.cuenta)}" inputmode="numeric" aria-label="Cuenta"></td>
+    <td><select class="lg-con" aria-label="Qué se toma">${Object.entries(CONCEPTOS).map(([k, v]) => `<option value="${k}"${k === c.concepto ? ' selected' : ''}>${v}</option>`).join('')}</select></td>
+    <td><select class="lg-sig" aria-label="Suma o resta"><option value="">Suma</option><option value="1"${c.resta ? ' selected' : ''}>Resta</option></select></td>
+    <td class="lg-calc"></td><td><button class="btn mini" type="button" data-quita title="Quitar">×</button></td></tr>`;
+}
+const leeCuentasEstado = () => $$('#lgEstCuentas tr').map(tr => ({ cuenta: tr.querySelector('.lg-cta').value.trim(),
+  concepto: tr.querySelector('.lg-con').value, resta: !!tr.querySelector('.lg-sig').value }));
+function recalcEstado() {
+  const p = EST.dto.partidas.find(x => x.id === EST.edita);
+  $$('#lgEstCuentas tr').forEach((tr, i) => { tr.querySelector('.lg-calc').textContent = calculoCuenta(leeCuentasEstado()[i], p.acreedora); });
+}
+function editaEstado(id) {
+  const p = EST.dto.partidas.find(x => x.id === id); EST.edita = id;
+  $('#lgEstTitulo').textContent = `Casilla ${p.id} · ${p.descripcion || ''}${p.acreedora ? ' (patrimonio neto, pasivo o ingreso)' : ' (activo o gasto)'}`;
+  $('#lgEstCuentas').innerHTML = p.cuentas.map(filaCuentaEstado).join('');
+  if (!$('#lgEstDesde').value) $('#lgEstDesde').value = lgAnio();
+  $('#lgEstEdit').hidden = false; msg($('#lgEstFormMsg'), ''); recalcEstado();
+  $('#lgEstEdit').scrollIntoView({ behavior: 'smooth' });
+}
+function cierraEdicionEstado() { $('#lgEstEdit').hidden = true; EST.edita = null; }
+$('#lgEstCodigo').onchange = () => cargaEstado().catch(e => lgErr('#lgEstMsg', e));
+$('#lgEstBusca').oninput = () => EST.dto && pintaEstado();
+$('#lgEstBody').addEventListener('click', e => { const b = e.target.closest('button[data-edita]'); if (b) editaEstado(b.dataset.edita); });
+$('#lgEstCuentas').addEventListener('input', recalcEstado);
+$('#lgEstCuentas').addEventListener('change', recalcEstado);
+$('#lgEstCuentas').addEventListener('click', e => { if (e.target.closest('button[data-quita]')) { e.target.closest('tr').remove(); recalcEstado(); } });
+$('#lgEstAnadir').onclick = () => { $('#lgEstCuentas').insertAdjacentHTML('beforeend', filaCuentaEstado({ cuenta: '', concepto: 'Saldo', resta: false }));
+  recalcEstado(); $('#lgEstCuentas tr:last-child .lg-cta').focus(); };
+$('#lgEstCancelar').onclick = cierraEdicionEstado;
+$('#lgEstGuardar').onclick = async () => {
+  try {
+    const cuentas = leeCuentasEstado().filter(c => c.cuenta);
+    const partidas = EST.dto.partidas.map(p => p.id === EST.edita ? { ...p, cuentas } : p);
+    const desde = +$('#lgEstDesde').value;
+    await post('/api/admin/legislacion/estados', { codigo: EST.dto.codigo, desdeAnio: desde, comentario: $('#lgEstComent').value || null, partidas });
+    const id = EST.edita;
+    if (desde > lgAnio()) { $('#lgAnio').value = desde; }
+    await cargaEstado();
+    msg($('#lgEstMsg'), `Guardada la casilla ${id}: rige desde ${desde}.`, 'ayuda ok-texto');
+  } catch (err) { lgErr('#lgEstFormMsg', err); }
+};
+$('#lgEstVers').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-borra]'); if (!b || !confirm('¿Borrar la versión? Esos ejercicios vuelven a la anterior.')) return;
+  try { await api(`/api/admin/legislacion/formularios/${b.dataset.borra}`, { method: 'DELETE' }); await cargaEstado(); msg($('#lgEstMsg'), 'Versión borrada.', 'ayuda ok-texto'); }
+  catch (err) { lgErr('#lgEstMsg', err); }
+});
+
 $('#lgTipo').onchange = () => cargaLegislacion().catch(e => alert(e.message));
 $('#lgAnio').onchange = $('#lgTipo').onchange;
 
