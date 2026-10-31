@@ -219,8 +219,9 @@ public sealed class BienesInversionRepositorio(IConexionFactory conexiones, IAsi
             WHERE id = @inmovilizadoId AND empresa_id = @empresaId FOR UPDATE
             """, new { inmovilizadoId, empresaId }, tx, cancellationToken: ct))
             ?? throw new ReglaContableException("El elemento de inmovilizado no existe.");
-        if (i.ValorAdquisicion <= RegularizacionBienesInversion.ImporteMinimo)
-            throw new ReglaContableException($"Solo son bienes de inversión los de más de {RegularizacionBienesInversion.ImporteMinimo:N2} € (art. 108 LIVA).");
+        var minimo = Legislacion.Parametro("IVA_BIEN_INVERSION_MINIMO", i.FechaInicioAmortizacion);
+        if (i.ValorAdquisicion <= minimo)
+            throw new ReglaContableException($"Solo son bienes de inversión los de más de {minimo:N2} € (art. 108 LIVA).");
         if (await cn.ExecuteScalarAsync<bool>(new CommandDefinition(
                 "SELECT EXISTS (SELECT 1 FROM inmov.bien_inversion WHERE inmovilizado_id = @inmovilizadoId)", new { inmovilizadoId }, tx, cancellationToken: ct)))
             throw new ReglaContableException("El elemento ya está en el registro de bienes de inversión.");

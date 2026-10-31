@@ -52,6 +52,7 @@
       <button data-tab="usuarios" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.3-5.5 6.5-5.5s5.7 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.8.6 3 2.5 3.5 5.5"/></svg>Usuarios</button>
       <button data-tab="empresas" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V5l8-2v18M12 8h8v13M8 8h.01M8 12h.01M8 16h.01M16 12h.01M16 16h.01M2 21h20"/></svg>Empresas</button>
       <button data-tab="catalogos" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M4 17a2 2 0 0 1 2-2h13"/></svg>Catálogos</button>
+      <button data-tab="legislacion" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M5 7h14M5 7l-3 7a3 3 0 0 0 6 0zM19 7l-3 7a3 3 0 0 0 6 0zM8 21h8"/></svg>Legislación</button>
     </div>
   </nav>
   <div class="der">
@@ -238,11 +239,88 @@
     </div>
   </div>
 
+  <div id="adm-legislacion" class="stack" hidden>
+    <div class="panel">
+      <h2>Legislación por ejercicio</h2>
+      <div class="cab2">
+        <label>Apartado <select id="lgTipo">
+          <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
+          <option value="par">Parámetros de cálculo</option><option value="form">Casillas de los modelos</option>
+          <option value="dis">Diseños de fichero AEAT</option></select></label>
+        <label id="lgAnioL">Vigente en el ejercicio <input id="lgAnio" type="number" min="2000" max="2100" step="1"></label>
+      </div>
+      <p class="ayuda">Cada valor rige desde una fecha (o un año). Cada declaración usa lo vigente en su periodo: un cambio no altera los ejercicios anteriores ni las declaraciones ya presentadas.</p>
+    </div>
+
+    <div id="lg-par" class="stack" hidden>
+      <div class="panel">
+        <h2>Parámetros de cálculo</h2>
+        <table><thead><tr><th>Clave</th><th>Descripción</th><th class="num" id="lgParAnioTh">Vigente</th><th>Historial</th></tr></thead><tbody id="lgParBody"></tbody></table>
+        <span id="lgParMsg" role="status"></span>
+      </div>
+      <div class="panel">
+        <h2>Nuevo valor</h2>
+        <div class="cab2">
+          <label>Clave <input id="lgParClave" list="lgParClaves" autocomplete="off"></label><datalist id="lgParClaves"></datalist>
+          <label>Valor <input id="lgParValor" type="number" step="0.0001"></label>
+          <label>Rige desde <input id="lgParDesde" type="date"></label>
+          <label>Descripción <input id="lgParDesc" placeholder="(la de la clave si se deja vacía)"></label>
+        </div>
+        <div class="acciones"><button class="btn primario" id="lgParGuardar" type="button">Guardar</button><span id="lgParFormMsg" role="status"></span></div>
+        <p class="ayuda">Un valor con la misma clave y fecha se sustituye. Los porcentajes se escriben como porcentaje (25 = 25 %).</p>
+      </div>
+    </div>
+
+    <div id="lg-form" class="stack" hidden>
+      <div class="panel">
+        <h2>Versiones de las casillas</h2>
+        <table><thead><tr><th>Modelo</th><th>Desde el ejercicio</th><th>Comentario</th><th>Guardada</th><th></th></tr></thead><tbody id="lgFormBody"></tbody></table>
+        <span id="lgFormMsg" role="status"></span>
+      </div>
+      <div class="panel">
+        <h2>Editar el formulario de un modelo</h2>
+        <div class="cab2">
+          <label>Modelo <select id="lgFormModelo"></select></label>
+          <label>Desde el ejercicio <input id="lgFormDesde" type="number" min="2000" max="2100" step="1"></label>
+          <label>Comentario <input id="lgFormComent" placeholder="Orden HAC/…"></label>
+        </div>
+        <div class="acciones"><button class="btn" id="lgFormCargar" type="button">Cargar el vigente en el ejercicio</button></div>
+        <textarea id="lgFormJson" class="json" rows="18" spellcheck="false" aria-label="Definición del formulario (JSON)"></textarea>
+        <div class="acciones"><button class="btn primario" id="lgFormGuardar" type="button">Guardar versión</button><span id="lgFormFormMsg" role="status"></span></div>
+        <p class="ayuda">JSON con <code>apartados</code> (título, columnas y filas con texto y casillas; un texto acabado en * solo se ve si la casilla tiene importe), <code>totales</code> (casilla = suma de términos: <code>["01", ["28", -1]]</code> resta la 28), <code>resultado</code> y <code>renombrar</code> ({"casilla antigua": "nueva"}) cuando la AEAT cambia la numeración.</p>
+      </div>
+    </div>
+
+    <div id="lg-dis" class="stack" hidden>
+      <div class="panel">
+        <h2>Diseños de fichero</h2>
+        <div class="cab2"><label>Modelo <select id="lgDisFiltro"><option value="">Todos</option></select></label></div>
+        <table><thead><tr><th>Modelo</th><th>Desde</th><th>Hasta</th><th>Origen</th><th class="num">Longitud</th><th id="lgDisAnioTh">Vigente</th><th>Comentario</th><th></th></tr></thead><tbody id="lgDisBody"></tbody></table>
+        <span id="lgDisMsg" role="status"></span>
+      </div>
+      <div class="panel">
+        <h2>Nuevo diseño</h2>
+        <div class="cab2">
+          <label>Modelo <select id="lgDisModelo"></select></label>
+          <label>Desde <input id="lgDisDesde" type="date"></label>
+          <label>Hasta <input id="lgDisHasta" type="date"></label>
+          <label>Comentario <input id="lgDisComent" placeholder="Orden HAC/…"></label>
+        </div>
+        <div class="acciones"><button class="btn" id="lgDisCargar" type="button">Cargar el vigente en el ejercicio</button>
+          <button class="btn" id="lgDisAbrir" type="button">Abrir fichero .json</button>
+          <input id="lgDisFichero" type="file" accept=".json,application/json" hidden></div>
+        <textarea id="lgDisJson" class="json" rows="18" spellcheck="false" aria-label="Diseño del fichero (JSON)"></textarea>
+        <div class="acciones"><button class="btn primario" id="lgDisGuardar" type="button">Guardar diseño</button><span id="lgDisFormMsg" role="status"></span></div>
+        <p class="ayuda">Los elementos van en orden: <code>{"campo", "tipo": "An|Num|N", "longitud", "decimales", "clave"…}</code>, <code>{"literal"}</code> o <code>{"bloque", "coleccion", "elementos"}</code>. Un diseño guardado tiene preferencia sobre el del programa con la misma fecha.</p>
+      </div>
+    </div>
+  </div>
+
   <div id="adm-catalogos" class="stack" hidden>
     <div class="panel">
-      <h2>Catálogos</h2>
+      <h2 id="cgTitulo">Catálogos</h2>
       <div class="cab2">
-        <label>Catálogo <select id="cgTipo">
+        <label id="cgTipoL">Catálogo <select id="cgTipo">
           <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
           <option value="mod">Modelos fiscales</option><option value="pais">Países</option><option value="banco">Bancos</option>
           <option value="iae">Epígrafes del IAE</option><option value="fp">Formas de pago de una empresa</option></select></label>

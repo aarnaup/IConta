@@ -6,6 +6,7 @@ using Contabilidad.Api;
 using Contabilidad.Api.Endpoints;
 using Contabilidad.Api.Seguridad;
 using Contabilidad.Domain;
+using Contabilidad.Domain.Fiscal;
 using Contabilidad.Infrastructure;
 using Contabilidad.Infrastructure.Repositorios;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -156,8 +157,17 @@ try
         await next();
     });
 
+    // Legislación vigente (parámetros, formularios y diseños por fecha) para los cálculos de la petición
+    app.Use(async (ctx, next) =>
+    {
+        if (!ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/api/auth")) { await next(); return; }
+        var repo = ctx.RequestServices.GetRequiredService<ILegislacionRepositorio>();
+        using (Legislacion.Usar(await repo.ContextoAsync(ctx.RequestAborted))) await next();
+    });
+
     app.MapAuth();
     app.MapAdmin();
+    app.MapLegislacion();
     app.MapEmpresa();
     app.MapTesoreria();
     app.MapFiscal();

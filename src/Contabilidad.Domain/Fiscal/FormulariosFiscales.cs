@@ -32,20 +32,32 @@ public static class FormulariosFiscales
     /// Formulario del modelo para una declaración con las casillas <paramref name="presentes"/> (las calculadas y las escritas a mano).
     /// Las filas opcionales (tipos temporales, apartados poco usados) solo salen si tienen alguna casilla presente.
     /// </summary>
-    public static FormularioModelo Obtener(string modelo, IReadOnlyCollection<string> presentes)
+    /// <param name="anio">Año del periodo: se aplica la versión del formulario vigente (Administración → Legislación).</param>
+    public static FormularioModelo Obtener(string modelo, IReadOnlyCollection<string> presentes, int? anio = null)
     {
+        var a = anio ?? DateTime.Today.Year;
         var f = modelo switch
         {
             "303" => M303(),
             "420" => M420(presentes),
             "111" => M111(),
             "115" => M115(),
-            "130" => M130(),
+            "130" => M130(Legislacion.Parametro("IRPF_130_PCT", new DateOnly(a, 1, 1))),
             "309" => M309(),
             _ => null,
         };
-        return f is null ? Generico(modelo, presentes) : Filtrar(f, presentes);
+        f ??= Generico(modelo, presentes);
+        if (Legislacion.Formulario(modelo, a) is { } v) f = Legislacion.Aplicar(f, v.Definicion);
+        return Filtrar(f, presentes);
     }
+
+    /// <summary>Formulario del programa (sin versiones), para exportarlo al empezar una versión nueva.</summary>
+    public static FormularioModelo DelPrograma(string modelo, int anio) => modelo switch
+    {
+        "303" => M303(), "111" => M111(), "115" => M115(), "309" => M309(),
+        "130" => M130(Legislacion.Parametro("IRPF_130_PCT", new DateOnly(anio, 1, 1))),
+        _ => Generico(modelo, []),
+    };
 
     // Quita las filas «opcionales» (marcadas con * al final del texto) sin casillas presentes
     private static FormularioModelo Filtrar(FormularioModelo f, IReadOnlyCollection<string> presentes)
@@ -244,14 +256,14 @@ public static class FormulariosFiscales
     ], "05", false);
 
     // ------------------------------------------------------------------------------------------------ 130
-    private static FormularioModelo M130() => new("130",
+    private static FormularioModelo M130(decimal pct) => new("130",
     [
         new("I. Actividades económicas en estimación directa (acumulado del año)", ["Importe"],
         [
             F("Ingresos computables", "01"),
             F("Gastos fiscalmente deducibles", "02"),
             T("Rendimiento neto (01 − 02)", "03"),
-            T("20 % del rendimiento neto (si es positivo)", "04"),
+            T($"{pct:0.##} % del rendimiento neto (si es positivo)", "04"),
             F("A deducir: pagos fraccionados de trimestres anteriores", "05"),
             F("A deducir: retenciones e ingresos a cuenta soportados", "06"),
             T("Pago fraccionado previo (04 − 05 − 06)", "07"),
@@ -274,7 +286,7 @@ public static class FormulariosFiscales
     ],
     [
         new("03", [("01", 1), ("02", -1)]),
-        new("04", [], v => v("03") > 0 ? R(v("03") * 0.20m) : 0m),
+        new("04", [], v => v("03") > 0 ? R(v("03") * pct / 100m) : 0m),
         new("07", [("04", 1), ("05", -1), ("06", -1)]),
         new("12", [("07", 1), ("11", 1)]),
         new("14", [("12", 1), ("13", -1)]),

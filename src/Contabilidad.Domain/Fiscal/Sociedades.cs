@@ -69,15 +69,21 @@ public static class CalculadorSociedades
     private static decimal R(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
 
     /// <summary>Tipo (y, en las microempresas, el del primer tramo de 50.000 € y el del resto) del periodo que empieza en <paramref name="anio"/>.</summary>
-    public static (decimal Tramo1, decimal Resto) Tipos(TipoGravamenIs t, int anio) => t.Clase switch
+    /// <remarks>Los tipos son parámetros con fecha (Administración → Legislación): rige el del 1 de enero del año de inicio.</remarks>
+    public static (decimal Tramo1, decimal Resto) Tipos(TipoGravamenIs t, int anio)
     {
-        "NUEVA_CREACION" => (15m, 15m),
-        "REDUCIDA_DIMENSION" => anio switch { <= 2024 => (25m, 25m), 2025 => (24m, 24m), 2026 => (23m, 23m), 2027 => (22m, 22m), 2028 => (21m, 21m), _ => (20m, 20m) },
-        "MICRO" => anio switch { <= 2022 => (25m, 25m), <= 2024 => (23m, 23m), 2025 => (21m, 22m), 2026 => (19m, 21m), _ => (17m, 20m) },
-        "PERSONALIZADO" => (t.Porcentaje ?? throw new ReglaContableException("Indica el % del tipo de gravamen personalizado."),
-                            t.Porcentaje.Value),
-        _ => (25m, 25m),
-    };
+        var f = new DateOnly(anio, 1, 1);
+        decimal P(string clave) => Legislacion.Parametro(clave, f);
+        return t.Clase switch
+        {
+            "NUEVA_CREACION" => (P("IS_TIPO_NUEVA_CREACION"), P("IS_TIPO_NUEVA_CREACION")),
+            "REDUCIDA_DIMENSION" => (P("IS_TIPO_REDUCIDA_DIMENSION"), P("IS_TIPO_REDUCIDA_DIMENSION")),
+            "MICRO" => (P("IS_MICRO_TRAMO1"), P("IS_MICRO_RESTO")),
+            "PERSONALIZADO" => (t.Porcentaje ?? throw new ReglaContableException("Indica el % del tipo de gravamen personalizado."),
+                                t.Porcentaje.Value),
+            _ => (P("IS_TIPO_GENERAL"), P("IS_TIPO_GENERAL")),
+        };
+    }
 
     /// <summary>Cuota íntegra: en las microempresas los primeros 50.000 € (proporcionales si el periodo dura menos de un año) al tipo reducido.</summary>
     public static decimal CuotaIntegra(decimal baseImponible, TipoGravamenIs t, DateOnly inicio, DateOnly fin)
@@ -86,7 +92,8 @@ public static class CalculadorSociedades
         var (t1, resto) = Tipos(t, inicio.Year);
         if (t1 == resto) return R(baseImponible * t1 / 100m);
         var dias = fin.DayNumber - inicio.DayNumber + 1;
-        var tramo = dias >= 365 ? 50_000m : R(50_000m * dias / 365m);
+        var anual = Legislacion.Parametro("IS_MICRO_TRAMO", inicio);
+        var tramo = dias >= 365 ? anual : R(anual * dias / 365m);
         return R(Math.Min(baseImponible, tramo) * t1 / 100m + Math.Max(0, baseImponible - tramo) * resto / 100m);
     }
 
@@ -274,8 +281,9 @@ public static class CalculadorSociedades
         {
             var bas = Math.Max(0, e.BaseUltimoPeriodo);
             Add("01", "Base del pago fraccionado (cuota íntegra menos deducciones, bonificaciones y retenciones del último periodo declarado)", bas);
-            pago = R(bas * 0.18m);
-            Add("03", "A ingresar (18 % de la base)", pago);
+            var pct402 = Legislacion.Parametro("IS_202_PCT_40_2", d.FechaInicio != default ? d.FechaInicio : new DateOnly(e.AnioEjercicio, 1, 1));
+            pago = R(bas * pct402 / 100m);
+            Add("03", $"A ingresar ({pct402:0.##} % de la base)", pago);
             d.Resultado = pago;
         }
         d.AIngresar = d.Resultado;

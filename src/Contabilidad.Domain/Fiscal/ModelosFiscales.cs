@@ -53,6 +53,8 @@ public sealed class DeclaracionCalculada
     public string Periodo { get; init; } = "";
     public DateOnly FechaInicio { get; set; }
     public DateOnly FechaFin { get; set; }
+    /// <summary>Fecha con la que se busca la legislación vigente: el inicio del periodo o, si no se conoce, el 1 de enero del año.</summary>
+    public DateOnly FechaLegislacion => FechaInicio != default ? FechaInicio : new DateOnly(Math.Clamp(Anio, 1, 9999), 1, 1);
     public List<Casilla> Casillas { get; init; } = [];
     public decimal Resultado { get; set; }
     public decimal AIngresar { get; set; }

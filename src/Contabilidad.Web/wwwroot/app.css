@@ -172,6 +172,9 @@
       font:inherit; padding:6px 12px; border-radius:8px; cursor:pointer}
     header.lateral:not(.abierto) .contexto-lat, header.lateral:not(.abierto) nav, header.lateral:not(.abierto) .der{display:none}
     header.lateral .der{margin-top:0}
+    /* las tablas anchas se desplazan dentro de su panel, no la página entera */
+    main{padding:16px; min-width:0}
+    .panel{overflow-x:auto}
   }
 
   /* ---------------------------------------------------------------- rejilla de diario */
@@ -223,3 +226,13 @@
   table.mf .manual input,table.mf .manual .mf-v{background:color-mix(in srgb, var(--c2) 14%, var(--surface)); border-color:var(--c2)}
   table.mf .mf-v{display:inline-block; min-width:120px; padding:6px 9px; border:1px solid transparent; border-radius:6px; font-variant-numeric:tabular-nums}
   table.mf button.mf-rec{border:0; background:none; cursor:pointer; color:var(--c2); font-size:14px; padding:0 4px}
+
+  /* Legislación */
+  textarea.json{width:100%; box-sizing:border-box; font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink);
+    background:var(--surface); border:1px solid var(--line); border-radius:8px; padding:10px; resize:vertical; tab-size:2}
+  .lg-hist{display:inline-flex; align-items:center; gap:2px; margin:2px 8px 2px 0; padding:2px 4px 2px 8px; border:1px solid var(--line);
+    border-radius:999px; font-size:13px; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .lg-hist.lg-vig{border-color:var(--accent); background:color-mix(in srgb, var(--accent) 9%, var(--surface))}
+  tr.lg-vig td{background:color-mix(in srgb, var(--accent) 7%, var(--surface))}
+  button.btn.mini{padding:0 6px; border:0; background:none; color:var(--muted); font-size:15px; line-height:1}
+  button.btn.enlace{border:0; background:none; padding:0; color:var(--accent); font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px}

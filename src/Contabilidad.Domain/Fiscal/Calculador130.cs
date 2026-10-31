@@ -18,14 +18,15 @@ public static class Calculador130
     public static void Calcular(Entrada130 e, DeclaracionCalculada d)
     {
         var rendimiento = R(e.Ingresos - e.Gastos);
-        var veinte = rendimiento > 0 ? R(rendimiento * 0.20m) : 0m;
+        var pct = Legislacion.Parametro("IRPF_130_PCT", d.FechaLegislacion);
+        var veinte = rendimiento > 0 ? R(rendimiento * pct / 100m) : 0m;
         var resultado = R(veinte - e.PagosAnteriores - e.Retenciones);
 
         d.Casillas.AddRange([
             new("01", "Ingresos computables (acumulado del año)", R(e.Ingresos)),
             new("02", "Gastos fiscalmente deducibles (acumulado del año)", R(e.Gastos)),
             new("03", "Rendimiento neto (01 − 02)", rendimiento),
-            new("04", "20 % del rendimiento neto (si es positivo)", veinte),
+            new("04", $"{pct:0.##} % del rendimiento neto (si es positivo)", veinte),
             new("05", "Pagos fraccionados de trimestres anteriores", R(e.PagosAnteriores)),
             new("06", "Retenciones e ingresos a cuenta soportados (acumulado)", R(e.Retenciones)),
             new("07", "Pago fraccionado previo (04 − 05 − 06)", resultado),

@@ -3020,8 +3020,10 @@ async function entrarAdmin() {
 
 function abreTabAdmin(t) {
   $$('#navAdmin button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === t)));
-  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas'; $('#adm-catalogos').hidden = t !== 'catalogos';
-  ({ usuarios: cargaUsuarios, empresas: cargaEmpresasAdmin, catalogos: cargaCatalogos })[t]().catch(e => alert(e.message));
+  $('#adm-usuarios').hidden = t !== 'usuarios'; $('#adm-empresas').hidden = t !== 'empresas';
+  $('#adm-catalogos').hidden = t !== 'catalogos'; $('#adm-legislacion').hidden = t !== 'legislacion';
+  if (t === 'catalogos') modoCatalogos(false);
+  ({ usuarios: cargaUsuarios, empresas: cargaEmpresasAdmin, catalogos: cargaCatalogos, legislacion: cargaLegislacion })[t]().catch(e => alert(e.message));
 }
 $('#navAdmin').addEventListener('click', e => { const b = e.target.closest('button[data-tab]'); if (b) abreTabAdmin(b.dataset.tab); });
 
@@ -3094,6 +3096,15 @@ const CAT = {
 };
 const CA = { filas: [], sel: null };
 
+// Los tipos de IVA y de retención se gestionan en Legislación (con sus vigencias); Catálogos tiene el resto.
+function modoCatalogos(legislacion, tipo) {
+  $$('#cgTipo option').forEach(o => { o.hidden = !legislacion && ['iva', 'ret'].includes(o.value); });
+  $('#cgTipoL').hidden = legislacion;
+  $('#cgTitulo').textContent = legislacion ? $('#lgTipo').selectedOptions[0].textContent : 'Catálogos';
+  if (legislacion) $('#cgTipo').value = tipo;
+  else if (['iva', 'ret'].includes($('#cgTipo').value)) $('#cgTipo').value = 'mod';
+}
+
 async function cargaCatalogos() {
   if (!$('#cgEmpresa').options.length) {
     const emps = await api('/api/admin/empresas');
@@ -3136,6 +3147,153 @@ function formCatalogo(fila) {
     msg($('#cgVigMsg'), '');
   }
 }
+
+// ---- legislación por ejercicio: parámetros con fecha «desde», casillas de los modelos por año y diseños de fichero
+const MODELOS_FORM = ['303', '420', '111', '115', '130', '131', '309', '347', '349', '390', '425', '190', '180', '200', '202'];
+const LG = { par: [], disenos: [] };
+const lgAnio = () => +$('#lgAnio').value || new Date().getFullYear();
+const lgErr = (sel, err) => msg($(sel), err.message, 'ayuda err-texto');
+
+async function cargaLegislacion() {
+  if (!$('#lgAnio').value) $('#lgAnio').value = new Date().getFullYear();
+  if (!$('#lgFormModelo').options.length) $('#lgFormModelo').innerHTML = MODELOS_FORM.map(m => `<option>${m}</option>`).join('');
+  const t = $('#lgTipo').value;
+  $('#lg-par').hidden = t !== 'par'; $('#lg-form').hidden = t !== 'form'; $('#lg-dis').hidden = t !== 'dis';
+  $('#lgAnioL').hidden = ['iva', 'ret'].includes(t);
+  $('#adm-catalogos').hidden = !['iva', 'ret'].includes(t);
+  if (['iva', 'ret'].includes(t)) { modoCatalogos(true, t); await cargaCatalogos(); return; }
+  await ({ par: pintaParametros, form: pintaFormularios, dis: pintaDisenos })[t]();
+}
+
+// El valor que rige en una fecha es el de «desde» más reciente que no la supera
+const vigenteEn = (lista, fecha) => lista.filter(x => x.desde <= fecha).sort((a, b) => a.desde < b.desde ? 1 : -1)[0];
+
+async function pintaParametros() {
+  LG.par = await api('/api/admin/legislacion/parametros');
+  const fecha = `${lgAnio()}-01-01`;
+  const claves = [...new Set(LG.par.map(p => p.clave))];
+  $('#lgParAnioTh').textContent = `Vigente en ${lgAnio()}`;
+  $('#lgParClaves').innerHTML = claves.map(c => `<option value="${c}">`).join('');
+  $('#lgParBody').innerHTML = claves.map(c => {
+    const lista = LG.par.filter(p => p.clave === c);
+    const v = vigenteEn(lista, fecha);
+    return `<tr><td><button class="btn enlace" type="button" data-usa="${c}">${esc(c)}</button></td><td>${esc(lista[lista.length - 1].descripcion)}</td>
+      <td class="num"><b>${v ? fmt(v.valor) : '—'}</b></td>
+      <td>${lista.map(p => `<span class="lg-hist${p === v ? ' lg-vig' : ''}">${fmt(p.valor)} desde ${fechaES(p.desde)}
+        <button class="btn mini" type="button" data-borra="${p.id}" title="Borrar este valor" aria-label="Borrar ${esc(c)} desde ${fechaES(p.desde)}">×</button></span>`).join(' ')}</td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="vacio">No hay parámetros.</td></tr>';
+}
+
+$('#lgParBody').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.usa) {
+    const ult = LG.par.filter(p => p.clave === b.dataset.usa).pop();
+    $('#lgParClave').value = ult.clave; $('#lgParValor').value = ult.valor; $('#lgParDesc').value = ult.descripcion;
+    $('#lgParDesde').value = `${lgAnio()}-01-01`; $('#lgParValor').focus(); return;
+  }
+  if (b.dataset.borra && confirm('¿Borrar este valor? Los periodos afectados pasan a usar el anterior.')) {
+    try { await api(`/api/admin/legislacion/parametros/${b.dataset.borra}`, { method: 'DELETE' }); await pintaParametros(); msg($('#lgParMsg'), 'Borrado.', 'ayuda ok-texto'); }
+    catch (err) { lgErr('#lgParMsg', err); }
+  }
+});
+$('#lgParGuardar').onclick = async () => {
+  try {
+    if (!$('#lgParDesde').value || $('#lgParValor').value === '') throw new Error('Indica el valor y la fecha desde la que rige.');
+    await post('/api/admin/legislacion/parametros', { clave: $('#lgParClave').value, desde: $('#lgParDesde').value,
+      valor: +$('#lgParValor').value, descripcion: $('#lgParDesc').value || null });
+    await pintaParametros(); msg($('#lgParFormMsg'), 'Guardado.', 'ayuda ok-texto');
+  } catch (err) { lgErr('#lgParFormMsg', err); }
+};
+
+async function pintaFormularios() {
+  const vs = await api('/api/admin/legislacion/formularios');
+  $('#lgFormBody').innerHTML = vs.map(v => `<tr><td>${esc(v.modelo)}</td><td>${v.desdeAnio}</td><td>${esc(v.comentario || '')}</td>
+    <td>${new Date(v.creadoEn).toLocaleString('es-ES')}</td>
+    <td><button class="btn" type="button" data-ver="${esc(v.modelo)}|${v.desdeAnio}">Editar</button>
+      <button class="btn" type="button" data-borra="${v.id}">Borrar</button></td></tr>`).join('')
+    || '<tr><td colspan="5" class="vacio">Sin versiones: se usan las casillas del programa.</td></tr>';
+  if (!$('#lgFormDesde').value) $('#lgFormDesde').value = lgAnio();
+}
+async function cargaFormulario(modelo, anio) {
+  const txt = await api(`/api/admin/legislacion/formularios/${modelo}/${anio}`);
+  $('#lgFormModelo').value = modelo;
+  $('#lgFormJson').value = JSON.stringify(typeof txt === 'string' ? JSON.parse(txt) : txt, null, 2);
+}
+$('#lgFormCargar').onclick = () => cargaFormulario($('#lgFormModelo').value, lgAnio())
+  .then(() => msg($('#lgFormFormMsg'), `Cargado el formulario vigente en ${lgAnio()}.`, 'ayuda ok-texto')).catch(e => lgErr('#lgFormFormMsg', e));
+$('#lgFormBody').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  try {
+    if (b.dataset.ver) { const [m, a] = b.dataset.ver.split('|'); $('#lgFormDesde').value = a; await cargaFormulario(m, +a); $('#lgFormJson').focus(); return; }
+    if (b.dataset.borra && confirm('¿Borrar la versión? Esos ejercicios vuelven a usar la anterior.')) {
+      await api(`/api/admin/legislacion/formularios/${b.dataset.borra}`, { method: 'DELETE' }); await pintaFormularios(); msg($('#lgFormMsg'), 'Borrada.', 'ayuda ok-texto');
+    }
+  } catch (err) { lgErr('#lgFormMsg', err); }
+});
+$('#lgFormGuardar').onclick = async () => {
+  try {
+    const def = $('#lgFormJson').value.trim(); if (!def) throw new Error('Carga o escribe la definición.');
+    try { JSON.parse(def); } catch (x) { throw new Error('El JSON no es válido: ' + x.message); }
+    await post('/api/admin/legislacion/formularios', { modelo: $('#lgFormModelo').value, desdeAnio: +$('#lgFormDesde').value,
+      definicion: def, comentario: $('#lgFormComent').value || null });
+    await pintaFormularios(); msg($('#lgFormFormMsg'), `Guardada la versión de ${$('#lgFormModelo').value} desde ${$('#lgFormDesde').value}.`, 'ayuda ok-texto');
+  } catch (err) { lgErr('#lgFormFormMsg', err); }
+};
+
+async function pintaDisenos() {
+  LG.disenos = await api('/api/admin/legislacion/disenos');
+  const modelos = [...new Set(LG.disenos.map(d => d.modelo))];
+  if ($('#lgDisModelo').options.length !== modelos.length) {
+    $('#lgDisModelo').innerHTML = modelos.map(m => `<option>${m}</option>`).join('');
+    $('#lgDisFiltro').innerHTML = '<option value="">Todos</option>' + modelos.map(m => `<option>${m}</option>`).join('');
+  }
+  const a = lgAnio(), f = $('#lgDisFiltro').value;
+  $('#lgDisAnioTh').textContent = `Vigente en ${a}`;
+  // El vigente en el año: el de «desde» más reciente que empezó antes de que acabe el año (los guardados ganan a igual fecha)
+  const vig = {};
+  for (const m of modelos) {
+    const c = LG.disenos.filter(d => d.modelo === m && d.desde <= `${a}-12-31` && (!d.hasta || d.hasta >= `${a}-01-01`))
+      .sort((x, y) => x.desde === y.desde ? (x.origen === 'Guardado' ? -1 : 1) : (x.desde < y.desde ? 1 : -1))[0];
+    if (c) vig[m] = c;
+  }
+  $('#lgDisBody').innerHTML = LG.disenos.filter(d => !f || d.modelo === f).map((d, i) => `<tr${vig[d.modelo] === d ? ' class="lg-vig"' : ''}>
+    <td>${esc(d.modelo)}</td><td>${fechaES(d.desde)}</td><td>${d.hasta ? fechaES(d.hasta) : ''}</td><td>${d.origen}</td><td class="num">${d.longitud || ''}</td>
+    <td>${vig[d.modelo] === d ? '✓' : ''}</td><td>${esc(d.comentario || '')}</td>
+    <td>${d.id ? `<button class="btn" type="button" data-borra="${d.id}">Borrar</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="8" class="vacio">No hay diseños.</td></tr>';
+}
+$('#lgDisFiltro').onchange = () => pintaDisenos().catch(e => lgErr('#lgDisMsg', e));
+$('#lgDisCargar').onclick = async () => {
+  try {
+    const txt = await api(`/api/admin/legislacion/disenos/${$('#lgDisModelo').value}/${lgAnio()}`);
+    $('#lgDisJson').value = JSON.stringify(typeof txt === 'string' ? JSON.parse(txt) : txt, null, 2);
+    if (!$('#lgDisDesde').value) $('#lgDisDesde').value = `${lgAnio()}-01-01`;
+    msg($('#lgDisFormMsg'), `Cargado el diseño vigente en ${lgAnio()}: cámbialo y guárdalo con su fecha.`, 'ayuda ok-texto');
+  } catch (err) { lgErr('#lgDisFormMsg', err); }
+};
+$('#lgDisAbrir').onclick = () => $('#lgDisFichero').click();
+$('#lgDisFichero').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  $('#lgDisJson').value = await f.text(); e.target.value = '';
+  try { const j = JSON.parse($('#lgDisJson').value); if (j.modelo) $('#lgDisModelo').value = j.modelo; } catch { /* se avisa al guardar */ }
+};
+$('#lgDisBody').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-borra]'); if (!b || !confirm('¿Borrar el diseño guardado?')) return;
+  try { await api(`/api/admin/legislacion/disenos/${b.dataset.borra}`, { method: 'DELETE' }); await pintaDisenos(); msg($('#lgDisMsg'), 'Borrado.', 'ayuda ok-texto'); }
+  catch (err) { lgErr('#lgDisMsg', err); }
+});
+$('#lgDisGuardar').onclick = async () => {
+  try {
+    const def = $('#lgDisJson').value.trim(); if (!def) throw new Error('Carga o pega el diseño.');
+    try { JSON.parse(def); } catch (x) { throw new Error('El JSON no es válido: ' + x.message); }
+    if (!$('#lgDisDesde').value) throw new Error('Indica desde cuándo rige.');
+    await post('/api/admin/legislacion/disenos', { modelo: $('#lgDisModelo').value, desde: $('#lgDisDesde').value,
+      hasta: $('#lgDisHasta').value || null, definicion: def, comentario: $('#lgDisComent').value || null });
+    await pintaDisenos(); msg($('#lgDisFormMsg'), 'Guardado.', 'ayuda ok-texto');
+  } catch (err) { lgErr('#lgDisFormMsg', err); }
+};
+$('#lgTipo').onchange = () => cargaLegislacion().catch(e => alert(e.message));
+$('#lgAnio').onchange = $('#lgTipo').onchange;
 
 $('#cgTipo').onchange = () => pintaCatalogo().catch(e => msg($('#cgMsg'), e.message, 'ayuda err-texto'));
 $('#cgEmpresa').onchange = $('#cgTipo').onchange;

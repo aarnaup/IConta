@@ -57,13 +57,17 @@ public static class FicheroModelo
 
     public static readonly string[] Modelos = ["303", "390", "111", "115", "130", "131", "309", "347", "349", "190", "180", "200", "202"];
 
-    private static IEnumerable<DisenoAeat> Disenos => DisenosAeat.Todos.Concat(DisenosAeatOficiales.Todos).Append(Diseno180.M180);
+    /// <summary>Diseños del programa (generados desde los oficiales de la AEAT).</summary>
+    public static IEnumerable<DisenoAeat> DelPrograma => DisenosAeat.Todos.Concat(DisenosAeatOficiales.Todos).Append(Diseno180.M180);
+
+    // Los guardados en Administración → Legislación van primero: con la misma fecha de inicio tienen preferencia
+    private static IEnumerable<DisenoAeat> Disenos => Legislacion.Disenos.Concat(DelPrograma);
 
     public static DisenoAeat Diseno(string modelo, int anio)
     {
         var inicio = new DateOnly(anio, 1, 1);
-        return Disenos.Where(d => d.Modelo == modelo && d.Desde <= inicio && (d.Hasta is null || d.Hasta >= inicio))
-                   .OrderByDescending(d => d.Desde).FirstOrDefault()
+        return Disenos.Select((d, i) => (d, i)).Where(x => x.d.Modelo == modelo && x.d.Desde <= inicio && (x.d.Hasta is null || x.d.Hasta >= inicio))
+                   .OrderByDescending(x => x.d.Desde).ThenBy(x => x.i).Select(x => x.d).FirstOrDefault()
                ?? throw new ReglaContableException($"No hay diseño de registro del modelo {modelo} para {anio}.",
                    Disenos.Any(d => d.Modelo == modelo)
                        ? $"Disponible desde {Disenos.Where(d => d.Modelo == modelo).Min(d => d.Desde).Year}."

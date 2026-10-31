@@ -51,5 +51,6 @@ public sealed class InfrastructureModule(string connectionString, SiiOpciones? s
         builder.RegisterType<SociedadesRepositorio>().As<ISociedadesRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<PresupuestoRepositorio>().As<IPresupuestoRepositorio>().InstancePerLifetimeScope();
         builder.RegisterType<ImportacionA3Repositorio>().As<IImportacionA3Repositorio>().InstancePerLifetimeScope();
+        builder.RegisterType<LegislacionRepositorio>().As<ILegislacionRepositorio>().InstancePerLifetimeScope();
     }
 }

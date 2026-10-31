@@ -195,6 +195,11 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 break;
         }
 
+        // Numeración de casillas de la versión del formulario del año (si la AEAT las renumeró)
+        foreach (var (vieja, nueva) in Legislacion.Renombrar(modelo.Codigo, p.Anio))
+            for (var i = 0; i < d.Casillas.Count; i++)
+                if (d.Casillas[i].Clave == vieja) d.Casillas[i] = d.Casillas[i] with { Clave = nueva };
+
         // Correcciones de periodos anteriores ya presentados que se llevan a este
         var (ajustes, origenes) = await CorreccionesRecibidasAsync(cn, tx, empresaId, modelo.Codigo, p.Anio, p.Codigo, ct);
         if (ajustes.Count > 0)
@@ -969,7 +974,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         => new(id, m.Codigo, m.Nombre, estado, d.Anio, d.Periodo, d.FechaInicio, d.FechaFin, d.Casillas, d.Resultado, d.AIngresar,
                d.ADevolver, d.ACompensar, d.Avisos, d.Detalle, d.PlazoDesde, d.PlazoHasta)
            {
-               Formulario = FormularioDe(d.Modelo, d.Casillas.Select(c => c.Clave).ToList()),
+               Formulario = FormularioDe(d.Modelo, d.Casillas.Select(c => c.Clave).ToList(), d.Anio),
                Calculadas = calculadas ?? Valores(d), Manuales = manuales?.ToList() ?? [], CorreccionesRecibidas = d.CorreccionesRecibidas
            };
 
@@ -1123,7 +1128,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
         return new DeclaracionVista(f.Id, f.Codigo, f.Nombre, f.Estado, f.Anio, f.Periodo, f.FechaInicio, f.FechaFin, casillas,
             f.Resultado ?? 0, f.AIngresar ?? 0, f.ADevolver ?? 0, f.ACompensar ?? 0, avisos, detalle, pd, ph, f.NumeroPresentacion, f.TipoDeclaracion)
         {
-            Formulario = FormularioDe(f.Codigo, casillas.Select(c => c.Clave).ToList()),
+            Formulario = FormularioDe(f.Codigo, casillas.Select(c => c.Clave).ToList(), f.Anio),
             Calculadas = calculadas, Manuales = Diccionario(f.Manuales).Keys.ToList(), CorreccionesRecibidas = origenes,
             Correccion = f.Estado == "PRESENTADA" ? await CorreccionGuardadaAsync(cn, f.Id, ct) : null,
         };
@@ -1188,9 +1193,9 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
     private static Dictionary<string, decimal> Diccionario(string? json)
         => string.IsNullOrWhiteSpace(json) ? [] : JsonSerializer.Deserialize<Dictionary<string, decimal>>(json) ?? [];
 
-    private static FormularioDto FormularioDe(string modelo, IReadOnlyCollection<string> casillas)
+    private static FormularioDto FormularioDe(string modelo, IReadOnlyCollection<string> casillas, int anio)
     {
-        var f = FormulariosFiscales.Obtener(modelo, casillas);
+        var f = FormulariosFiscales.Obtener(modelo, casillas, anio);
         return new FormularioDto(
             f.Apartados.Select(a => new ApartadoFormularioDto(a.Titulo, a.Columnas, a.Filas.Select(x => new FilaFormularioDto(x.Texto, x.Casillas, x.Total)).ToList())).ToList(),
             f.CasillasTotales.ToList(), f.CasillaResultado);
@@ -1211,7 +1216,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
     {
         if (ajustes.Count == 0 && manuales.Count == 0) return;
         var calc = Valores(d);
-        var f = FormulariosFiscales.Obtener(d.Modelo, calc.Keys.Union(ajustes.Keys).Union(manuales.Keys).ToList());
+        var f = FormulariosFiscales.Obtener(d.Modelo, calc.Keys.Union(ajustes.Keys).Union(manuales.Keys).ToList(), d.Anio);
         var v = FormulariosFiscales.Recalcular(f, calc, ajustes, manuales);
         for (var i = 0; i < d.Casillas.Count; i++)
             if (v.TryGetValue(d.Casillas[i].Clave, out var x)) d.Casillas[i] = d.Casillas[i] with { Importe = x };
@@ -1274,7 +1279,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
                 else manuales[clave] = Math.Round(v.Value, 2, MidpointRounding.AwayFromZero);
             }
 
-            var form = FormulariosFiscales.Obtener(f.Codigo, calc.Keys.Union(manuales.Keys).ToList());
+            var form = FormulariosFiscales.Obtener(f.Codigo, calc.Keys.Union(manuales.Keys).ToList(), f.Anio);
             var valores = FormulariosFiscales.Recalcular(form, calc, Vacio, manuales);
             var solicita = false;
             if (!string.IsNullOrWhiteSpace(f.Opciones))
@@ -1339,7 +1344,7 @@ public sealed class FiscalRepositorio(IConexionFactory conexiones) : IFiscalRepo
             "SELECT casilla, texto, importe FROM fiscal.declaracion_casilla WHERE declaracion_id = @declaracionId",
             new { declaracionId }, tx, cancellationToken: ct))).ToDictionary(c => c.Casilla);
         var vAhora = Valores(ahora);
-        var form = FormulariosFiscales.Obtener(f.Codigo, vAhora.Keys.Union(presentado.Keys).ToList());
+        var form = FormulariosFiscales.Obtener(f.Codigo, vAhora.Keys.Union(presentado.Keys).ToList(), f.Anio);
 
         var diferencias = new List<DiferenciaCorreccionDto>();
         foreach (var k in vAhora.Keys.Union(presentado.Keys).Order(StringComparer.Ordinal))

@@ -22,7 +22,8 @@ public static class Calculador347
             })
             .ToList();
 
-        var declaradas = filas.Where(f => f.Total > Umbral).OrderBy(f => f.Clave).ThenBy(f => f.Nombre).ToList();
+        var umbral = Legislacion.Parametro("IVA_347_UMBRAL", d.FechaLegislacion);
+        var declaradas = filas.Where(f => f.Total > umbral).OrderBy(f => f.Clave).ThenBy(f => f.Nombre).ToList();
         foreach (var f in declaradas.Where(f => string.IsNullOrWhiteSpace(f.Nif)))
             d.Avisos.Add($"{f.Nombre} no tiene NIF.");
 
@@ -34,7 +35,7 @@ public static class Calculador347
         ]);
         d.Detalle = declaradas;
         d.Avisos.Add("No se incluyen los cobros en metálico superiores a 6.000 €, los arrendamientos con retención ni las operaciones intracomunitarias, importaciones o con criterio de caja.");
-        var cercanos = filas.Count(f => f.Total <= Umbral && f.Total > Umbral * 0.9m);
-        if (cercanos > 0) d.Avisos.Add($"{cercanos} tercero(s) quedan justo por debajo del umbral de {Umbral:N2} €.");
+        var cercanos = filas.Count(f => f.Total <= umbral && f.Total > umbral * 0.9m);
+        if (cercanos > 0) d.Avisos.Add($"{cercanos} tercero(s) quedan justo por debajo del umbral de {umbral:N2} €.");
     }
 }
