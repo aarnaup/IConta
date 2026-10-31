@@ -3292,7 +3292,9 @@ $('#lgDisGuardar').onclick = async () => {
     await pintaDisenos(); msg($('#lgDisFormMsg'), 'Guardado.', 'ayuda ok-texto');
   } catch (err) { lgErr('#lgDisFormMsg', err); }
 };
-// ---- cuentas de cada partida del balance y la PyG del 200
+// ---- cuentas de cada partida del balance y la PyG (cuentas anuales y 200)
+const NOMBRE_ESTADO = { BALANCE: 'Balance (PYMES/abreviado)', PYG: 'PyG (PYMES/abreviada)', BALANCE_NORMAL: 'Balance (normal)',
+  PYG_NORMAL: 'PyG (normal)', BALANCE_200: 'Balance del 200', PYG_200: 'PyG del 200' };
 const CONCEPTOS = { Saldo: 'Saldo', SaldoDeudor: 'Saldo deudor', SaldoAcreedor: 'Saldo acreedor', Debe: 'Debe', Haber: 'Haber' };
 const EST = { dto: null, edita: null };
 // Igual que el servidor: el saldo sigue el sentido de la partida; el debe y el haber se suman o se restan tal cual
@@ -3307,7 +3309,7 @@ async function cargaEstado() {
   if (!$('#lgEstEdit').hidden) cierraEdicionEstado();
   pintaEstado();
   const vs = await api('/api/admin/legislacion/estados');
-  $('#lgEstVers').innerHTML = vs.map(v => `<tr><td>${v.modelo === 'BALANCE_200' ? 'Balance' : 'Pérdidas y ganancias'}</td><td>${v.desdeAnio}</td>
+  $('#lgEstVers').innerHTML = vs.map(v => `<tr><td>${NOMBRE_ESTADO[v.modelo] || esc(v.modelo)}</td><td>${v.desdeAnio}</td>
     <td>${esc(v.comentario || '')}</td><td>${new Date(v.creadoEn).toLocaleString('es-ES')}</td>
     <td><button class="btn" type="button" data-borra="${v.id}">Borrar</button></td></tr>`).join('')
     || '<tr><td colspan="5" class="vacio">Sin versiones.</td></tr>';
@@ -3322,7 +3324,7 @@ function pintaEstado() {
   if (esNum) { let largo = 0; for (const p of EST.dto.partidas) for (const c of p.cuentas)
     if (q.startsWith(c.cuenta) && c.cuenta.length > largo) { largo = c.cuenta.length; destino = p.id; } }
   $('#lgEstBody').innerHTML = filas.map(p => `<tr class="${p.suma ? 'lg-total' : ''}${p.id === destino ? ' lg-vig' : ''}">
-    <td>${p.id}</td><td>${esc(p.descripcion || '')}${p.acreedora ? '' : ''}</td>
+    <td>${esc(p.id)}</td><td style="padding-left:${8 + 14 * (p.nivel || 0)}px">${esc(p.descripcion || '')}</td>
     <td>${p.suma ? `<span class="lg-suma">= ${p.suma.join(' + ')}</span>`
       : p.cuentas.map(c => `<span class="lg-hist${esNum && (q.startsWith(c.cuenta) || c.cuenta.startsWith(q)) ? ' lg-vig' : ''}" title="${CONCEPTOS[c.concepto]}">${esc(c.cuenta)} <small>${esc(c.calculo)}</small></span>`).join(' ')
         || '<span class="ayuda">sin cuentas</span>'}</td>
@@ -3343,7 +3345,7 @@ function recalcEstado() {
 }
 function editaEstado(id) {
   const p = EST.dto.partidas.find(x => x.id === id); EST.edita = id;
-  $('#lgEstTitulo').textContent = `Casilla ${p.id} · ${p.descripcion || ''}${p.acreedora ? ' (patrimonio neto, pasivo o ingreso)' : ' (activo o gasto)'}`;
+  $('#lgEstTitulo').textContent = `${p.id} · ${p.descripcion || ''}${p.acreedora ? ' (patrimonio neto, pasivo o ingreso)' : ' (activo o gasto)'}`;
   $('#lgEstCuentas').innerHTML = p.cuentas.map(filaCuentaEstado).join('');
   if (!$('#lgEstDesde').value) $('#lgEstDesde').value = lgAnio();
   $('#lgEstEdit').hidden = false; msg($('#lgEstFormMsg'), ''); recalcEstado();
@@ -3368,7 +3370,7 @@ $('#lgEstGuardar').onclick = async () => {
     const id = EST.edita;
     if (desde > lgAnio()) { $('#lgAnio').value = desde; }
     await cargaEstado();
-    msg($('#lgEstMsg'), `Guardada la casilla ${id}: rige desde ${desde}.`, 'ayuda ok-texto');
+    msg($('#lgEstMsg'), `Guardada la partida ${id}: rige desde ${desde}.`, 'ayuda ok-texto');
   } catch (err) { lgErr('#lgEstFormMsg', err); }
 };
 $('#lgEstVers').addEventListener('click', async e => {

@@ -43,11 +43,14 @@ public class Estados200LegislacionTests
     [Fact]
     public void El_estado_del_programa_se_exporta_e_importa_igual()
     {
-        foreach (var c in Estados200.Codigos)
+        Assert.Equal(6, EstadosLegislados.Codigos.Count());
+        foreach (var c in EstadosLegislados.Codigos)
         {
-            var m = Estados200.DelPrograma(c);
-            var m2 = Estados200.Importar(m, Estados200.Exportar(m));
-            Assert.Equal(m.Partidas.Select(p => (p.Id, p.Acreedora, p.Cuentas ?? "", p.Suma)), m2.Partidas.Select(p => (p.Id, p.Acreedora, p.Cuentas ?? "", p.Suma)));
+            var m = EstadosLegislados.DelPrograma(c);
+            EstadosLegislados.Validar(m);
+            var m2 = EstadosLegislados.Importar(m, EstadosLegislados.Exportar(m));
+            Assert.Equal(m.Partidas.Select(p => (p.Id, p.Texto, p.Nivel, p.Acreedora, p.Cuentas ?? "", p.Suma)),
+                m2.Partidas.Select(p => (p.Id, p.Texto, p.Nivel, p.Acreedora, p.Cuentas ?? "", p.Suma)));
         }
     }
 
@@ -60,6 +63,20 @@ public class Estados200LegislacionTests
         {
             Assert.Equal("204", Estados200.Modelo(Estados200.CodigoBalance, 2026).Partidas.First(p => p.Id == "00106").Cuentas);
             Assert.Equal("204 2804", Estados200.Modelo(Estados200.CodigoBalance, 2027).Partidas.First(p => p.Id == "00106").Cuentas);
+        }
+    }
+
+    [Fact]
+    public void Las_cuentas_anuales_usan_la_version_de_su_ejercicio()
+    {
+        var m = ModelosEstados.Balance;
+        var cambiado = m with { Partidas = m.Partidas.Select(p => p.Id == "AVI" ? p with { Cuentas = "474 4709:DEBE" } : p).ToList() };
+        using (Legislacion.Usar(new ContextoLegislacion([], [new VersionFormulario("BALANCE", 2027, EstadosLegislados.Exportar(cambiado))], [])))
+        {
+            Assert.Equal("474", EstadosLegislados.Modelo("BALANCE", 2026).Partidas.First(p => p.Id == "AVI").Cuentas);
+            var v = EstadosLegislados.Modelo("BALANCE", 2028);
+            Assert.Equal("474 4709:DEBE", v.Partidas.First(p => p.Id == "AVI").Cuentas);
+            Assert.Equal("VI. Activos por impuesto diferido", v.Partidas.First(p => p.Id == "AVI").Texto);
         }
     }
 

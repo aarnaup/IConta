@@ -48,7 +48,7 @@ public sealed class GuardarDisenoCmd
     public string? Comentario { get; set; }
 }
 
-// ---- Composición del balance y la PyG del modelo 200 (qué cuentas van a cada partida)
+// ---- Composición del balance y la PyG (cuentas anuales y modelo 200): qué cuentas van a cada partida
 
 public sealed class CuentaPartidaDto
 {
@@ -64,6 +64,8 @@ public sealed class PartidaEstadoDto
 {
     public string Id { get; set; } = "";
     public string? Descripcion { get; set; }
+    /// <summary>Sangría: 0 grandes masas, 1 epígrafes, 2 partidas…</summary>
+    public int Nivel { get; set; }
     /// <summary>De pasivo, patrimonio neto o ingreso: el saldo acreedor sale en positivo.</summary>
     public bool Acreedora { get; set; }
     /// <summary>Si es un total: partidas que suma.</summary>
@@ -74,6 +76,7 @@ public sealed class PartidaEstadoDto
 public sealed class EstadoLegislacionDto
 {
     public string Codigo { get; set; } = "";
+    public string Nombre { get; set; } = "";
     public int Anio { get; set; }
     /// <summary>Año desde el que rige la versión aplicada; null si es la del programa.</summary>
     public int? Version { get; set; }

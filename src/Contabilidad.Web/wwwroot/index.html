@@ -247,7 +247,7 @@
           <option value="iva">Tipos de IVA / IGIC</option><option value="ret">Tipos de retención</option>
           <option value="par">Parámetros de cálculo</option><option value="form">Casillas de los modelos</option>
           <option value="dis">Diseños de fichero AEAT</option>
-          <option value="est">Balances del Impuesto sobre Sociedades (200)</option></select></label>
+          <option value="est">Composición de los balances (cuentas anuales y 200)</option></select></label>
         <label id="lgAnioL">Vigente en el ejercicio <input id="lgAnio" type="number" min="2000" max="2100" step="1"></label>
       </div>
       <p class="ayuda">Cada valor rige desde una fecha (o un año). Cada declaración usa lo vigente en su periodo: un cambio no altera los ejercicios anteriores ni las declaraciones ya presentadas.</p>
@@ -318,14 +318,17 @@
 
     <div id="lg-est" class="stack" hidden>
       <div class="panel">
-        <h2>Cuentas de cada partida del 200</h2>
+        <h2>Cuentas de cada partida</h2>
         <div class="cab2">
-          <label>Estado <select id="lgEstCodigo"><option value="BALANCE_200">Balance (páginas 3 a 5)</option>
-            <option value="PYG_200">Pérdidas y ganancias (páginas 6 a 8)</option></select></label>
-          <label>Buscar <input id="lgEstBusca" placeholder="cuenta (4709), casilla o texto" autocomplete="off"></label>
+          <label>Estado <select id="lgEstCodigo">
+            <option value="BALANCE">Balance · cuentas anuales PYMES y abreviadas</option><option value="PYG">Pérdidas y ganancias · PYMES y abreviadas</option>
+            <option value="BALANCE_NORMAL">Balance · cuentas anuales modelo normal</option><option value="PYG_NORMAL">Pérdidas y ganancias · modelo normal</option>
+            <option value="BALANCE_200">Balance · Impuesto sobre Sociedades (200)</option><option value="PYG_200">Pérdidas y ganancias · Impuesto sobre Sociedades (200)</option>
+          </select></label>
+          <label>Buscar <input id="lgEstBusca" placeholder="cuenta (4709), partida o texto" autocomplete="off"></label>
         </div>
         <p class="ayuda" id="lgEstInfo"></p>
-        <table class="lg-est"><thead><tr><th>Casilla</th><th>Partida</th><th>Cuentas</th><th></th></tr></thead><tbody id="lgEstBody"></tbody></table>
+        <table class="lg-est"><thead><tr><th>Código</th><th>Partida</th><th>Cuentas</th><th></th></tr></thead><tbody id="lgEstBody"></tbody></table>
         <span id="lgEstMsg" role="status"></span>
         <p class="ayuda">Cada cuenta va a la partida con el prefijo más largo que coincide. En una partida de activo o gasto el saldo es debe − haber y en una de patrimonio neto, pasivo o ingreso, haber − debe: las cuentas correctoras (amortizaciones, deterioros) restan solas. «Saldo deudor» o «acreedor» solo cuenta si el saldo es de ese lado; «Debe» y «Haber» toman la suma de los movimientos de ese lado, y «Suma» o «Resta» dice cómo entran en la partida.</p>
       </div>

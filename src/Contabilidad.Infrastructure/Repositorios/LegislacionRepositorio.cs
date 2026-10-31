@@ -209,14 +209,14 @@ public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegis
     // ------------------------------------------------------------------------------------------------ balance y PyG del 200
     public EstadoLegislacionDto Estado(string codigo, int anio)
     {
-        var m = Estados200.Modelo(codigo, anio);
-        var textos = Estados200.Descripciones(anio);
+        var m = EstadosLegislados.Modelo(codigo, anio);
+        var textos = Estados200.Codigos.Contains(codigo) ? Estados200.Descripciones(anio) : m.Partidas.ToDictionary(p => p.Id, p => p.Texto);
         return new EstadoLegislacionDto
         {
-            Codigo = codigo, Anio = anio, Version = Legislacion.Formulario(codigo, anio)?.DesdeAnio,
+            Codigo = codigo, Nombre = m.Nombre, Anio = anio, Version = Legislacion.Formulario(codigo, anio)?.DesdeAnio,
             Partidas = m.Partidas.Select(p => new PartidaEstadoDto
             {
-                Id = p.Id, Descripcion = textos.GetValueOrDefault(p.Id), Acreedora = p.Acreedora,
+                Id = p.Id, Descripcion = textos.GetValueOrDefault(p.Id), Nivel = p.Nivel, Acreedora = p.Acreedora,
                 Suma = p.Suma?.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
                 Cuentas = ReglaCuenta.Lista(p.Cuentas).Select(r => new CuentaPartidaDto
                     { Cuenta = r.Prefijo, Concepto = r.Concepto.ToString(), Resta = r.Resta, Calculo = r.Calculo(p.Acreedora) }).ToList(),
@@ -229,19 +229,24 @@ public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegis
         await using var cn = await conexiones.AbrirAsync(ct);
         return (await cn.QueryAsync<VersionFormularioDto>(new CommandDefinition(
             "SELECT id, modelo, desde_anio, comentario, creado_en FROM fiscal.formulario_version WHERE modelo = ANY(@c) ORDER BY modelo, desde_anio",
-            new { c = Estados200.Codigos }, cancellationToken: ct))).AsList();
+            new { c = EstadosLegislados.Codigos.ToArray() }, cancellationToken: ct))).AsList();
     }
 
     public async Task GuardarEstadoAsync(GuardarEstadoCmd cmd, CancellationToken ct)
     {
-        var baseM = Estados200.DelPrograma(cmd.Codigo);
+        var baseM = EstadosLegislados.DelPrograma(cmd.Codigo);
+        var previas = EstadosLegislados.Modelo(cmd.Codigo, cmd.DesdeAnio).Partidas.Concat(baseM.Partidas)
+            .GroupBy(p => p.Id).ToDictionary(g => g.Key, g => g.First());
+        string Texto(string id, string? descripcion) => previas.GetValueOrDefault(id)?.Texto ?? descripcion ?? id;
+        int Nivel(string id, int nivel) => previas.GetValueOrDefault(id)?.Nivel ?? nivel;
         if (cmd.DesdeAnio is < 2000 or > 2100) throw new ReglaContableException("Indica el año desde el que rige la versión.");
         if (cmd.Partidas.Count == 0) throw new ReglaContableException("El estado no tiene partidas.");
         var partidas = cmd.Partidas.Select(p =>
         {
             var id = (p.Id ?? "").Trim();
             if (id.Length == 0) throw new ReglaContableException("Hay una partida sin casilla.");
-            if (p.Suma is { Count: > 0 }) return new PartidaModelo(id, id, 1, p.Acreedora, Suma: string.Join(' ', p.Suma.Select(x => x.Trim())));
+            if (p.Suma is { Count: > 0 })
+                return new PartidaModelo(id, Texto(id, p.Descripcion), Nivel(id, p.Nivel), p.Acreedora, Suma: string.Join(' ', p.Suma.Select(x => x.Trim())));
             var reglas = p.Cuentas.Where(c => !string.IsNullOrWhiteSpace(c.Cuenta)).Select(c =>
             {
                 if (!Enum.TryParse<ConceptoCuenta>(c.Concepto, out var concepto))
@@ -250,15 +255,15 @@ public sealed class LegislacionRepositorio(IConexionFactory conexiones) : ILegis
                 if (!cuenta.All(char.IsAsciiDigit)) throw new ReglaContableException($"La cuenta «{cuenta}» de la partida {id} solo puede tener números.");
                 return new ReglaCuenta(cuenta, concepto, c.Resta).ToString();
             });
-            return new PartidaModelo(id, id, 2, p.Acreedora, string.Join(' ', reglas));
+            return new PartidaModelo(id, Texto(id, p.Descripcion), Nivel(id, p.Nivel), p.Acreedora, string.Join(' ', reglas));
         }).ToList();
         var m = baseM with { Partidas = partidas };
-        Estados200.Validar(m);
+        EstadosLegislados.Validar(m);
         await using var cn = await conexiones.AbrirAsync(ct);
         await cn.ExecuteAsync(new CommandDefinition("""
             INSERT INTO fiscal.formulario_version (modelo, desde_anio, definicion, comentario) VALUES (@modelo, @desde, @def::jsonb, @comentario)
             ON CONFLICT (modelo, desde_anio) DO UPDATE SET definicion = EXCLUDED.definicion, comentario = EXCLUDED.comentario, creado_en = now()
-            """, new { modelo = cmd.Codigo, desde = (short)cmd.DesdeAnio, def = Estados200.Exportar(m), comentario = cmd.Comentario }, cancellationToken: ct));
+            """, new { modelo = cmd.Codigo, desde = (short)cmd.DesdeAnio, def = EstadosLegislados.Exportar(m), comentario = cmd.Comentario }, cancellationToken: ct));
         Invalidar();
     }
 

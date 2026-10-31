@@ -111,7 +111,7 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
         var c = await ContextoAsync(cn, empresaId, ejercicioId, canalId, ct);
         var (d, h) = Fechas(c.Ejercicio, null, hasta);
         var normal = await NormalAsync(cn, empresaId, formato, ct);
-        var modelo = normal ? ModelosNormales.Balance : ModelosEstados.Balance;
+        var modelo = Vigente(normal ? ModelosNormales.Balance : ModelosEstados.Balance, c.Ejercicio);
         var e = await EstadoAsync(cn, empresaId, c, modelo, d, h, ct);
 
         var avisos = new List<string>();
@@ -134,7 +134,7 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
         var c = await ContextoAsync(cn, empresaId, ejercicioId, canalId, ct);
         var (d, h) = Fechas(c.Ejercicio, desde, hasta);
         var completo = d == c.Ejercicio.FechaInicio && h == c.Ejercicio.FechaFin;
-        var modelo = await NormalAsync(cn, empresaId, formato, ct) ? ModelosNormales.PerdidasGanancias : ModelosEstados.PerdidasGanancias;
+        var modelo = Vigente(await NormalAsync(cn, empresaId, formato, ct) ? ModelosNormales.PerdidasGanancias : ModelosEstados.PerdidasGanancias, c.Ejercicio);
         var e = await EstadoAsync(cn, empresaId, c, modelo, d, h, ct);
         var avisos = new List<string>();
         if (!completo && e.Anterior is not null) avisos.Add("El ejercicio anterior se muestra completo; el actual, solo del periodo elegido.");
@@ -184,9 +184,9 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
         var ej = c.Ejercicio;
         var movs = await MovimientosOrigenAsync(cn, empresaId, ej.Id, c.Canal.Id, ct);
         var apertura = await AperturaAsync(cn, empresaId, ej.Id, c.Canal.Id, ct);
-        var pyg = GeneradorEstados.Calcular(ModelosNormales.PerdidasGanancias, await SaldosAsync(cn, empresaId, c, ej.Id, ej.FechaInicio, ej.FechaFin, ct));
+        var pyg = GeneradorEstados.Calcular(Vigente(ModelosNormales.PerdidasGanancias, ej), await SaldosAsync(cn, empresaId, c, ej.Id, ej.FechaInicio, ej.FechaFin, ct));
         var e = GeneradorEcpn.Calcular(apertura, movs, pyg["RE"]);
-        var balance = GeneradorEstados.Calcular(ModelosNormales.Balance, await SaldosAsync(cn, empresaId, c, ej.Id, ej.FechaInicio, ej.FechaFin, ct));
+        var balance = GeneradorEstados.Calcular(Vigente(ModelosNormales.Balance, ej), await SaldosAsync(cn, empresaId, c, ej.Id, ej.FechaInicio, ej.FechaFin, ct));
         var avisos = e.Avisos.ToList();
         var finalEcpn = e.ParteB.Single(f => f.Id == "FIN").Importes["TOTAL"];
         if (finalEcpn != balance["PA"])
@@ -230,7 +230,10 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
     private static async Task<List<SaldoBalance>> SaldosAsync(NpgsqlConnection cn, long empresaId, Contexto c, long ejercicioId,
         DateOnly desde, DateOnly hasta, CancellationToken ct)
         => (await MovimientosAsync(cn, empresaId, ejercicioId, c.Canal.Id, desde, hasta, OrigenesCierre, ct))
-           .Select(m => new SaldoBalance(m.Codigo, c.Nombre(m.Codigo), m.Debe - m.Haber)).ToList();
+           .Select(m => new SaldoBalance(m.Codigo, c.Nombre(m.Codigo), m.Debe - m.Haber, m.Debe, m.Haber)).ToList();
+
+    /// <summary>Composición del estado vigente en el ejercicio (Administración → Legislación); el anterior se compara con la misma.</summary>
+    private static ModeloEstado Vigente(ModeloEstado delPrograma, EjercicioFila ej) => EstadosLegislados.Modelo(delPrograma.Codigo, ej.FechaInicio.Year);
 
     private static EstadoFinancieroDto Dto(ModeloEstado modelo, Contexto c, DateOnly desde, DateOnly hasta, Estados e, List<string> avisos)
     {
@@ -267,8 +270,8 @@ public sealed class BalancesRepositorio(IConexionFactory conexiones) : IBalances
         var saldos = await SaldosAsync(cn, empresaId, c, ej.Id, ej.FechaInicio, ej.FechaFin, ct);
         var movs = await MovimientosOrigenAsync(cn, empresaId, ej.Id, c.Canal.Id, ct);
         var apertura = await AperturaAsync(cn, empresaId, ej.Id, c.Canal.Id, ct);
-        var pyg = GeneradorEstados.Calcular(ModelosNormales.PerdidasGanancias, saldos);
-        var bal = GeneradorEstados.Calcular(ModelosNormales.Balance, saldos);
+        var pyg = GeneradorEstados.Calcular(Vigente(ModelosNormales.PerdidasGanancias, ej), saldos);
+        var bal = GeneradorEstados.Calcular(Vigente(ModelosNormales.Balance, ej), saldos);
         var es = System.Globalization.CultureInfo.GetCultureInfo("es-ES");
         string N(decimal v) => v.ToString("N2", es);
         decimal Saldo(string prefijos, bool acreedor = false)
