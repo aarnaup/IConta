@@ -58,9 +58,14 @@
   <div class="der">
     <span id="usuarioNombre"></span>
     <button class="btn" id="btnCambiar" type="button" hidden>Cambiar empresa</button>
+    <button class="btn" id="btnAyuda" type="button" aria-expanded="false" aria-controls="ayuda" title="Ayuda de esta pantalla (F1)">Ayuda</button>
     <button class="btn" id="btnSalir" type="button">Salir</button>
   </div>
 </header>
+<aside id="ayuda" class="ayuda-panel" role="dialog" aria-labelledby="ayTitulo" hidden>
+  <div class="ayuda-cab"><h2 id="ayTitulo">Ayuda</h2><button class="btn" id="ayCerrar" type="button" aria-label="Cerrar la ayuda">×</button></div>
+  <div id="ayCuerpo"></div>
+</aside>
 
 <main>
 <!-- ===================== LOGIN ===================== -->
@@ -1485,5 +1490,6 @@
 </main>
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="ayuda.js"></script>
 </body>
 </html>

@@ -240,3 +240,17 @@
   .lg-suma{color:var(--muted); font-weight:400; font-variant-numeric:tabular-nums}
   .lg-hist small{color:var(--muted); margin-left:2px}
   #lgEstCuentas input.lg-cta{width:120px}
+
+  /* Ayuda de la pantalla */
+  .ayuda-panel{position:fixed; top:0; right:0; bottom:0; width:min(400px, 100vw); box-sizing:border-box; z-index:50; overflow-y:auto;
+    background:var(--surface); color:var(--ink); border-left:1px solid var(--line); box-shadow:-8px 0 24px rgba(0,0,0,.12); padding:16px 20px 28px}
+  .ayuda-panel[hidden]{display:none}
+  .ayuda-cab{display:flex; align-items:center; justify-content:space-between; gap:12px; position:sticky; top:-16px; background:var(--surface);
+    padding:4px 0 10px; border-bottom:1px solid var(--line); margin-bottom:6px}
+  .ayuda-cab h2{margin:0; font-size:18px}
+  #ayCuerpo{font-size:14px; line-height:1.5}
+  #ayCuerpo h3{font-size:13px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:18px 0 6px}
+  #ayCuerpo ul{padding-left:18px; margin:6px 0}
+  #ayCuerpo li{margin:4px 0}
+  #ayCuerpo kbd{font:12px ui-monospace,Menlo,Consolas,monospace; border:1px solid var(--line); border-bottom-width:2px; border-radius:4px; padding:0 5px; background:var(--bg)}
+  #ayCuerpo code{font-size:12.5px}

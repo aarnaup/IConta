@@ -119,6 +119,9 @@ En **Administración → Empresas → Importar empresas de a3ECO** se trae la co
 - No se importan las facturas (libros de IVA) ni los vencimientos: los asientos de las facturas sí están, pero sin la ficha de factura de IConta.
 - Como la apertura de cada año viene de a3, no cierres en IConta un año importado si el siguiente también lo está: el cierre generaría otra apertura.
 
+## Ayuda en pantalla
+El botón **Ayuda** de la cabecera (o F1) abre un panel con la explicación de la pantalla en la que estás: qué hace, cómo se usa y sus teclas. Sigue a la pantalla mientras está abierto (al cambiar de menú, de informe en Balances o de apartado en Legislación) y se cierra con Esc. Los textos están en `src/Contabilidad.Web/wwwroot/ayuda.js`.
+
 ## Swagger y Postman
 En Development (o en cualquier entorno con `OpenApi__Habilitar=true`):
 - **Swagger UI**: `http://localhost:6579/swagger`. Pulsa «Authorize» y pega el token de `POST /api/auth/login`.
